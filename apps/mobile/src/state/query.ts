@@ -19,7 +19,7 @@ function formatError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "The environment request failed.";
+    : "Cererea către mediu a eșuat.";
 }
 
 export function useEnvironmentQuery<A, E>(

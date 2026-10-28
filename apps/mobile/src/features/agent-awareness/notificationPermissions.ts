@@ -42,7 +42,7 @@ export const requestAgentNotificationPermission: Effect.Effect<
     yield* Effect.tryPromise({
       try: () =>
         Notifications.setNotificationChannelAsync("agent-alerts", {
-          name: "Agent alerts",
+          name: "Alerte agent",
           importance: Notifications.AndroidImportance.HIGH,
         }),
       catch: (cause) => new NotificationPermissionRequestError({ cause }),

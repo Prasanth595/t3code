@@ -29,10 +29,10 @@ type ActionDetail = Pick<
 export const MERGE_METHODS = {
   squash: { title: "Squash and merge", description: "Combine the commits into one commit." },
   merge: {
-    title: "Create a merge commit",
-    description: "Keep the commits and add a merge commit.",
+    title: "Creează un commit de merge",
+    description: "Păstrează commit-urile și adaugă un commit de merge.",
   },
-  rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
+  rebase: { title: "Rebase și merge", description: "Adaugă commit-urile fără un commit de merge." },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
 export function pullRequestActionLabel(
@@ -43,25 +43,25 @@ export function pullRequestActionLabel(
     case "merge":
       return `Merge ${terminology.singular}`;
     case "ready":
-      return "Mark ready for review";
+      return "Marchează gata de revizuire";
     case "draft":
-      return "Convert to draft";
+      return "Transformă în ciornă";
     case "close":
-      return `Close ${terminology.singular}`;
+      return `Închide ${terminology.singular}`;
     case "reopen":
-      return `Reopen ${terminology.singular}`;
+      return `Redeschide ${terminology.singular}`;
     case "update-branch":
-      return "Update branch";
+      return "Actualizează branch-ul";
     case "enable-auto-merge":
-      return "Enable auto-merge";
+      return "Activează auto-merge";
     case "disable-auto-merge":
-      return "Disable auto-merge";
+      return "Dezactivează auto-merge";
     case "revert":
-      return `Create revert ${terminology.singular}`;
+      return `Creează ${terminology.singular} de revert`;
     case "delete-branch":
-      return "Delete branch";
+      return "Șterge branch-ul";
     case "approve-workflows":
-      return "Approve workflows";
+      return "Aprobă workflow-urile";
   }
 }
 
@@ -131,23 +131,23 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
   }
 }
 
-export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
+export const MERGE_CONFLICT_REASON = "Rezolvă conflictele branch-ului înainte de merge.";
 
 export function mergeUnavailableReason(
   pr: ActionDetail,
   connectionAllowsWrites: boolean,
   terminology: ChangeRequestTerminology,
 ) {
-  if (pr.state === "merged") return `This ${terminology.singular} has been merged.`;
-  if (pr.state === "closed") return `Reopen this ${terminology.singular} before merging.`;
-  if (!connectionAllowsWrites) return "This environment connection is read-only.";
-  if (!pr.capabilities.actions.includes("merge"))
-    return "This provider does not support merging here.";
+  if (pr.state === "merged") return `Acest ${terminology.singular} a fost deja îmbinat.`;
+  if (pr.state === "closed") return `Redeschide acest ${terminology.singular} înainte de merge.`;
+  if (!connectionAllowsWrites) return "Conexiunea la acest mediu e doar pentru citire.";
+  if (!pr.capabilities.actions.includes("merge")) return "Acest furnizor nu suportă merge aici.";
   if (!pr.viewerPermissions.actions.includes("merge"))
-    return `Your account cannot merge this ${terminology.singular}.`;
-  if (pr.isDraft) return "Mark this draft ready for review before merging.";
+    return `Contul tău nu poate face merge la acest ${terminology.singular}.`;
+  if (pr.isDraft) return "Marchează ciorna ca gata de revizuire înainte de merge.";
   if (pr.mergeability === "conflicting") return MERGE_CONFLICT_REASON;
-  if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
+  if (!allowedMergeMethods(pr).length)
+    return "Acest repository nu are metode de merge disponibile.";
   return null;
 }
 
@@ -156,18 +156,18 @@ export function mergeSummary(
   connectionAllowsWrites: boolean,
   terminology: ChangeRequestTerminology,
 ) {
-  if (pr.state === "merged") return "Merged";
-  if (pr.state === "closed") return "Closed";
-  if (pr.isDraft) return "Draft";
-  if (pr.mergeability === "conflicting") return "Has conflicts";
-  if (!connectionAllowsWrites) return "Read-only connection";
+  if (pr.state === "merged") return "Îmbinat";
+  if (pr.state === "closed") return "Închis";
+  if (pr.isDraft) return "Ciornă";
+  if (pr.mergeability === "conflicting") return "Are conflicte";
+  if (!connectionAllowsWrites) return "Conexiune doar pentru citire";
   const allowed = allowedMergeMethods(pr);
   const method = pr.autoMergeMethod ?? (allowed.includes("squash") ? "squash" : allowed[0]);
   const methodLabel = method ? `${method[0]?.toUpperCase()}${method.slice(1)}` : "Merge";
-  if (pr.autoMergeEnabled) return `${methodLabel} · auto-merge on`;
-  if (mergeUnavailableReason(pr, connectionAllowsWrites, terminology)) return "Unavailable";
-  return `${methodLabel}${pr.autoMergeEnabled === false ? " · auto-merge off" : ""}`;
+  if (pr.autoMergeEnabled) return `${methodLabel} · auto-merge activ`;
+  if (mergeUnavailableReason(pr, connectionAllowsWrites, terminology)) return "Indisponibil";
+  return `${methodLabel}${pr.autoMergeEnabled === false ? " · auto-merge oprit" : ""}`;
 }
 
 export const openOnProviderLabel = (provider: SourceControlProviderKind) =>
-  `Open on ${sourceControlClients.get(provider).label}`;
+  `Deschide pe ${sourceControlClients.get(provider).label}`;

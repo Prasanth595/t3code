@@ -18,7 +18,7 @@ export function relayChatHistoryRemote(input: {
     ) => Effect.Effect<A, ManagedRelay.ManagedRelayClientError>,
   ): Promise<A> => {
     const clerkToken = await input.readClerkToken();
-    if (clerkToken === null) throw new Error("Signed out of the Mira account.");
+    if (clerkToken === null) throw new Error("Ai fost deconectat din contul Mira.");
     return input.run(
       Effect.gen(function* () {
         const client = yield* ManagedRelay.ManagedRelayClient;

@@ -33,15 +33,15 @@ import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
-  artwork: "Artwork",
-  pill: "Version pill",
-  none: "None",
+  artwork: "Ilustrație",
+  pill: "Etichetă versiune",
+  none: "Niciuna",
 };
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
-  comfortable: "Comfortable",
-  wide: "Wide",
-  full: "Full",
+  comfortable: "Confortabil",
+  wide: "Lat",
+  full: "Complet",
 };
 
 export function AppearanceSettingsPanel() {
@@ -85,7 +85,7 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
+      <SettingsSection id="appearance" title="Culori și teme" variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary
             appearanceMode={appearanceMode}
@@ -103,10 +103,10 @@ export function AppearanceSettingsPanel() {
         </div>
       </SettingsSection>
 
-      <SettingsSection id="appearance-interface" title="Interface">
+      <SettingsSection id="appearance-interface" title="Interfață">
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
-          description="Adjust the contrast of colors and borders across the interface."
+          description="Ajustează contrastul culorilor și marginilor în interfață."
           resetAction={
             settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast ? (
               <SettingResetButton
@@ -154,7 +154,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
-          description="Higher values make menus, dialogs, and the composer more solid."
+          description="Valorile mai mari fac meniurile, dialogurile și editorul mai opace."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
@@ -174,7 +174,7 @@ export function AppearanceSettingsPanel() {
                 {settings.glassOpacity}%
               </output>
               <input
-                aria-label="Glass opacity"
+                aria-label="Opacitate sticlă"
                 className="settings-slider min-w-0 flex-1"
                 id="glass-opacity"
                 max={MAX_GLASS_OPACITY}
@@ -201,7 +201,7 @@ export function AppearanceSettingsPanel() {
         {showEnvironmentIdentification ? (
           <SettingsRow
             {...searchableSetting("environment-identification")}
-            description="Choose how Dev and Nightly environments are identified."
+            description="Alege cum sunt identificate mediile Dev și Nightly."
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton
@@ -226,7 +226,7 @@ export function AppearanceSettingsPanel() {
                 <SelectTrigger
                   size="sm"
                   className="w-full sm:w-40"
-                  aria-label="Environment identification"
+                  aria-label="Identificarea mediului"
                 >
                   <SelectValue>
                     {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
@@ -246,7 +246,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
-          description="Choose colors for additions and deletions, including change counts."
+          description="Alege culorile pentru adăugări și ștergeri, inclusiv la numărul de modificări."
           resetAction={
             settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme ? (
               <SettingResetButton
@@ -279,12 +279,14 @@ export function AppearanceSettingsPanel() {
                     <span className="size-2 rounded-full bg-diff-addition" />
                   </span>
                   <SelectValue>
-                    {settings.diffColorScheme === "blue-orange" ? "Blue & orange" : "Red & green"}
+                    {settings.diffColorScheme === "blue-orange"
+                      ? "Albastru și portocaliu"
+                      : "Roșu și verde"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="red-green">Red & green (default)</SelectItem>
-                  <SelectItem value="blue-orange">Blue & orange</SelectItem>
+                  <SelectItem value="red-green">Roșu și verde (implicit)</SelectItem>
+                  <SelectItem value="blue-orange">Albastru și portocaliu</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -293,7 +295,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("composer-context")}
-          description="Keep branch and worktree controls below the composer after a thread starts."
+          description="Păstrează controalele de branch și worktree sub editor după ce pornește conversația."
           resetAction={
             settings.persistComposerContextStrip !==
             DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (
@@ -314,14 +316,14 @@ export function AppearanceSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ persistComposerContextStrip: Boolean(checked) })
               }
-              aria-label="Keep composer context visible in active threads"
+              aria-label="Păstrează contextul editorului vizibil"
             />
           }
         />
 
         <SettingsRow
           {...searchableSetting("chat-width")}
-          description="Set how wide messages and the composer can grow on large screens."
+          description="Setează cât de late pot fi mesajele și editorul pe ecrane mari."
           resetAction={
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton
@@ -343,9 +345,9 @@ export function AppearanceSettingsPanel() {
                   <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
-                  <SelectItem value="wide">Wide</SelectItem>
-                  <SelectItem value="full">Full</SelectItem>
+                  <SelectItem value="comfortable">Confortabil (implicit)</SelectItem>
+                  <SelectItem value="wide">Lat</SelectItem>
+                  <SelectItem value="full">Complet</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -353,7 +355,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("math-rendering")}
-          description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."
+          description="Afișează formulele LaTeX, ca $x^2$ sau \[x^2\], în mesaje și previzualizări Markdown. Editorul păstrează sursa TeX editabilă."
           resetAction={
             settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled ? (
               <SettingResetButton
@@ -372,16 +374,16 @@ export function AppearanceSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ mathRenderingEnabled: Boolean(checked) })
               }
-              aria-label="Render math"
+              aria-label="Afișează formule matematice"
             />
           }
         />
       </SettingsSection>
 
-      <SettingsSection id="motion" title="Motion">
+      <SettingsSection id="motion" title="Mișcare">
         <SettingsRow
           {...searchableSetting("panel-animations")}
-          description="Set how fast panels open and close."
+          description="Setează cât de repede se deschid și se închid panourile."
           control={
             <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
               <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
@@ -393,7 +395,7 @@ export function AppearanceSettingsPanel() {
                   {settings.panelAnimationDurationMs} ms
                 </output>
                 <input
-                  aria-label="Panel animation duration"
+                  aria-label="Durata animației panourilor"
                   className="settings-slider min-w-0 flex-1"
                   id="panel-animation-duration"
                   max={MAX_PANEL_ANIMATION_DURATION_MS}

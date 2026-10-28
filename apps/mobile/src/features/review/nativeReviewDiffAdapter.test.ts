@@ -214,9 +214,9 @@ describe("getCachedNativeReviewDiffData", () => {
   });
 
   it.each([
-    [true, false, "Old file has no newline at end of file."],
-    [false, true, "New file has no newline at end of file."],
-    [true, true, "Old and new files have no newline at end of file."],
+    [true, false, "Fișierul vechi nu are rând nou la final."],
+    [false, true, "Fișierul nou nu are rând nou la final."],
+    [true, true, "Fișierele vechi și noi nu au rând nou la final."],
     [false, false, null],
   ])("shows missing-newline notices for old=%s new=%s", (oldMissing, newMissing, notice) => {
     const data = buildNativeReviewDiffData(
@@ -297,7 +297,7 @@ describe("buildNativeReviewDiffData row bound", () => {
     expect(hugeRows.at(-2)).toMatchObject({ kind: "line", newLineNumber: 99_999 });
     expect(hugeRows.at(-1)).toMatchObject({
       kind: "notice",
-      text: "This diff is too large to show in full.",
+      text: "Diff-ul e prea mare pentru a fi afișat complet.",
     });
     const ordinaryRows = data.rows.filter((row) => row.fileId === ordinaryHeader?.fileId);
     expect(ordinaryRows.filter((row) => row.kind === "line")).toHaveLength(1_000);

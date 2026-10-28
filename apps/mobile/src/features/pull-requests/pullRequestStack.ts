@@ -13,15 +13,15 @@ export function pullRequestStackMerge(
   );
   const reason =
     position < 0
-      ? `This ${terminology.singular} is no longer in the stack. Refresh it.`
+      ? `Acest ${terminology.singular} nu mai e în stack. Reîmprospătează-l.`
       : stack.layers[position]?.state !== "open" || layers.length === 0
-        ? `There are no open layers to merge through this ${terminology.singular}.`
+        ? `Nu există straturi deschise de îmbinat până la acest ${terminology.singular}.`
         : layers.some((layer) => layer.state !== "open")
-          ? "Reopen the closed layers before merging this stack."
+          ? "Redeschide straturile închise înainte de merge."
           : layers.some((layer) => layer.isDraft)
-            ? "Mark every layer being merged ready for review."
+            ? "Marchează fiecare strat ca gata de revizuire."
             : heads.length !== layers.length
-              ? "Refresh the stack to load its latest revisions before merging."
+              ? "Reîmprospătează stack-ul ca să încarci ultimele versiuni înainte de merge."
               : null;
   return { position: position + 1, layers, heads, reason };
 }

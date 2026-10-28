@@ -44,7 +44,7 @@ export function childInputBannerItem(input: {
     )),
     actions: (
       <Button size="xs" variant="ghost" onClick={() => onOpenThread(first.id)}>
-        {first.hasPendingApprovals ? "Open approval" : "Open question"}
+        {first.hasPendingApprovals ? "Deschide aprobarea" : "Deschide întrebarea"}
       </Button>
     ),
   };
@@ -74,7 +74,7 @@ export function goalBannerItem(input: {
           <Button
             size="xs"
             variant="ghost"
-            onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
+            onClick={() => void onSendCommand("/goal resume", "Obiectivul nu a putut fi reluat.")}
           >
             Resume
           </Button>
@@ -82,7 +82,7 @@ export function goalBannerItem(input: {
         <Button
           size="xs"
           variant="ghost"
-          onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
+          onClick={() => void onSendCommand("/goal clear", "Obiectivul nu a putut fi șters.")}
         >
           Clear
         </Button>
@@ -134,10 +134,10 @@ export function backgroundWorkBannerItem(input: {
                   <span className="whitespace-nowrap">
                     <InlineButton
                       tone="muted"
-                      aria-label={`${presentation.items.length === 1 ? "Show" : "Open"} subagent ${item.label}`}
+                      aria-label={`${presentation.items.length === 1 ? "Arată" : "Deschide"} subagentul ${item.label}`}
                       onClick={() => onOpenThread(childThreadId)}
                     >
-                      {presentation.items.length === 1 ? "Show" : item.label}
+                      {presentation.items.length === 1 ? "Arată" : item.label}
                     </InlineButton>
                     {separator}
                   </span>
@@ -152,7 +152,7 @@ export function backgroundWorkBannerItem(input: {
         disabled={input.stopDisabled}
         onClick={() => void input.onStop()}
       >
-        {input.stopping ? "Stopping..." : "Stop"}
+        {input.stopping ? "Se oprește..." : "Oprește"}
       </Button>
     ),
   };
@@ -192,10 +192,10 @@ export function branchMismatchBannerItem(input: {
     ),
     actions: (
       <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
-        {input.restoring ? "Restoring..." : "Restore branch"}
+        {input.restoring ? "Se restaurează..." : "Restaurează branch-ul"}
       </Button>
     ),
-    dismissLabel: "Dismiss branch change notice",
+    dismissLabel: "Închide notificarea",
     onDismiss: input.onDismiss,
   };
 }

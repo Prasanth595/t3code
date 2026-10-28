@@ -51,8 +51,8 @@ export function ContextWindowMeter(props: {
             className="size-7"
             aria-label={
               usage.maxTokens !== null && usedPercentage
-                ? `Context window ${usedPercentage} used`
-                : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
+                ? `Fereastra de context: ${usedPercentage} folosit`
+                : `Fereastra de context: ${formatContextWindowTokens(usage.usedTokens)} tokeni folosiți`
             }
           >
             <span className="relative flex size-5 items-center justify-center">
@@ -120,7 +120,7 @@ export function ContextWindowMeter(props: {
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(normalizedPercentage)}
-              aria-label="Context window usage"
+              aria-label="Utilizarea ferestrei de context"
             >
               <div
                 className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
@@ -159,7 +159,7 @@ export function ContextWindowMeter(props: {
                 onClick={onCompact}
               >
                 <Minimize2Icon aria-hidden="true" />
-                Compact context
+                Compactează contextul
               </Button>
               {compactDisabled && compactDisabledReason ? (
                 <div className="text-pretty text-secondary-label text-2xs">

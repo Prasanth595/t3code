@@ -12,7 +12,7 @@ describe("resolveUsageAccess", () => {
       ).toEqual({
         canReadDiagnostics: false,
         isPending: false,
-        error: "This environment is not connected.",
+        error: "Mediul nu e conectat.",
       });
     },
   );
@@ -55,12 +55,12 @@ describe("resolveUsageAccess", () => {
     expect(denied).toEqual({
       canReadDiagnostics: false,
       isPending: false,
-      error: "This connection does not have access to diagnostics and usage.",
+      error: "Această conexiune nu are acces la diagnosticare și utilizare.",
     });
     expect(failed).toEqual({
       canReadDiagnostics: false,
       isPending: false,
-      error: "Could not check this connection's access to diagnostics and usage.",
+      error: "Nu am putut verifica accesul conexiunii la diagnosticare și utilizare.",
     });
   });
 });

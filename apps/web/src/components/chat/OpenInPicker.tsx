@@ -296,7 +296,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       e.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       void openInEditor(preferredEditor).then((opened) => {
-        if (opened) announce(`Opened in ${label}`);
+        if (opened) announce(`Deschis în ${label}`);
       });
     };
     window.addEventListener("keydown", handler, true);
@@ -315,7 +315,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   // Derive after the shortcut effect to preserve the editor list's compiler cache.
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
+  const primaryLabel = isPanel ? `Deschide în ${primaryOption?.label ?? "editor"}` : "Deschide";
 
   const editorItems = (
     <>
@@ -327,7 +327,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <>
           {options.length === 0 && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-              No installed editors found
+              Niciun editor instalat găsit
             </MenuItem>
           )}
           {options.map(({ label, Icon, value, kind }) => (
@@ -379,7 +379,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuSub>
           <MenuSubTrigger density="touch" disabled={isHostEditorDenied}>
             <SquareArrowOutUpRightIcon className="size-4" />
-            <MenuItemLabel>Open in…</MenuItemLabel>
+            <MenuItemLabel>Deschide în…</MenuItemLabel>
           </MenuSubTrigger>
           <MenuSubPopup>{editorItems}</MenuSubPopup>
         </MenuSub>
@@ -389,14 +389,14 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   return (
     <ActionGroup
-      aria-label="Open in editor"
+      aria-label="Deschide în editor"
       role="group"
       {...(isPanel
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
       <ThreadDetailsControl
-        aria-label={compact ? "Open file in preferred editor" : primaryLabel}
+        aria-label={compact ? "Deschide fișierul în editorul preferat" : primaryLabel}
         size={isPanel ? "sm" : "xs"}
         variant={isPanel ? "ghost" : "outline"}
         part="primary"
@@ -443,7 +443,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           disabled={isHostEditorDenied}
           render={
             <ThreadDetailsControl
-              aria-label="Choose editor"
+              aria-label="Alege editorul"
               size={isPanel ? "sm" : "icon-xs"}
               variant={isPanel ? "ghost" : "outline"}
               part="secondary"

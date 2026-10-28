@@ -69,8 +69,8 @@ export function useThreadFind({
     if (!enabled) {
       toastManager.add({
         id: "thread-find-unavailable",
-        title: "Thread search is unavailable on this server.",
-        description: "Update the server to enable it.",
+        title: "Căutarea în conversații nu e disponibilă pe acest server.",
+        description: "Actualizează serverul ca s-o activezi.",
       });
       return;
     }

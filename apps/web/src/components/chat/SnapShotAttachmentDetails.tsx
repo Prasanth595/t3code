@@ -83,7 +83,7 @@ export function SnapShotContentsButton({
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
   const accessibilityDetails = snapShotAccessibilityDetails(source);
-  const tooltip = includesAccessibility ? "Accessibility data" : "No accessibility data";
+  const tooltip = includesAccessibility ? "Date de accesibilitate" : "Fără date de accesibilitate";
 
   return (
     <Popover>
@@ -94,7 +94,9 @@ export function SnapShotContentsButton({
               render={
                 <Button
                   aria-label={
-                    includesAccessibility ? "View accessibility data" : "No accessibility data"
+                    includesAccessibility
+                      ? "Vezi datele de accesibilitate"
+                      : "Fără date de accesibilitate"
                   }
                   className={className}
                   onClick={(event) => event.stopPropagation()}
@@ -111,7 +113,7 @@ export function SnapShotContentsButton({
       </Tooltip>
       <PopoverPopup side={side} align="center" width="md">
         <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
-          <PopoverTitle>Accessibility data</PopoverTitle>
+          <PopoverTitle>Date de accesibilitate</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
@@ -119,12 +121,12 @@ export function SnapShotContentsButton({
             />
           ) : includesAccessibility ? (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              Structured accessibility elements were included, but they have no readable names or
-              values.
+              Au fost incluse elemente de accesibilitate structurate, dar nu au nume sau valori
+              lizibile.
             </div>
           ) : (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              The app or capture backend did not provide verified accessibility data.
+              Aplicația sau sistemul de captură nu a furnizat date de accesibilitate verificate.
             </div>
           )}
         </div>
@@ -160,7 +162,7 @@ export function SnapShotAttachmentDetails({
           <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
         <div className="truncate text-3xs leading-3.5 text-white/70">
-          {source.windowTitle || "Captured window"}
+          {source.windowTitle || "Fereastră capturată"}
         </div>
       </div>
     </div>

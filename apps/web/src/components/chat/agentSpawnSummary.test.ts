@@ -7,7 +7,7 @@ const agent = (status: RuntimeSubagent["status"]) => ({ kind: "subagent" as cons
 describe("deriveAgentSpawnSummary", () => {
   it("does not claim completion when the roster is missing a member", () => {
     expect(deriveAgentSpawnSummary({ agents: [agent("completed")], agentCount: 2 })).toMatchObject({
-      status: "Status unavailable",
+      status: "Stare indisponibilă",
       tone: "inactive",
     });
   });
@@ -23,8 +23,8 @@ describe("deriveAgentSpawnSummary", () => {
   });
 
   it.each([
-    ["failed", "Workflow failed", "failed"],
-    ["cancelled", "Workflow stopped", "inactive"],
+    ["failed", "Workflow eșuat", "failed"],
+    ["cancelled", "Workflow oprit", "inactive"],
   ] as const)(
     "preserves a %s workflow outcome when its children completed",
     (coordinatorStatus, status, tone) => {

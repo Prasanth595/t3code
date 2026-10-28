@@ -91,9 +91,9 @@ function TimelineComment({
         <PullRequestAvatar actor={comment.author} size={22} />
         <View className="min-w-0 flex-1">
           <Text className="text-sm">
-            <Text className="font-t3-medium">{comment.author?.login ?? "Unknown author"}</Text>
+            <Text className="font-t3-medium">{comment.author?.login ?? "Autor necunoscut"}</Text>
             <Text className="text-foreground-muted">
-              {approved ? " approved" : changes ? " requested changes" : " commented"}
+              {approved ? " a aprobat" : changes ? " a cerut modificări" : " a comentat"}
             </Text>
           </Text>
         </View>
@@ -172,7 +172,7 @@ function TimelineComment({
               className="flex-row items-center justify-center gap-1 py-2 active:opacity-70"
             >
               <Text className="text-xs font-t3-medium text-foreground">
-                {expanded ? "Show less" : "Show more"}
+                {expanded ? "Arată mai puțin" : "Arată mai mult"}
               </Text>
               <SymbolView
                 name={expanded ? "chevron.up" : "chevron.down"}
@@ -219,7 +219,7 @@ export function pullRequestTimelineRows(
             <PullRequestAvatar actor={thread.comments[0]?.author ?? null} size={22} />
             <Text className="flex-1 text-sm">
               <Text className="font-t3-medium">
-                {thread.comments[0]?.author?.login ?? "Unknown author"}
+                {thread.comments[0]?.author?.login ?? "Autor necunoscut"}
               </Text>
               <Text className="text-foreground-muted"> started a discussion</Text>
             </Text>
@@ -231,7 +231,7 @@ export function pullRequestTimelineRows(
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path}`}
+            accessibilityLabel={`Deschide discuția ${thread.isResolved ? "rezolvată" : "nerezolvată"} din ${thread.path}`}
             onPress={() =>
               navigation.navigate("PullRequestDiscussion", { ...params, discussionId: thread.id })
             }
@@ -246,8 +246,8 @@ export function pullRequestTimelineRows(
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">
-              {thread.isResolved ? "Resolved" : "Unresolved"}
-              {thread.isOutdated ? " · Outdated" : ""} ·{" "}
+              {thread.isResolved ? "Rezolvată" : "Nerezolvată"}
+              {thread.isOutdated ? " · Depășită" : ""} ·{" "}
               {thread.commentCount ?? thread.comments.length} comments
             </Text>
           </Pressable>
@@ -261,7 +261,7 @@ export function pullRequestTimelineRows(
         <TimelineEvent icon="commit">
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`View commit ${commit.oid.slice(0, 7)}, ${commit.messageHeadline}`}
+            accessibilityLabel={`Vezi commit-ul ${commit.oid.slice(0, 7)}, ${commit.messageHeadline}`}
             onPress={() =>
               navigation.dispatch(
                 StackActions.push("PullRequestFile", { ...params, commit: commit.oid, path: "" }),
@@ -287,7 +287,7 @@ export function pullRequestTimelineRows(
       date: "",
       content: (
         <Text className="py-3 text-xs text-foreground-muted">
-          More activity is available on the provider.
+          Mai multă activitate e disponibilă la furnizor.
         </Text>
       ),
     });

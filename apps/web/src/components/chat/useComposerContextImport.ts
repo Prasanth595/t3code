@@ -142,15 +142,15 @@ export function useComposerContextImport(input: {
     const fail = (reason: string) => {
       toastManager.add({
         type: "error",
-        title: `Couldn't bring ${record.name} into this message`,
-        description: `${reason} Remove the chip or attach the file again.`,
+        title: `${record.name} nu a putut fi adăugat în mesaj`,
+        description: `${reason} Elimină elementul sau atașează din nou fișierul.`,
       });
     };
     let file = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
     if (!file) {
       const sourceConnection = readPreparedConnection(sourceEnvironmentId);
       if (!sourceConnection) {
-        fail("The environment it came from is not connected.");
+        fail("Mediul din care provine nu e conectat.");
         return;
       }
       const result = await createAssetUrl({
@@ -162,12 +162,12 @@ export function useComposerContextImport(input: {
           ? resolveAssetUrl(sourceConnection.httpBaseUrl, result.value.relativeUrl)
           : null;
       if (!url) {
-        fail("The original attachment is no longer available.");
+        fail("Atașamentul original nu mai e disponibil.");
         return;
       }
       const blob = await downloadAttachmentBlob(url);
       if (!blob) {
-        fail("Downloading it from the source failed.");
+        fail("Descărcarea de la sursă a eșuat.");
         return;
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
@@ -191,7 +191,7 @@ export function useComposerContextImport(input: {
       (pendingThreadImportsRef.current.get(importTargetKey) ?? 0) > 0 &&
       countReservedAttachments() >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
-      fail("The attachment limit has been reached.");
+      fail("Limita de atașamente a fost atinsă.");
       return;
     }
     if (record.kind === "image") {
@@ -216,7 +216,7 @@ export function useComposerContextImport(input: {
         },
       );
       if (!accepted.includes(localId))
-        fail("The draft rejected this attachment (duplicate or attachment limit reached).");
+        fail("Ciorna a respins atașamentul (duplicat sau limită atinsă).");
     } else {
       const accepted = addComposerFilesToDraft([
         {
@@ -229,7 +229,7 @@ export function useComposerContextImport(input: {
         },
       ]);
       if (!accepted.includes(localId))
-        fail("The draft rejected this attachment (duplicate or attachment limit reached).");
+        fail("Ciorna a respins atașamentul (duplicat sau limită atinsă).");
     }
   };
   const importAttachmentRecord = async (

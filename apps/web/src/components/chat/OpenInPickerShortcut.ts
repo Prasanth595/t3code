@@ -41,7 +41,7 @@ export function useOpenFavoriteEditorShortcut({
           editor: preferredEditor,
         },
       }).then((result) => {
-        if (result._tag === "Success") announce(`Opened in ${label}`);
+        if (result._tag === "Success") announce(`Deschis în ${label}`);
       });
     };
     window.addEventListener("keydown", handler);

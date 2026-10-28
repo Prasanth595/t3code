@@ -55,16 +55,16 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 } {
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: "Se încarcă mediile",
+      detail: "Se verifică mediile salvate pe acest dispozitiv.",
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment before creating a task.",
+      title: "Niciun mediu conectat",
+      detail: "Adaugă un mediu înainte să creezi o sarcină.",
       loading: false,
     };
   }
@@ -78,12 +78,10 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
   ) {
     return {
       title:
-        catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
+        catalogState.connectionState === "unsupported" ? "Client nesuportat" : "Mediu indisponibil",
       detail:
         catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+        "Mediul salvat este offline. Verifică adresa sau pornește mediul, apoi reîncearcă.",
       loading: false,
     };
   }
@@ -94,15 +92,15 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects from the saved environment.",
+      title: "Se conectează la mediu",
+      detail: "Se încarcă proiectele din mediul salvat.",
       loading: true,
     };
   }
 
   return {
-    title: "No projects found",
-    detail: "The connected environment did not report any projects.",
+    title: "Niciun proiect găsit",
+    detail: "Mediul conectat nu a raportat niciun proiect.",
     loading: false,
   };
 }
@@ -132,7 +130,7 @@ function NewTaskHeader(props: {
           props.canAddProject
             ? [
                 {
-                  accessibilityLabel: "Add project",
+                  accessibilityLabel: "Adaugă proiect",
                   icon: "plus",
                   onPress: () => navigation.dispatch(StackActions.push("AddProject")),
                 },
@@ -142,7 +140,7 @@ function NewTaskHeader(props: {
         search={{
           value: props.searchText,
           onChangeText: props.onSearchTextChange,
-          placeholder: "Search projects",
+          placeholder: "Caută proiecte",
         }}
       />
     </>
@@ -166,12 +164,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
-      ? "Choose a project for what you shared"
+      ? "Alege un proiect pentru ce ai partajat"
       : incomingShare.attachments.length === 1
-        ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
-        : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
+        ? `Alege un proiect pentru ${incomingShare.attachments[0]?.type === "image" ? "imaginea" : "fișierul"} partajat${incomingShare.attachments[0]?.type === "image" ? "ă" : ""}`
+        : `Alege un proiect pentru cele ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "imagini partajate" : "fișiere partajate"}`
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  const screenTitle = incomingShare ? "Pornește o sarcină" : "Alege proiectul";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
   const listScopes = projectScopes.filter(
@@ -215,10 +213,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
         Dialog.alert(
-          "Could not change project",
+          "Proiectul nu a putut fi schimbat",
           error instanceof Error
             ? error.message
-            : "The shared content reservation could not be updated.",
+            : "Rezervarea conținutului partajat nu a putut fi actualizată.",
         );
         return;
       }
@@ -255,10 +253,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not start without a project",
+          "Nu am putut porni fără proiect",
           error instanceof Error
             ? error.message
-            : "The folder for threads without a project could not be created.",
+            : "Dosarul pentru conversațiile fără proiect nu a putut fi creat.",
         );
       }
       return;
@@ -332,8 +330,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
                 <NavigationRow
                   className="bg-grouped-card"
-                  title="No project"
-                  subtitle="Start a task without a project"
+                  title="Fără proiect"
+                  subtitle="Pornește o sarcină fără proiect"
                   onPress={() => void startScratch()}
                   leading={
                     <SymbolView
@@ -349,7 +347,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="No project"
+                  accessibilityLabel="Fără proiect"
                   onPress={() => void startScratch()}
                   className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                 >
@@ -362,9 +360,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     />
                   </View>
                   <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">No project</Text>
+                    <Text className="text-base font-t3-bold leading-snug">Fără proiect</Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
-                      Start a task without a project
+                      Pornește o sarcină fără proiect
                     </Text>
                   </View>
                   <SymbolView
@@ -397,7 +395,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               {Platform.OS === "android" ? (
                 <>
                   <Button
-                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
+                    label={catalogState.hasReadyEnvironment ? "Adaugă proiect nou" : "Adaugă mediu"}
                     tone="primary"
                     onPress={() =>
                       catalogState.hasReadyEnvironment
@@ -407,7 +405,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   />
                   {canStartScratch ? (
                     <Button
-                      label="Start without a project"
+                      label="Pornește fără proiect"
                       tone="secondary"
                       onPress={() => void startScratch()}
                     />
@@ -416,7 +414,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               ) : !catalogState.hasReadyEnvironment ? (
                 <View className="mt-1">
                   <Button
-                    label="Add environment"
+                    label="Adaugă mediu"
                     tone="primary"
                     onPress={() => navigation.navigate("ConnectionsNew")}
                   />
@@ -425,14 +423,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 <>
                   <View className="mt-1">
                     <Button
-                      label="Add new project"
+                      label="Adaugă proiect nou"
                       tone="primary"
                       onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                     />
                   </View>
                   {canStartScratch ? (
                     <Button
-                      label="Start without a project"
+                      label="Pornește fără proiect"
                       tone="secondary"
                       onPress={() => void startScratch()}
                     />
@@ -443,10 +441,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           ) : visibleScopes.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
               <Text className="text-center text-lg font-t3-bold text-foreground">
-                No matching projects
+                Niciun proiect găsit
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
+                Încearcă alt nume de proiect sau altă cale.
               </Text>
             </View>
           ) : (

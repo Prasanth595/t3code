@@ -130,7 +130,7 @@ export function useComposerResume(input: ComposerResumeInput) {
           message: {
             messageId: newMessageId(),
             role: "user",
-            text: "Continue where you left off.",
+            text: "Continuă de unde ai rămas.",
             attachments: [],
           },
           runtimeMode,
@@ -148,7 +148,7 @@ export function useComposerResume(input: ComposerResumeInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           threadId,
-          error instanceof Error ? error.message : "Could not resume thread.",
+          error instanceof Error ? error.message : "Conversația nu a putut fi reluată.",
         );
       }
     } else {

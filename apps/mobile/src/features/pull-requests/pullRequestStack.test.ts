@@ -69,7 +69,7 @@ describe("mobile stack merge scope", () => {
       { number: 2, headSha: "sha-2" },
     ]);
     expect(pullRequestStackMerge(updated, 2, GITHUB).reason).toBeNull();
-    expect(pullRequestStackMerge(updated, 1, GITHUB).reason).toContain("no open layers");
+    expect(pullRequestStackMerge(updated, 1, GITHUB).reason).toContain("straturi deschise");
   });
   it("blocks closed and draft dependencies, but permits them above the target", () => {
     const closed = {
@@ -78,7 +78,7 @@ describe("mobile stack merge scope", () => {
         layer.number === 2 ? { ...layer, state: "closed" as const } : layer,
       ),
     };
-    expect(pullRequestStackMerge(closed, 3, GITHUB).reason).toContain("Reopen");
+    expect(pullRequestStackMerge(closed, 3, GITHUB).reason).toContain("Redeschide");
     expect(pullRequestStackMerge(closed, 1, GITHUB).reason).toBeNull();
     const draft = {
       ...stack,
@@ -86,7 +86,7 @@ describe("mobile stack merge scope", () => {
         layer.number === 2 ? { ...layer, isDraft: true } : layer,
       ),
     };
-    expect(pullRequestStackMerge(draft, 3, GITHUB).reason).toContain("ready for review");
+    expect(pullRequestStackMerge(draft, 3, GITHUB).reason).toContain("gata de revizuire");
     expect(pullRequestStackMerge(draft, 1, GITHUB).reason).toBeNull();
   });
   it("blocks missing revisions and a PR removed from the stack", () => {
@@ -94,11 +94,11 @@ describe("mobile stack merge scope", () => {
       ...stack,
       layers: stack.layers.map((layer) => ({ ...layer, headSha: undefined })),
     };
-    expect(pullRequestStackMerge(unknown, 2, GITHUB).reason).toContain("latest revisions");
-    expect(pullRequestStackMerge(stack, 99, GITHUB).reason).toContain("no longer in the stack");
+    expect(pullRequestStackMerge(unknown, 2, GITHUB).reason).toContain("ultimele versiuni");
+    expect(pullRequestStackMerge(stack, 99, GITHUB).reason).toContain("nu mai e în stack");
     expect(
       pullRequestStackMerge(stack, 99, sourceControlClients.get("gitlab").changeRequest).reason,
-    ).toBe("This merge request is no longer in the stack. Refresh it.");
+    ).toBe("Acest merge request nu mai e în stack. Reîmprospătează-l.");
   });
   it("waits for successful discovery before allowing a single PR merge on modern servers", () => {
     expect(
@@ -130,7 +130,7 @@ describe("mobile saved stack navigation", () => {
     expect(saved?.layers).toHaveLength(3);
     expect(saved?.layers[1]).toMatchObject({ number: 2, title: "Middle layer", isDraft: false });
     expect(saved?.layers.every((layer) => layer.headSha === undefined)).toBe(true);
-    expect(pullRequestStackMerge(saved!, 2, GITHUB).reason).toContain("latest revisions");
+    expect(pullRequestStackMerge(saved!, 2, GITHUB).reason).toContain("ultimele versiuni");
     expect(savedPullRequestStack([link], { ...reference, number: 3 })?.number).toBe(10);
   });
   it("never borrows membership from another host or repository", () => {

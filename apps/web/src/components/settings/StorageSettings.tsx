@@ -69,7 +69,7 @@ function WorktreesDirectoryRow() {
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
       description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+        "Dosarul unde se creează worktree-urile noi, pe orice disc, ca D:\\worktrees sau ~/worktrees. Worktree-urile existente rămân unde sunt. Lasă gol ca să folosești dosarul principal."
       }
       serverScoped
       settingKeys={["worktreesDirectory"]}
@@ -84,10 +84,10 @@ function WorktreesDirectoryRow() {
       control={
         <Input
           key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
-          aria-label="Worktree location"
+          aria-label="Locația worktree-urilor"
           autoCapitalize="none"
           spellCheck={false}
-          placeholder={mixed ? "Mixed" : "Default"}
+          placeholder={mixed ? "Mixt" : "Implicit"}
           defaultValue={mixed ? "" : settings.worktreesDirectory}
           onChange={() => {
             edited.current = true;
@@ -143,16 +143,16 @@ function RetentionControl({
           }}
         >
           <NumberFieldGroup>
-            <NumberFieldDecrement aria-label={`Decrease ${label}`} />
+            <NumberFieldDecrement aria-label={`Scade ${label}`} />
             <NumberFieldInput
-              aria-label={`${label} in days`}
+              aria-label={`${label} în zile`}
               size={new Intl.NumberFormat().format(draft ?? value).length}
               className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
               days
             </span>
-            <NumberFieldIncrement aria-label={`Increase ${label}`} />
+            <NumberFieldIncrement aria-label={`Crește ${label}`} />
           </NumberFieldGroup>
         </NumberField>
       ) : (
@@ -181,7 +181,7 @@ function lastRunSummary(
   if (!first) return "";
   if (machineCount <= 1) return first.counts;
   if (entries.length === machineCount && entries.every((entry) => entry.counts === first.counts)) {
-    return `${first.counts} on every machine`;
+    return `${first.counts} pe fiecare calculator`;
   }
   return entries.map((entry) => `${entry.label}: ${entry.counts}`).join(" · ");
 }
@@ -202,8 +202,8 @@ function CleanupResults({
                 ? entry.path
                 : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
             : entry.kind === "logs"
-              ? "Rotated logs"
-              : "Browser artifacts";
+              ? "Jurnale arhivate"
+              : "Artefacte browser";
         return (
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
@@ -214,23 +214,23 @@ function CleanupResults({
                   {entry.reason}
                 </span>
                 <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-border/60 pl-3">
-                  <span>Machine</span>
+                  <span>Calculator</span>
                   <span className="text-foreground/80">{environmentLabel}</span>
                   {entry.projectPath && (
                     <>
-                      <span>Project</span>
+                      <span>Proiect</span>
                       <code className="text-foreground/80">{entry.projectPath}</code>
                     </>
                   )}
                   {entry.path && (
                     <>
-                      <span>Folder</span>
+                      <span>Dosar</span>
                       <code className="text-foreground/80">{entry.path}</code>
                     </>
                   )}
                   {entry.threadTitle && (
                     <>
-                      <span>Thread</span>
+                      <span>Conversație</span>
                       <span>{entry.threadTitle}</span>
                     </>
                   )}
@@ -243,7 +243,7 @@ function CleanupResults({
                 <span className="text-xs text-muted-foreground">
                   {[
                     entry.kind !== "worktree" && entry.files !== null
-                      ? `${entry.files.toLocaleString()} ${entry.files === 1 ? "file" : "files"}`
+                      ? `${entry.files.toLocaleString()} ${entry.files === 1 ? "fișier" : "fișiere"}`
                       : null,
                     entry.bytes !== null ? formatBytes(entry.bytes) : null,
                   ]
@@ -332,10 +332,10 @@ function CleanupSection() {
       description: report
         ? `Last run ${formatRelativeTimeLabel(report.finishedAt)}. ${formatBytes(report.bytesFreed)} recovered.${report.counts.failed > 0 ? ` ${report.counts.failed} ${report.counts.failed === 1 ? "item" : "items"} couldn't be removed.` : ""}`
         : query?.failed
-          ? "Could not load the last run."
+          ? "Ultima rulare nu a putut fi încărcată."
           : query?.loading
-            ? "Loading last run…"
-            : "Cleanup hasn't run yet.",
+            ? "Se încarcă ultima rulare…"
+            : "Curățarea nu a rulat încă.",
     };
   });
   const deleteNow = async () => {
@@ -353,13 +353,13 @@ function CleanupSection() {
             if (failures.length > 0)
               toastManager.add({
                 type: "error",
-                title: `Cleanup failed on ${environment.label}`,
+                title: `Curățarea a eșuat pe ${environment.label}`,
                 description: failures[0]!.reason,
               });
           } else if (!isAtomCommandInterrupted(result)) {
             toastManager.add({
               type: "error",
-              title: `Could not run cleanup on ${environment.label}`,
+              title: `Curățarea nu a putut rula pe ${environment.label}`,
               description: String(squashAtomCommandFailure(result)),
             });
           }
@@ -367,14 +367,14 @@ function CleanupSection() {
     ).finally(() => setPending(false));
   };
   return (
-    <SettingsSection id="storage-cleanup" title="Cleanup" variant="plain">
+    <SettingsSection id="storage-cleanup" title="Curățare" variant="plain">
       <SettingsGroup>
         <SettingsRow
           {...searchableSetting("storage-delete-now")}
           description={
             <span>
               {!hasRules
-                ? "Turn on a cleanup rule to use this."
+                ? "Activează o regulă de curățare ca s-o folosești."
                 : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
                       {supported.length > 1 ? `${label}: ` : ""}
@@ -390,7 +390,7 @@ function CleanupSection() {
               disabled={pending || !hasRules || !state.some((entry) => entry.allowed)}
               onClick={() => void deleteNow()}
             >
-              {pending ? "Deleting…" : "Delete now"}
+              {pending ? "Se șterge…" : "Șterge acum"}
             </Button>
           }
         />
@@ -398,7 +398,7 @@ function CleanupSection() {
       {summaries.some(({ report }) => report !== null) && (
         <FoldedSettingsSection
           id="storage-cleanup-last-run"
-          title="Last run"
+          title="Ultima rulare"
           headerPlacement="inside"
           summary={lastRunSummary(
             summaries.filter(({ report }) => report !== null),
@@ -444,7 +444,7 @@ export function StorageSettingsPanel() {
           key
         ] !== settings[key],
     )
-      ? "Mixed across selected machines"
+      ? "Diferă între calculatoarele selectate"
       : undefined;
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
@@ -462,7 +462,7 @@ export function StorageSettingsPanel() {
   ) {
     return (
       <SettingsScopeNotice target="all">
-        Update the selected machines to configure project worktree cleanup.
+        Actualizează calculatoarele selectate ca să configurezi curățarea worktree-urilor.
       </SettingsScopeNotice>
     );
   }
@@ -498,17 +498,17 @@ export function StorageSettingsPanel() {
           )}
         />
       )}
-      <SettingsSection id="storage-worktrees" title="Worktrees">
+      <SettingsSection id="storage-worktrees" title="Worktree-uri">
         {!isProjectScope && <WorktreesDirectoryRow />}
         {isProjectScope && (
           <SettingsRow
-            title="Automatic worktree cleanup"
+            title="Curățare automată worktree-uri"
             description={
               mode === "off"
-                ? "Keep this project's worktrees until you delete them manually."
+                ? "Păstrează worktree-urile proiectului până le ștergi manual."
                 : mode === "custom"
-                  ? "Use these rules for this project."
-                  : "Use each machine's worktree cleanup settings."
+                  ? "Folosește aceste reguli pentru acest proiect."
+                  : "Folosește setările de curățare ale fiecărui calculator."
             }
             serverScoped
             settingKeys={["worktreeCleanup"]}
@@ -523,21 +523,21 @@ export function StorageSettingsPanel() {
                     updateSettings({ worktreeCleanup: { mode: "custom", rules: {} } });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Automatic worktree cleanup">
+                <SelectTrigger size="sm" aria-label="Curățare automată worktree-uri">
                   <SelectValue>
                     {mixedModes
-                      ? "Mixed"
+                      ? "Mixt"
                       : mode === "inherit"
-                        ? "Inherit"
+                        ? "Moștenește"
                         : mode === "off"
-                          ? "Off"
-                          : "Custom"}
+                          ? "Oprit"
+                          : "Personalizat"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="inherit">Moștenește</SelectItem>
+                  <SelectItem value="off">Oprit</SelectItem>
+                  <SelectItem value="custom">Personalizat</SelectItem>
                 </SelectPopup>
               </Select>
             }
@@ -546,26 +546,26 @@ export function StorageSettingsPanel() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
+              title="Șterge worktree-urile conversațiilor șterse"
               status={ruleStatus("worktreeOnDelete")}
-              description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
+              description="Elimină worktree-urile nefolosite când se șterg conversații active sau arhivate. Cele cu modificări locale se păstrează."
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label="Delete worktrees with deleted threads"
+                  aria-label="Șterge worktree-urile conversațiilor șterse"
                   checked={settings.worktreeOnDelete}
                   onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
                 />
               }
             />
             <SettingsRow
-              title="Delete inactive worktrees"
+              title="Șterge worktree-urile inactive"
               status={ruleStatus("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
+              description="Elimină worktree-urile după ce conversațiile lor au fost inactive atâtea zile. Branch-urile și istoricul se păstrează."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
-                  label="Delete inactive worktrees"
+                  label="Șterge worktree-urile inactive"
                   value={settings.worktreeAfterDays}
                   onChange={(worktreeAfterDays) => updateWorktree({ worktreeAfterDays })}
                 />
@@ -578,20 +578,20 @@ export function StorageSettingsPanel() {
                   true,
               ) && (
                 <SettingsRow
-                  title="Delete settled worktrees"
+                  title="Șterge worktree-urile finalizate"
                   status={[
                     ruleStatus("worktreeSettledAfterDays"),
                     environments.length > connectedEnvironments.length
-                      ? "Offline machines will not get this setting"
+                      ? "Calculatoarele offline nu vor primi această setare"
                       : undefined,
                   ]
                     .filter(Boolean)
                     .join(". ")}
-                  description="Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept."
+                  description="Elimină worktree-urile la atâtea zile după finalizarea conversației. Setează 0 ca să fie eliminate la următoarea curățare. Branch-urile și istoricul se păstrează."
                   serverScoped={!isProjectScope}
                   control={
                     <RetentionControl
-                      label="Delete settled worktrees"
+                      label="Șterge worktree-urile finalizate"
                       value={settings.worktreeSettledAfterDays}
                       minimum={0}
                       onChange={(worktreeSettledAfterDays) =>
@@ -602,20 +602,20 @@ export function StorageSettingsPanel() {
                 />
               )}
             <SettingsRow
-              title="Delete merged worktrees"
+              title="Șterge worktree-urile cu merge"
               status={ruleStatus("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
+              description="Elimină worktree-urile al căror pull request a fost îmbinat și ale căror commit-uri sunt în branch-ul implicit."
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label="Delete merged worktrees"
+                  aria-label="Șterge worktree-urile cu merge"
                   checked={settings.worktreeOnMerge}
                   onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
                 />
               }
             />
             <SettingsRow
-              title="Delete unchanged worktrees"
+              title="Șterge worktree-urile nemodificate"
               status={ruleStatus("worktreeUnchanged")}
               description="Remove worktrees with no commits beyond the default branch."
               serverScoped={!isProjectScope}
@@ -657,7 +657,7 @@ export function StorageSettingsPanel() {
                     <SelectTrigger size="sm" aria-label="Keep worktrees with local changes">
                       <SelectValue>
                         {ruleStatus("worktreeKeepWhen")
-                          ? "Mixed"
+                          ? "Mixt"
                           : KEEP_WHEN_LABELS[settings.worktreeKeepWhen]}
                       </SelectValue>
                     </SelectTrigger>

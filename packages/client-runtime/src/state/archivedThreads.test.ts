@@ -23,7 +23,7 @@ it("does not expose an archived snapshot failure message", () => {
 
   expect(registry.get(snapshotsAtom(makeArchivedThreadsEnvironmentKey([environmentId])))).toEqual({
     snapshots: [],
-    error: "Failed to load archived threads.",
+    error: "Conversațiile arhivate nu au putut fi încărcate.",
     isLoading: false,
   });
 

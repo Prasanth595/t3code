@@ -38,7 +38,7 @@ export function PreviewEmptyState({
         <EmptyMedia variant="icon">
           <Globe className="size-4.5 text-muted-foreground" />
         </EmptyMedia>
-        <EmptyTitle>No preview yet</EmptyTitle>
+        <EmptyTitle>Nicio previzualizare încă</EmptyTitle>
         <EmptyDescription>
           Type a URL above, or run a dev script. Browser-ready localhost servers will show up here
           automatically.
@@ -86,7 +86,7 @@ export function PreviewEmptyState({
               ))}
             </DiscoveryList>
             <p className="px-1 text-xs text-muted-foreground">
-              Select a live local server to open it in this browser tab.
+              Alege un server local activ ca să-l deschizi în această filă.
             </p>
           </div>
         ) : null}

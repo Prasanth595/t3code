@@ -27,7 +27,7 @@ export function ComposerFeedback({
           </Text>
           {submission.status !== "uploading" ? (
             <Pressable
-              accessibilityLabel="Dismiss feedback notice"
+              accessibilityLabel="Închide notificarea de feedback"
               accessibilityRole="button"
               hitSlop={12}
               onPress={onDismiss}
@@ -49,7 +49,7 @@ export function ComposerFeedback({
         ) : null}
         {submission.status === "sent" ? (
           <Button
-            label="Copy ID"
+            label="Copiază ID-ul"
             tone="text"
             onPress={() =>
               copyTextWithHaptic(submission.feedbackId, { target: "Codex feedback thread ID" })

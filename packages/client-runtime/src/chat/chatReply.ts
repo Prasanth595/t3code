@@ -123,12 +123,12 @@ export async function requestChatReply(request: ChatReplyRequest): Promise<ChatR
       },
     );
   } catch {
-    return failure("network", "Could not reach Mira. Check your internet connection.");
+    return failure("network", "Nu am putut contacta Mira. Verifică conexiunea la internet.");
   }
   if (!response.ok || response.body === null) {
     const body = await response.text().catch(() => "");
     return Option.match(decodeError(body), {
-      onNone: () => failure("upstream_unavailable", "Mira could not answer. Try again."),
+      onNone: () => failure("upstream_unavailable", "Mira nu a putut răspunde. Încearcă din nou."),
       onSome: ({ error }) => failure(error.code, error.message),
     });
   }
@@ -150,7 +150,7 @@ export async function requestChatReply(request: ChatReplyRequest): Promise<ChatR
   }
   if (!decoder.done) {
     // Half a reply would be saved as if it were whole; retrying asks for all of it again.
-    return failure("network", "The answer was cut off. Try again.");
+    return failure("network", "Răspunsul s-a întrerupt. Încearcă din nou.");
   }
   return { ok: true, text: decoder.text };
 }

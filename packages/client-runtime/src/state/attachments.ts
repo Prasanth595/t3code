@@ -171,7 +171,7 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
       status: "failed",
       step: "resolve-url",
       attachmentId,
-      error: new Error("The environment is not connected."),
+      error: new Error("Mediul nu e conectat."),
     };
   }
 
@@ -206,5 +206,5 @@ export function fileAttachmentTooLargeMessage(name: string, maxUploadBytes: numb
       : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
         ? `${maxUploadBytes / 1024} KB`
         : `${maxUploadBytes} ${maxUploadBytes === 1 ? "byte" : "bytes"}`;
-  return `'${name}' exceeds the ${maxUploadSize} attachment limit.`;
+  return `„${name}” depășește limita de ${maxUploadSize}.`;
 }

@@ -24,7 +24,7 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "The PDF could not be loaded.");
+          setError(cause instanceof Error ? cause.message : "PDF-ul nu a putut fi încărcat.");
         }
       });
     return () => {
@@ -37,14 +37,15 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
   if (error) {
     return (
       <View className="flex-1 gap-4 bg-card">
-        <FilePreviewNotice title="Could not load PDF">{error}</FilePreviewNotice>
+        <FilePreviewNotice title="PDF-ul nu a putut fi încărcat">{error}</FilePreviewNotice>
         <View className="items-center">
-          <ControlPill label="Try again" variant="pill" onPress={props.onRetry} />
+          <ControlPill label="Încearcă din nou" variant="pill" onPress={props.onRetry} />
         </View>
       </View>
     );
   }
-  if (localUri === null) return <FilePreviewLoading message="Loading PDF..." background="card" />;
+  if (localUri === null)
+    return <FilePreviewLoading message="Se încarcă PDF-ul..." background="card" />;
 
   return (
     <Pdf
@@ -61,7 +62,7 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
       onError={() => {
         cached.current?.dispose();
         cached.current = null;
-        setError("The PDF could not be rendered. It may be damaged or password protected.");
+        setError("PDF-ul nu a putut fi afișat. Poate fi deteriorat sau protejat cu parolă.");
       }}
       style={{ flex: 1, width: "100%" }}
     />

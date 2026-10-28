@@ -115,20 +115,20 @@ function TerminalHeader(props: {
       subtitle={props.subtitle}
       onBack={props.onCloseTerminal}
       backInSplitView={{
-        accessibilityLabel: "Back to chat",
+        accessibilityLabel: "Înapoi la chat",
         icon: "chevron.left",
       }}
       menus={
         props.isEnvironmentReady
           ? [
               {
-                title: "Terminal options",
+                title: "Opțiuni terminal",
                 icon: "terminal",
                 status: getTerminalStatusLabel(props.status),
                 items: [
                   {
                     id: "text-size",
-                    title: "Text size",
+                    title: "Mărime text",
                     icon: "textformat.size",
                     inline: true,
                     items: [
@@ -165,9 +165,9 @@ function TerminalHeader(props: {
                   {
                     id: "terminal-new",
                     disabled: !props.canOperateTerminal,
-                    title: "Open new terminal",
+                    title: "Terminal nou",
                     icon: "plus",
-                    subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
+                    subtitle: `Pornește alt shell în ${basename(props.workspaceRoot) ?? "acest spațiu de lucru"}`,
                     onPress: props.onOpenNewTerminal,
                   },
                 ],
@@ -1096,14 +1096,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   if (!selectedThread) {
     if (!connectionsReady) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return <LoadingScreen message="Se deschide terminalul…" />;
     }
 
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
+          title="Conversație indisponibilă"
+          detail="Terminalul are nevoie de o conversație și un spațiu de lucru active."
         />
       </View>
     );
@@ -1113,15 +1113,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          title="Terminal indisponibil"
+          detail="Conversația nu are încă un spațiu de lucru, așa că nu se poate deschide un shell."
         />
       </View>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return <LoadingScreen message="Se deschide terminalul…" />;
   }
 
   return (
@@ -1179,7 +1179,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               environmentLabel={
                 environment.presentation?.entry.target.label ??
                 selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
+                "Mediu"
               }
               connection={
                 environment.presentation?.connection ?? {
@@ -1193,38 +1193,38 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             />
           ) : terminalSession.data === null && terminalSession.error === null ? (
             <EmptyState
-              title="Checking terminal access"
-              detail="Waiting for this connection's permissions."
+              title="Se verifică accesul la terminal"
+              detail="Se așteaptă permisiunile conexiunii."
             />
           ) : !canReadTerminal && !canOperateTerminal ? (
             <EmptyState
               title={
                 terminalSession.error
-                  ? "Could not check terminal access"
-                  : "Terminal access unavailable"
+                  ? "Accesul la terminal nu a putut fi verificat"
+                  : "Acces la terminal indisponibil"
               }
               detail={
                 terminalSession.error ??
-                "This connection does not have permission to view terminals."
+                "Această conexiune nu are permisiunea de a vedea terminale."
               }
             />
           ) : canOperateTerminal && launchLocation === null ? (
             sessionsError !== null ? (
-              <EmptyState title="Could not load terminals" detail={sessionsError} />
+              <EmptyState title="Terminalele nu au putut fi încărcate" detail={sessionsError} />
             ) : (
-              <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+              <EmptyState title="Se încarcă terminalele" detail="Se citesc sesiunile existente." />
             )
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsPending ? (
-            <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+            <EmptyState title="Se încarcă terminalele" detail="Se citesc sesiunile existente." />
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsError !== null ? (
-            <EmptyState title="Could not load terminals" detail={sessionsError} />
+            <EmptyState title="Terminalele nu au putut fi încărcate" detail={sessionsError} />
           ) : !canOperateTerminal && !hasTerminalTarget ? (
             <EmptyState
-              title="No terminal sessions"
-              detail="Existing terminals will appear here when another client opens one."
+              title="Nicio sesiune de terminal"
+              detail="Terminalele vor apărea aici când un alt dispozitiv deschide unul."
             />
           ) : !canOperateTerminal && terminal.error !== null ? (
-            <EmptyState title="Terminal unavailable" detail={terminal.error} />
+            <EmptyState title="Terminal indisponibil" detail={terminal.error} />
           ) : (
             <>
               <View
@@ -1252,8 +1252,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   onCapture={(text) => {
                     setCaptureRequest(0);
                     if (text.trim()) setCapturedOutput(text);
-                    else
-                      Dialog.alert("No terminal output", "There is no visible output to attach.");
+                    else Dialog.alert("Niciun rezultat", "Nu există rezultat vizibil de atașat.");
                   }}
                   onInput={handleInput}
                   onResize={handleResize}
@@ -1266,11 +1265,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               {Platform.OS === "android" && !keyboardState.isVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {selectedThread && hasNativeTerminalSurface() ? (
-                    <Button label="Attach output" tone="text" onPress={requestCapture} />
+                    <Button label="Atașează rezultatul" tone="text" onPress={requestCapture} />
                   ) : null}
                   <View className="flex-1" />
                   <IconButton
-                    accessibilityLabel="Show keyboard"
+                    accessibilityLabel="Arată tastatura"
                     disabled={!canOperateTerminal}
                     icon="keyboard"
                     onPress={handleShowKeyboard}
@@ -1285,7 +1284,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   }}
                   className="px-4 py-2"
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+                  <Text style={{ color: terminalTheme.foreground }}>
+                    Atașează rezultatul vizibil
+                  </Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (
@@ -1330,7 +1331,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                         })}
                       </ComposerToolbarScroller>
                       <ComposerToolbarButton
-                        accessibilityLabel="Dismiss keyboard"
+                        accessibilityLabel="Ascunde tastatura"
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                         onPress={handleDismissKeyboard}
                         showChevron={false}
@@ -1340,7 +1341,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 </KeyboardStickyView>
               ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
                 <Pressable
-                  accessibilityLabel="Show keyboard"
+                  accessibilityLabel="Arată tastatura"
                   accessibilityRole="button"
                   onPress={handleShowKeyboard}
                   style={({ pressed }) => ({

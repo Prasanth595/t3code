@@ -12,8 +12,10 @@ export function BrowserPreviewButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={props.count === 1 ? "View browser" : `View ${props.count} browser tabs`}
-      accessibilityHint="Watch and control browser tabs open in this thread"
+      accessibilityLabel={
+        props.count === 1 ? "Vezi browserul" : `Vezi cele ${props.count} file din browser`
+      }
+      accessibilityHint="Urmărește și controlează filele de browser din această conversație"
       onPress={props.onPress}
       className={
         compact
@@ -24,7 +26,7 @@ export function BrowserPreviewButton(props: {
       <SymbolView name="globe" size={20} tintColorClassName="accent-icon" type="monochrome" />
       {!compact ? (
         <AppText className="font-t3-medium text-xs text-foreground">
-          {props.count === 1 ? "One tab open" : `${props.count} tabs open`}
+          {props.count === 1 ? "O filă deschisă" : `${props.count} file deschise`}
         </AppText>
       ) : props.count > 1 ? (
         <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-primary px-1">

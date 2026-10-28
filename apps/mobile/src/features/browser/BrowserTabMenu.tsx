@@ -18,13 +18,13 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 const APPEARANCES = [
-  { id: "system", title: "System" },
-  { id: "light", title: "Light" },
-  { id: "dark", title: "Dark" },
+  { id: "system", title: "Sistem" },
+  { id: "light", title: "Luminos" },
+  { id: "dark", title: "Întunecat" },
 ] as const;
 
 const VIEWPORTS = [
-  { id: "fill", title: "Fit to screen", setting: FILL_PREVIEW_VIEWPORT },
+  { id: "fill", title: "Potrivește pe ecran", setting: FILL_PREVIEW_VIEWPORT },
   ...(["Phone", "Tablet", "Desktop"] as const).flatMap((category) => {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((candidate) => candidate.category === category);
     if (!preset) return [];
@@ -70,16 +70,16 @@ export function BrowserTabMenu({
 
   const closeAction: MenuAction = {
     id: "close",
-    title: "Close tab",
+    title: "Închide fila",
     image: "xmark",
     attributes: { destructive: true, disabled: !canClose },
   };
   const actions: MenuAction[] = [
-    ...(onPaste ? [{ id: "paste", title: "Paste", image: "doc.on.clipboard" }] : []),
-    { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
+    ...(onPaste ? [{ id: "paste", title: "Lipește", image: "doc.on.clipboard" }] : []),
+    { id: "hard-reload", title: "Reîncărcare completă", image: "arrow.clockwise.circle" },
     {
       id: "appearance",
-      title: "Appearance",
+      title: "Aspect",
       image: "circle.lefthalf.filled",
       subactions: APPEARANCES.map((option) => ({
         id: `appearance:${option.id}`,
@@ -92,9 +92,9 @@ export function BrowserTabMenu({
       title: `Zoom (${Math.round(zoomFactor * 100)}%)`,
       image: "plus.magnifyingglass",
       subactions: [
-        { id: "zoom:in", title: "Zoom in", image: "plus.magnifyingglass" },
-        { id: "zoom:out", title: "Zoom out", image: "minus.magnifyingglass" },
-        { id: "zoom:reset", title: "Actual size", image: "1.magnifyingglass" },
+        { id: "zoom:in", title: "Mărește", image: "plus.magnifyingglass" },
+        { id: "zoom:out", title: "Micșorează", image: "minus.magnifyingglass" },
+        { id: "zoom:reset", title: "Mărime reală", image: "1.magnifyingglass" },
       ],
     },
     {
@@ -109,11 +109,11 @@ export function BrowserTabMenu({
     },
     {
       id: "site-data",
-      title: "Site data",
+      title: "Datele site-ului",
       image: "trash",
       subactions: [
-        { id: "clear:cookies", title: "Clear cookies", attributes: { destructive: true } },
-        { id: "clear:cache", title: "Clear cache", attributes: { destructive: true } },
+        { id: "clear:cookies", title: "Șterge cookie-urile", attributes: { destructive: true } },
+        { id: "clear:cache", title: "Șterge cache-ul", attributes: { destructive: true } },
       ],
     },
     closeAction,
@@ -160,12 +160,12 @@ export function BrowserTabMenu({
       // the other state's actions.
       key={streaming ? "streaming" : "idle"}
       accessible
-      accessibilityLabel="Browser tab options"
+      accessibilityLabel="Opțiuni filă"
       accessibilityRole="button"
       actions={streaming ? actions : [closeAction]}
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
-      <ControlPill icon="ellipsis" accessibilityLabel="Browser tab options" />
+      <ControlPill icon="ellipsis" accessibilityLabel="Opțiuni filă" />
     </Menu>
   );
 }

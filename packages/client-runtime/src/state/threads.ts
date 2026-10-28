@@ -64,14 +64,14 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "Could not synchronize the thread.";
+    : "Conversația nu a putut fi sincronizată.";
 }
 
 function formatHistoryError(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return "Could not load earlier activity.";
+  return "Activitatea anterioară nu a putut fi încărcată.";
 }
 
 function historyMetaFromCachedSnapshot(
@@ -695,7 +695,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     const runLoad = Effect.gen(function* () {
       const preparedOption = yield* SubscriptionRef.get(supervisor.prepared);
       if (Option.isNone(preparedOption) || Option.isNone(httpClient))
-        return yield* failLoad("Environment is not connected.");
+        return yield* failLoad("Mediul nu e conectat.");
 
       const views =
         throughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
@@ -971,7 +971,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onDefect: () => setStreamError("Could not synchronize the thread."),
+        onDefect: () => setStreamError("Conversația nu a putut fi sincronizată."),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,

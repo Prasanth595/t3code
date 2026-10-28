@@ -72,7 +72,7 @@ export function SettingsRouteScreen() {
         <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
           {Platform.OS === "android" ? (
             <SettingsScreen
-              title="Settings"
+              title="Setări"
               trailing={<AndroidSettingsEnvironmentFilter />}
               search={
                 workspace
@@ -80,7 +80,7 @@ export function SettingsRouteScreen() {
                       value: workspace.state.tabs.settings.query,
                       onChangeText: (query) =>
                         workspace.dispatch({ type: "query", tab: "settings", query }),
-                      placeholder: "Search settings",
+                      placeholder: "Caută în setări",
                     }
                   : undefined
               }
@@ -109,10 +109,10 @@ function ConfiguredSettingsRouteScreen() {
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const accountLabel = !isLoaded
-    ? "Checking"
+    ? "Se verifică"
     : !isSignedIn
-      ? "Sign in"
-      : (user?.primaryEmailAddress?.emailAddress ?? "Signed in");
+      ? "Autentifică-te"
+      : (user?.primaryEmailAddress?.emailAddress ?? "Autentificat");
 
   return (
     <SettingsList
@@ -120,7 +120,7 @@ function ConfiguredSettingsRouteScreen() {
         {
           id: "account",
           icon: "person.crop.circle",
-          label: "T3 Account",
+          label: "Cont Mira",
           value: accountLabel,
           disabled: !isLoaded,
           onPress: () => navigation.navigate("SettingsAuth"),
@@ -129,7 +129,7 @@ function ConfiguredSettingsRouteScreen() {
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
-          label: "Notifications",
+          label: "Notificări",
           target: "SettingsNotifications",
         },
       ]}
@@ -146,7 +146,7 @@ function environmentsRow(count: number): SettingsListRow {
   return {
     id: "SettingsEnvironments",
     icon: "desktopcomputer",
-    label: "Environments",
+    label: "Medii",
     value: `${count}`,
     valuePosition: "trailing",
     target: "SettingsEnvironments",
@@ -164,7 +164,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
   const sections = filterSettingsSections(
-    [{ rows: overflowRows }, { title: "Connections", rows: props.connections }, ...indexSections],
+    [{ rows: overflowRows }, { title: "Conexiuni", rows: props.connections }, ...indexSections],
     query,
   );
 
@@ -195,8 +195,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
         ) : (
           <EmptyState
             variant="plain"
-            title="No results"
-            detail={`No settings match “${query.trim()}”.`}
+            title="Niciun rezultat"
+            detail={`Nicio setare pentru „${query.trim()}”.`}
           />
         )}
       </ScrollView>
@@ -220,7 +220,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
           representative: scopedProjectMembers[0]!,
           members: scopedProjectMembers,
         })
-      : (selectedProject?.label ?? "Unavailable project");
+      : (selectedProject?.label ?? "Proiect indisponibil");
   const page = (
     target: SettingsPageTarget,
     icon: SettingsListRow["icon"],
@@ -231,49 +231,57 @@ function useSettingsIndexSections(): SettingsListSection[] {
     page(target, icon, label, { disabled: noServerTargets });
   return [
     {
-      title: "Interface",
+      title: "Interfață",
       rows: [
-        page("SettingsAppearance", "paintbrush", "Appearance"),
+        page("SettingsAppearance", "paintbrush", "Aspect"),
         ...(navigationCustomizationAvailable()
-          ? [page("SettingsNavigation", "line.3.horizontal", "Navigation tabs")]
+          ? [page("SettingsNavigation", "line.3.horizontal", "File de navigare")]
           : []),
         ...(Platform.OS === "ios"
           ? [
-              page("SettingsKeyboard", "keyboard", "Keyboard"),
-              page("SettingsMicrophone", "mic", "Microphone"),
+              page("SettingsKeyboard", "keyboard", "Tastatură"),
+              page("SettingsMicrophone", "mic", "Microfon"),
             ]
           : []),
       ],
     },
     {
-      title: "Automations",
-      rows: [page("SettingsScheduledTasks", "clock", "Scheduled tasks")],
+      title: "Automatizări",
+      rows: [page("SettingsScheduledTasks", "clock", "Sarcini programate")],
     },
     {
-      title: "Projects & threads",
+      title: "Proiecte și conversații",
       rows: [
         ...(selectedProjectKey !== null
-          ? [page("SettingsProjectOverview", "folder", "Overview", { value: projectLabel })]
+          ? [page("SettingsProjectOverview", "folder", "Prezentare", { value: projectLabel })]
           : []),
-        page("SettingsOrganization", "folder", "Organization"),
-        page("SettingsThreads", "text.bubble", "Thread behavior"),
-        page("SettingsFollowUp", "arrow.turn.left.up", "Follow-ups"),
-        page("SettingsArchive", "archivebox", "Archived Threads"),
+        page("SettingsOrganization", "folder", "Organizare"),
+        page("SettingsThreads", "text.bubble", "Comportament conversații"),
+        page("SettingsFollowUp", "arrow.turn.left.up", "Mesaje ulterioare"),
+        page("SettingsArchive", "archivebox", "Conversații arhivate"),
       ],
     },
     {
-      title: "Server settings",
+      title: "Setări server",
       rows: [
-        serverPage("SettingsProviderAccounts", "person.crop.circle", "Provider accounts"),
-        serverPage("SettingsEnvironmentNewThreads", "text.bubble", "New threads"),
-        serverPage("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
-        serverPage("SettingsEnvironmentAgentBehavior", "text.alignleft", "Agent behavior"),
-        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
+        serverPage("SettingsProviderAccounts", "person.crop.circle", "Conturi furnizori"),
+        serverPage("SettingsEnvironmentNewThreads", "text.bubble", "Conversații noi"),
+        serverPage(
+          "SettingsEnvironmentSourceControl",
+          "arrow.triangle.branch",
+          "Controlul versiunilor",
+        ),
+        serverPage(
+          "SettingsEnvironmentAgentBehavior",
+          "text.alignleft",
+          "Comportamentul agentului",
+        ),
+        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Întreținere"),
       ],
     },
     {
-      title: "App",
-      rows: [page("SettingsAbout", "info.circle", "About Mira")],
+      title: "Aplicație",
+      rows: [page("SettingsAbout", "info.circle", "Despre Mira")],
     },
   ];
 }

@@ -67,12 +67,12 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     !pr || allowed
       ? null
       : !permissions.connected
-        ? "Reconnect to save changes."
+        ? "Reconectează-te ca să salvezi."
         : !canWrite
-          ? "This device isn't allowed to change source control on this environment."
+          ? "Acest dispozitiv nu are voie să modifice controlul versiunilor în acest mediu."
           : params.field === "comment"
-            ? "You can't edit this comment."
-            : `You can't edit this ${singular}.`;
+            ? "Nu poți edita acest comentariu."
+            : `Nu poți edita acest ${singular}.`;
   const unchanged = draft === null || draft === original;
   const invalid = params.field === "title" && value.trim().length === 0;
   const save = async () => {
@@ -102,7 +102,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "The provider refused the change.");
+      setError(cause instanceof Error ? cause.message : "Furnizorul a refuzat modificarea.");
       return;
     }
     // updateComment refreshes the activity on its own; a title or body lives on the detail.
@@ -111,10 +111,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   };
   const title =
     params.field === "title"
-      ? "Edit title"
+      ? "Editează titlul"
       : params.field === "body"
-        ? "Edit description"
-        : "Edit comment";
+        ? "Editează descrierea"
+        : "Editează comentariul";
   return (
     <PullRequestSheetContent
       busy={busy}
@@ -124,7 +124,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         <Button
           fullWidth
           tone="contrast"
-          label={busy ? "Saving…" : "Save"}
+          label={busy ? "Se salvează…" : "Salvează"}
           loading={busy}
           disabled={!allowed || unchanged || invalid || original === null}
           onPress={() => void save()}
@@ -137,12 +137,12 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         autoFocus
         accessibilityLabel={
           params.field === "title"
-            ? `${capitalizeTerm(singular)} title`
+            ? `Titlul ${singular}`
             : params.field === "body"
-              ? `${capitalizeTerm(singular)} description`
-              : "Comment"
+              ? `Descrierea ${singular}`
+              : "Comentariu"
         }
-        placeholder={params.field === "title" ? "Title" : "Write in Markdown…"}
+        placeholder={params.field === "title" ? "Titlu" : "Scrie în Markdown…"}
         placeholderTextColorClassName="accent-foreground-muted"
         maxLength={params.field === "title" ? 1024 : 65536}
         value={value}

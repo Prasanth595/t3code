@@ -496,13 +496,13 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   hasRunningThread: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
   return [
-    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    { id: "mark-unread", label: `Marchează necitite (${input.count})` },
     {
       id: "archive",
-      label: `Archive (${input.count})`,
+      label: `Arhivează (${input.count})`,
       disabled: input.hasRunningThread,
     },
-    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+    { id: "delete", label: `Șterge (${input.count})`, destructive: true },
   ];
 }
 
@@ -553,7 +553,7 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
   if (input.actionableCount === 0) {
     return {
       id: "regenerate-title",
-      label: `Regenerating… (${input.supportedCount})`,
+      label: `Se regenerează… (${input.supportedCount})`,
       disabled: true,
     };
   }

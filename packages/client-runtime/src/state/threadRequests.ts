@@ -55,7 +55,7 @@ export interface ThreadPendingApproval {
   readonly supportsFeedback?: boolean;
 }
 
-export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
+export const FULL_ACCESS_OVERRIDE_QUESTION = "De ce mi se cere asta?";
 
 export function fullAccessOverrideExplanation(
   override: ProviderApprovalFullAccessOverride,

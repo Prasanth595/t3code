@@ -23,10 +23,10 @@ interface ComposerPendingApprovalActionsProps {
 }
 
 const DEFAULT_APPROVAL_OPTIONS = [
-  { decision: "cancel", label: "Cancel" },
-  { decision: "decline", label: "Decline" },
-  { decision: "acceptForSession", label: "Always allow this session" },
-  { decision: "accept", label: "Approve" },
+  { decision: "cancel", label: "Anulează" },
+  { decision: "decline", label: "Refuză" },
+  { decision: "acceptForSession", label: "Permite mereu în această sesiune" },
+  { decision: "accept", label: "Aprobă" },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
@@ -77,7 +77,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         <Menu>
           <MenuTrigger
             disabled={disabled || isResponding}
-            render={<Button size="icon-xs" variant="outline" aria-label="More approval options" />}
+            render={
+              <Button size="icon-xs" variant="outline" aria-label="Mai multe opțiuni de aprobare" />
+            }
           >
             <EllipsisIcon />
           </MenuTrigger>

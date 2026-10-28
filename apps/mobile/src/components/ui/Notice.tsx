@@ -51,7 +51,7 @@ export function Notice(props: {
       {props.onDismiss ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={props.dismissLabel ?? "Dismiss message"}
+          accessibilityLabel={props.dismissLabel ?? "Închide mesajul"}
           onPress={props.onDismiss}
           hitSlop={10}
           className="min-h-6 min-w-6 items-center justify-center active:opacity-60"

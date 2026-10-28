@@ -30,7 +30,7 @@ export function ProjectCloneBanner(props: {
             {projectCloneProgressSummary(clone)}
           </Text>
         </View>
-        <BannerAction label="Cancel" onPress={props.onCancel} />
+        <BannerAction label="Anulează" onPress={props.onCancel} />
       </View>
     );
   }
@@ -49,7 +49,7 @@ export function ProjectCloneBanner(props: {
         )}
         numberOfLines={1}
       >
-        {cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`}
+        {cancelled ? `Clonarea ${name} a fost anulată` : `Clonarea ${name} a eșuat`}
       </Text>
       {clone.error ? (
         <Text className="mt-0.5 text-xs text-danger-foreground" numberOfLines={3}>
@@ -57,8 +57,8 @@ export function ProjectCloneBanner(props: {
         </Text>
       ) : null}
       <View className="mt-2 flex-row justify-end gap-2">
-        <BannerAction label="Remove project" onPress={props.onRemove} />
-        <BannerAction label="Retry" onPress={props.onRetry} />
+        <BannerAction label="Elimină proiectul" onPress={props.onRemove} />
+        <BannerAction label="Reîncearcă" onPress={props.onRetry} />
       </View>
     </View>
   );

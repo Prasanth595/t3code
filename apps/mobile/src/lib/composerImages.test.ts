@@ -129,7 +129,7 @@ describe("composer clipboard paste", () => {
     clipboard.hasImageAsync.mockResolvedValue(true);
     expect(
       await pasteComposerClipboard({ existingCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }),
-    ).toEqual({ images: [], text: null, error: expect.stringContaining("up to") });
+    ).toEqual({ images: [], text: null, error: expect.stringContaining("cel mult") });
     expect(clipboard.getStringAsync).not.toHaveBeenCalled();
   });
 });

@@ -96,7 +96,7 @@ export function WorkspaceInspectorPane(props: {
     <>
       {inspectorVisible ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize detail pane"
+          accessibilityLabel="Redimensionează panoul"
           currentWidth={inspectorWidth ?? 0}
           resizeDirection={-1}
           onResizeStart={beginResize}
@@ -117,7 +117,7 @@ export function WorkspaceInspectorPane(props: {
             <RenderErrorBoundary
               resetKeys={[props.pathname]}
               renderFallback={(fallback) => (
-                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+                <RenderFailureView {...fallback} title="Inspectorul nu a putut fi afișat" />
               )}
             >
               <InspectorRenderer render={props.renderInspector} />

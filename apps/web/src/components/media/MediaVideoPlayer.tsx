@@ -153,7 +153,7 @@ export function MediaVideoPlayer({
                 onClick={() => void retry()}
               >
                 <RotateCwIcon />
-                {retrying ? "Retrying…" : "Retry video"}
+                {retrying ? "Se reîncearcă…" : "Reîncearcă video-ul"}
               </Button>
             ) : null}
             <OpenMediaLink originalUrl={originalUrl} src={latestSrc ?? src} fileName={label} />
@@ -164,7 +164,7 @@ export function MediaVideoPlayer({
           key={loadAttempt}
           ref={setVideo}
           src={src}
-          aria-label={label || "Video preview"}
+          aria-label={label || "Previzualizare video"}
           aria-hidden={onOpen ? true : undefined}
           autoPlay={onOpen ? false : autoPlay}
           controls={!onOpen}
@@ -196,7 +196,7 @@ export function MediaVideoPlayer({
       ) : (
         <span
           role="status"
-          aria-label={failed ? "Video preview unavailable" : "Loading video"}
+          aria-label={failed ? "Previzualizare video indisponibilă" : "Se încarcă video-ul"}
           className={cn("block aspect-video w-full rounded-lg bg-muted/60", stateClassName)}
           style={style}
         />
@@ -204,7 +204,7 @@ export function MediaVideoPlayer({
       {onOpen ? (
         <button
           type="button"
-          aria-label={label ? `Play ${label}` : "Play video"}
+          aria-label={label ? `Redă ${label}` : "Redă video-ul"}
           onClick={onOpen}
           className="absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
         >

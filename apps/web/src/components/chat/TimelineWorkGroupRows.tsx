@@ -94,7 +94,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   }
 
   return (
-    <section aria-label="Activity">
+    <section aria-label="Activitate">
       {nonEmptyEntries.map((workEntry) => (
         <SimpleWorkEntryRow
           key={workEntry.id}
@@ -268,7 +268,7 @@ function ExpandedWorkGroupEntries({
           onItemSizeChanged={updateExpandedContentHeight}
           tabIndex={0}
           role="region"
-          aria-label="Tool calls"
+          aria-label="Apeluri de instrumente"
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
@@ -286,10 +286,10 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
-  const compacting = row.compacting ?? (isCompacting ? "Compacting…" : undefined);
+  const compacting = row.compacting ?? (isCompacting ? "Se compactează…" : undefined);
   const shimmer = isPreparingWorktree || compacting !== undefined;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    "Se pregătește worktree-ul…"
   ) : compacting !== undefined ? (
     <CompactingLabel label={compacting} />
   ) : row.createdAt ? (
@@ -297,7 +297,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       Working for <WorkingTimer createdAt={row.createdAt} />
     </>
   ) : (
-    "Working..."
+    "Lucrează..."
   );
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
@@ -322,7 +322,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   const terminalId = snapshot.setupScript?.terminalId ?? null;
   const openTerminal = ctx.onOpenWorktreeSetupTerminal;
   const onOpenTerminal = openTerminal && terminalId ? () => openTerminal(terminalId) : null;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
+  const scriptName = snapshot.setupScript?.name ?? "Script de configurare";
   return (
     <Popover>
       <PopoverTrigger
@@ -331,7 +331,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
             variant="ghost-muted"
             size="micro"
             className="ml-auto min-w-0 shrink-0"
-            aria-label={`Background setup is still running: ${scriptName}. Show setup progress.`}
+            aria-label={`Configurarea din fundal încă rulează: ${scriptName}. Arată progresul.`}
           />
         }
       >
@@ -364,7 +364,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const activity = <LiveActivityRow label="Se gândește" iconName="brain" active shimmer />;
   const { groupId } = row;
   if (groupId === undefined) return activity;
   return (
@@ -452,7 +452,7 @@ function LiveActivityContent({
                   : "text-icon-muted",
             )}
             role={announceFailure ? "img" : undefined}
-            aria-label={announceFailure ? "Tool call failed" : undefined}
+            aria-label={announceFailure ? "Apelul instrumentului a eșuat" : undefined}
           >
             <ToolActivityIconView
               icon={toolIcon}
@@ -509,7 +509,7 @@ export function LiveWorkEntryTimelineRow({
       )}
       aria-label={
         failed
-          ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
+          ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, apelul instrumentului a eșuat`
           : undefined
       }
       aria-expanded={row.expanded}
@@ -534,7 +534,7 @@ export function LiveWorkEntryTimelineRow({
                 text={thoughtLine}
                 cwd={ctx.markdownCwd}
                 parseRawHtml={false}
-                extraRemarkPlugins={[[remarkThoughtPreview, "Thought"]]}
+                extraRemarkPlugins={[[remarkThoughtPreview, "S-a gândit"]]}
               />
             </span>
           }
@@ -545,9 +545,9 @@ export function LiveWorkEntryTimelineRow({
         label={
           thoughtIsStatus ? (
             row.active ? (
-              "Thinking"
+              "Se gândește"
             ) : (
-              "Thought"
+              "S-a gândit"
             )
           ) : row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
             <span className="flex min-w-0 gap-1.5">
@@ -562,7 +562,9 @@ export function LiveWorkEntryTimelineRow({
               text={row.entry.detail ?? label}
               cwd={ctx.markdownCwd}
               parseRawHtml={false}
-              extraRemarkPlugins={[[remarkThoughtPreview, row.active ? "Thinking" : "Thought"]]}
+              extraRemarkPlugins={[
+                [remarkThoughtPreview, row.active ? "Se gândește" : "S-a gândit"],
+              ]}
             />
           ) : threadLabel ? (
             <ThreadReadLabel
@@ -617,7 +619,7 @@ function WorkGroupHeader(props: {
   return (
     <WorkLogButton
       ref={props.active && !props.failed ? observeVisibleAnimation : undefined}
-      aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+      aria-label={props.failed ? `${props.label}, apelul instrumentului a eșuat` : props.label}
       aria-expanded={props.expanded}
       onClick={props.onToggle}
       icon={

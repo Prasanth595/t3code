@@ -25,13 +25,13 @@ export function chatListSections(
     const at = Date.parse(chat.updatedAt);
     const title =
       at >= today
-        ? "Today"
+        ? "Azi"
         : at >= today - DAY_MS
-          ? "Yesterday"
+          ? "Ieri"
           : at >= today - 7 * DAY_MS
-            ? "Previous 7 days"
+            ? "Ultimele 7 zile"
             : at >= today - 30 * DAY_MS
-              ? "Previous 30 days"
+              ? "Ultimele 30 de zile"
               : MONTH_FORMATTER.format(at);
     const last = sections.at(-1);
     if (last?.title === title) last.chats.push(chat);

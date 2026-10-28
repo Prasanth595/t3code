@@ -43,7 +43,7 @@ export function resolveFilesystemReadAccess(input: {
     return {
       canReadFiles: false,
       isPending,
-      error: isPending ? null : (input.connection?.error ?? "This environment is not connected."),
+      error: isPending ? null : (input.connection?.error ?? "Mediul nu e conectat."),
     };
   }
   return {

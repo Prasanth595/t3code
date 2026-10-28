@@ -14,7 +14,7 @@ import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   if (props.uri === null) {
-    return <FilePreviewLoading message="Preparing preview..." background="card" />;
+    return <FilePreviewLoading message="Se pregătește previzualizarea..." background="card" />;
   }
   return <DocumentWebPreview key={props.uri} uri={props.uri} />;
 }
@@ -51,7 +51,7 @@ function DocumentWebPreview(props: { readonly uri: string }) {
           <PdfPreview key={linkedPdf} uri={linkedPdf} />
           <SafeAreaView edges={["bottom"]} className="border-t border-border px-4 py-2">
             <ControlPill
-              label="Back to document"
+              label="Înapoi la document"
               variant="pill"
               onPress={() => setLinkedPdf(null)}
             />
@@ -92,7 +92,7 @@ function DocumentWebPreview(props: { readonly uri: string }) {
           }}
           onError={(event) => {
             setLoadProgress(0);
-            setLoadError(event.nativeEvent.description || "The file could not be rendered.");
+            setLoadError(event.nativeEvent.description || "Fișierul nu a putut fi afișat.");
           }}
           renderLoading={() => (
             <View className="absolute inset-0 items-center justify-center bg-card">

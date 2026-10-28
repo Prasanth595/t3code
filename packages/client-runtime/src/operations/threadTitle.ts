@@ -24,7 +24,7 @@ export function threadTitleTextFromPrompt(value: string): string {
   });
   return (
     normalizeTitleSeed(prose) ||
-    (imageIds.size > 0 ? (imageIds.size === 1 ? "Attached image" : "Attached images") : "")
+    (imageIds.size > 0 ? (imageIds.size === 1 ? "Imagine atașată" : "Imagini atașate") : "")
   );
 }
 
@@ -36,12 +36,12 @@ export function deriveThreadTitleSeed(input: ThreadTitleSeedInput): string {
 
   const images = input.attachments.filter((attachment) => attachment.type === "image");
   if (images.length > 0) {
-    return images.length === 1 ? "Attached image" : "Attached images";
+    return images.length === 1 ? "Imagine atașată" : "Imagini atașate";
   }
 
   const attachmentName = normalizeTitleSeed(input.attachments[0]?.name ?? "");
   if (attachmentName.length > 0) {
-    return truncate(`File: ${attachmentName}`);
+    return truncate(`Fișier: ${attachmentName}`);
   }
 
   for (const label of input.fallbackLabels ?? []) {

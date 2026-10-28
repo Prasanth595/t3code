@@ -46,23 +46,23 @@ function HighlightedFuzzyText(props: {
 function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
   if (error) return error;
   const isSearching = query.trim().length > 0;
-  if (isPending) return isSearching ? "Searching workspace files…" : "Indexing workspace files…";
-  return isSearching ? "No matching files." : "No files found.";
+  if (isPending) return isSearching ? "Se caută în fișiere…" : "Se indexează fișierele…";
+  return isSearching ? "Niciun fișier găsit." : "Nu s-au găsit fișiere.";
 }
 
 function EmptyProjectFilePicker() {
   return (
     <CommandPaletteContent
-      aria-label="File picker"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search files…" }}
+      aria-label="Selector de fișiere"
+      escapeLabel="Înapoi"
+      footerActionLabel="Deschide fișierul"
+      inputProps={{ disabled: true, placeholder: "Caută fișiere…" }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        Deschide un proiect ca să-i cauți fișierele.
       </div>
     </CommandPaletteContent>
   );
@@ -110,11 +110,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label="Selector de fișiere"
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ placeholder: "Search files…" }}
+      escapeLabel="Înapoi"
+      footerActionLabel="Deschide fișierul"
+      inputProps={{ placeholder: "Caută fișiere…" }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);

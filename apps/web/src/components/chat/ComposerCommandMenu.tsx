@@ -141,16 +141,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill"
-                  ? "Searching workspace skills..."
+                  ? "Se caută abilități..."
                   : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
-                    : "Searching workspace files..."
+                    ? "Se caută pull request-ul..."
+                    : "Se caută în fișiere..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? "Nicio abilitate găsită. Încearcă / ca să vezi comenzile furnizorului."
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? "Niciun fișier sau dosar găsit."
+                      : "Nicio comandă găsită."))}
             </p>
           </div>
         )}
@@ -240,10 +240,10 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 }
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
-  "pull-request": "Pull requests",
-  "slash-command": "Commands",
-  skill: "Skills",
+  path: "Fișiere și dosare",
+  "pull-request": "Pull request-uri",
+  "slash-command": "Comenzi",
+  skill: "Abilități",
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
@@ -256,12 +256,12 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
 };
 
 const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  app: "App",
+  app: "Aplicație",
   repo: "Repo",
-  project: "Project",
+  project: "Proiect",
   personal: "Personal",
-  system: "System",
-  other: "Provider",
+  system: "Sistem",
+  other: "Furnizor",
 };
 
 function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
@@ -270,7 +270,7 @@ function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffi
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
       {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {props.showSkillSuffix ? " Abilitate" : null}
     </Badge>
   );
 }

@@ -232,7 +232,11 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
           if (persisted) {
             setDrafts(persisted);
           }
-          setError(cause instanceof Error ? cause : new Error("Could not import shared content."));
+          setError(
+            cause instanceof Error
+              ? cause
+              : new Error("Conținutul partajat nu a putut fi importat."),
+          );
         }
       }
     })().finally(() => {
@@ -271,10 +275,10 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     if (!error) {
       return;
     }
-    Dialog.alert("Could not import shared content", error.message, [
-      { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
+    Dialog.alert("Conținutul partajat nu a putut fi importat", error.message, [
+      { text: "Închide", style: "cancel", onPress: () => setError(null) },
       {
-        text: "Retry",
+        text: "Reîncearcă",
         onPress: () => {
           setError(null);
           void refresh();

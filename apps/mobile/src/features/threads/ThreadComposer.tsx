@@ -320,15 +320,15 @@ const COMPOSER_ATTACHMENT_ENTERING =
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 const FOLLOW_UP_ACTION_LABEL = {
-  queue: "Queue",
-  steer: "Steer now",
-  restart: "Restart turn",
+  queue: "La coadă",
+  steer: "Redirecționează acum",
+  restart: "Repornește runda",
 } as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
-  queue: "Run after the current turn",
-  steer: "Interrupt what the agent is doing",
-  restart: "Start the turn over with this message",
+  queue: "Rulează după runda curentă",
+  steer: "Întrerupe ce face agentul",
+  restart: "Reia runda cu acest mesaj",
 } as const;
 
 function SendActionButton(props: {
@@ -357,7 +357,7 @@ function SendActionButton(props: {
   );
   return (
     <Menu
-      accessibilityLabel="Choose how to send this message"
+      accessibilityLabel="Alege cum trimiți mesajul"
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
         id: action,
@@ -548,7 +548,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
     onShowUsageLimits(report);
     if (!report) {
-      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert("Limite indisponibile", "Acest furnizor nu raportează limite momentan.");
     }
     return report !== null;
   };
@@ -579,7 +579,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
-    label: props.selectedThread.title || "Untitled thread",
+    label: props.selectedThread.title || "Conversație fără titlu",
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
@@ -921,7 +921,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {modelUnavailable ? (
           <Button
-            label="Model unavailable. Open model settings."
+            label="Model indisponibil. Deschide setările modelului."
             tone="text"
             onPress={openSettings}
           />
@@ -1012,7 +1012,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={hasSidebarTabBar ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel="Oprește agentul"
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
@@ -1021,7 +1021,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={hasSidebarTabBar ? "large" : "regular"}
-                    accessibilityLabel="Resume queue"
+                    accessibilityLabel="Reia coada"
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
@@ -1144,11 +1144,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     } else {
                       Dialog.alert(
                         wouldExceedInputLimit
-                          ? "Pasted text is too large for this message"
-                          : "Could not attach pasted text",
+                          ? "Textul lipit e prea mare pentru acest mesaj"
+                          : "Textul lipit nu a putut fi atașat",
                         wouldExceedInputLimit
-                          ? "Remove some text or an attachment, then paste again."
-                          : "Remove an attachment or use a smaller paste, then try again.",
+                          ? "Elimină o parte din text sau un atașament, apoi lipește din nou."
+                          : "Elimină un atașament sau lipește mai puțin text, apoi încearcă din nou.",
                       );
                     }
                     return;
@@ -1236,7 +1236,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                   {showStopAction ? (
                     <ComposerActionButton
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel="Oprește agentul"
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
@@ -1244,7 +1244,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
-                      accessibilityLabel="Resume queue"
+                      accessibilityLabel="Reia coada"
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
                       onPress={() => void handleResumeQueue()}
@@ -1265,7 +1265,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
         {props.connectionState === "connected" && !props.canOperateThread ? (
           <Text className="pt-2 text-xs text-foreground-muted">
-            This connection cannot control this task. You can still edit your draft.
+            Această conexiune nu poate controla sarcina. Poți totuși să-ți editezi ciorna.
           </Text>
         ) : null}
       </Animated.View>

@@ -236,10 +236,10 @@ export function describeUpdateCapsule(
 ): UpdateCapsuleView {
   if (run.phase === "countdown" && run.restartAt !== null) {
     const seconds = Math.max(0, Math.ceil((run.restartAt - now) / 1000));
-    return { tone: "default", label: `Restart in ${seconds}s`, action: "later" };
+    return { tone: "default", label: `Repornire în ${seconds}s`, action: "later" };
   }
   if (run.phase === "installing") {
-    return { tone: "default", label: "Restarting…", action: null };
+    return { tone: "default", label: "Se repornește…", action: null };
   }
   const active = machines.filter(({ status }) => isActive(status) && status !== "waiting");
   const slowest = active.toSorted((a, b) => a.machine.startedAt - b.machine.startedAt)[0];
@@ -261,7 +261,7 @@ export function describeUpdateCapsule(
   if (local?.status === "downloading") {
     return {
       tone: "default",
-      label: `Downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`,
+      label: `Se descarcă${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`,
       action: null,
     };
   }
@@ -311,7 +311,7 @@ export function collectUpdateEverythingResult(input: {
     updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
     restarting: [],
     failures: [
-      ...input.localFailures.map((failure) => `This app: ${failure}`),
+      ...input.localFailures.map((failure) => `Această aplicație: ${failure}`),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),
@@ -349,7 +349,7 @@ export function getUpdateEverythingToastView(
   }
   return {
     type: "error",
-    title: parts.length === 0 ? "Update failed" : `Updated ${joinList(parts)}`,
+    title: parts.length === 0 ? "Actualizarea a eșuat" : `Updated ${joinList(parts)}`,
     description: [...result.failures, ...restarting].join("\n"),
   };
 }

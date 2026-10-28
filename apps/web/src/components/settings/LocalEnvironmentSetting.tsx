@@ -31,7 +31,7 @@ export function LocalEnvironmentSetting() {
     try {
       await setEnabled(!enabled);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Couldn't change this setting.");
+      setError(cause instanceof Error ? cause.message : "Setarea nu a putut fi schimbată.");
       setIsUpdating(false);
     }
   };
@@ -42,15 +42,15 @@ export function LocalEnvironmentSetting() {
         {...searchableSetting("local-environment")}
         description={
           enabled
-            ? "Run agents on this computer. Turn off to use Mira only with remote environments."
-            : "Turned off. Agents only run in remote environments."
+            ? "Rulează agenți pe acest calculator. Dezactivează ca să folosești Mira doar cu medii la distanță."
+            : "Dezactivat. Agenții rulează doar în medii la distanță."
         }
         control={
           <Switch
             checked={enabled}
             disabled={isUpdating}
             onCheckedChange={() => setConfirmOpen(true)}
-            aria-label="Local environment"
+            aria-label="Mediu local"
           />
         }
       />
@@ -65,12 +65,12 @@ export function LocalEnvironmentSetting() {
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {enabled ? "Turn off local environment?" : "Turn on local environment?"}
+              {enabled ? "Dezactivezi mediul local?" : "Activezi mediul local?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {enabled
-                ? "Mira will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected."
-                : "Mira will restart and start running a server on this computer again."}
+                ? "Mira va reporni fără să ruleze un server pe acest calculator. Agenții și terminalele de aici se vor opri, iar alte dispozitive nu se vor mai putea conecta la el. Proiectele, istoricul și mediile la distanță nu sunt afectate."
+                : "Mira va reporni și va rula din nou un server pe acest calculator."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <p className="px-6 pb-4 text-sm text-destructive">{error}</p> : null}
@@ -89,9 +89,9 @@ export function LocalEnvironmentSetting() {
                   Restarting…
                 </>
               ) : enabled ? (
-                "Restart and turn off"
+                "Repornește și dezactivează"
               ) : (
-                "Restart and turn on"
+                "Repornește și activează"
               )}
             </Button>
           </AlertDialogFooter>

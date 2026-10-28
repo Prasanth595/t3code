@@ -56,8 +56,8 @@ function SubscriptionUsage(
   const primary = palette?.foreground ?? "primary";
   const secondary = palette?.secondary ?? "secondary";
   const providers = props.providers ?? [
-    { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
-    { name: "Claude", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
+    { name: "Codex", detail: "Deschide Mira ca să te conectezi", windows: [], expiresAt: 0 },
+    { name: "Claude", detail: "Deschide Mira ca să te conectezi", windows: [], expiresAt: 0 },
   ];
   const columns = providers.map((provider) => {
     const stale = provider.windows.length > 0 && now >= provider.expiresAt;
@@ -90,9 +90,9 @@ function SubscriptionUsage(
               ].slice(0, limit)
             : windows.slice(0, limit);
     const detail = stale
-      ? "Open T3 to refresh"
+      ? "Deschide Mira ca să actualizezi"
       : period !== "auto" && windows.length === 0 && provider.windows.length > 0
-        ? `No ${period} limit reported`
+        ? `Nicio limită ${period} raportată`
         : provider.detail;
     const barModifiers = [
       progressViewStyle("linear"),
@@ -109,7 +109,7 @@ function SubscriptionUsage(
             accessibilityElement("ignore"),
             accessibilityLabel(
               tightest
-                ? `${provider.name}, ${tightest.label}, ${tightest.remaining} percent remaining. ${tightest.reset}. ${provider.detail}.`
+                ? `${provider.name}, ${tightest.label}, ${tightest.remaining} procente rămase. ${tightest.reset}. ${provider.detail}.`
                 : `${provider.name}. ${detail}.`,
             ),
           ]}
@@ -138,7 +138,7 @@ function SubscriptionUsage(
                 ? `${tightest.remaining}% left`
                 : period !== "auto" && !stale && provider.windows.length > 0
                   ? "N/A"
-                  : "Open T3"}
+                  : "Deschide Mira"}
             </Text>
           </HStack>
           {tightest ? (
@@ -170,7 +170,7 @@ function SubscriptionUsage(
           <Text
             modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
           >
-            {detail === "Subscription remaining" ? " " : detail}
+            {detail === "Abonament rămas" ? " " : detail}
           </Text>
         ) : null}
         {shown.map((window) => (
@@ -181,7 +181,7 @@ function SubscriptionUsage(
             modifiers={[
               accessibilityElement("ignore"),
               accessibilityLabel(
-                `${provider.name}, ${window.label}, ${window.remaining} percent remaining. ${window.reset}. ${provider.detail}.`,
+                `${provider.name}, ${window.label}, ${window.remaining} procente rămase. ${window.reset}. ${provider.detail}.`,
               ),
             ]}
           >
@@ -231,7 +231,7 @@ function SubscriptionUsage(
           >
             {(period === "auto" ? (provider.totalWindows ?? windows.length) : windows.length) -
               limit}{" "}
-            more in T3
+            în plus în Mira
           </Text>
         ) : null}
       </VStack>
@@ -253,7 +253,7 @@ function SubscriptionUsage(
     >
       {providers.length === 0 ? (
         <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle(secondary)]}>
-          No subscription limits available.
+          Nicio limită de abonament disponibilă.
         </Text>
       ) : compact ? (
         <VStack alignment="leading" spacing={accessory || dense ? 4 : 8}>
@@ -270,8 +270,8 @@ function SubscriptionUsage(
           modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
         >
           {props.checkedAt
-            ? `As of ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`
-            : "Tap to connect in T3"}
+            ? `La ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`
+            : "Atinge ca să te conectezi în Mira"}
         </Text>
       ) : null}
     </VStack>

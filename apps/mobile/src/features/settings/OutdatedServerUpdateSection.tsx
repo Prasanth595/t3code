@@ -56,7 +56,7 @@ export function OutdatedServerUpdateSection({
     setChecking(false);
     if (AsyncResult.isFailure(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not check for updates.");
+      setError(failure instanceof Error ? failure.message : "Nu am putut verifica actualizările.");
     }
   }
 
@@ -64,12 +64,12 @@ export function OutdatedServerUpdateSection({
     const targetVersion = release?.targetVersion;
     if (busy || !release || !targetVersion) return;
     Dialog.alert(
-      `Update ${label}?`,
-      `Install Mira ${targetVersion}. Mira restarts on that machine and reconnects. Running threads may be interrupted.`,
+      `Actualizezi ${label}?`,
+      `Instalează Mira ${targetVersion}. Mira repornește pe acel calculator și se reconectează. Conversațiile în curs pot fi întrerupte.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "Anulează", style: "cancel" },
         {
-          text: "Update",
+          text: "Actualizează",
           onPress: () => {
             setError(null);
             void update({
@@ -87,20 +87,20 @@ export function OutdatedServerUpdateSection({
     <SettingsSection title="Mira">
       <View className="gap-1 p-4">
         <Text className="text-base text-foreground">
-          {release ? `Version ${release.fromVersion}` : "Update required"}
+          {release ? `Versiunea ${release.fromVersion}` : "Actualizare necesară"}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {state.status === "running"
             ? state.stage === "resuming"
-              ? "Restarting and reconnecting…"
+              ? "Se repornește și se reconectează…"
               : state.stage === "installing"
-                ? "Installing update…"
-                : "Downloading update…"
+                ? "Se instalează actualizarea…"
+                : "Se descarcă actualizarea…"
             : release
               ? release.targetVersion
-                ? `Version ${release.targetVersion} is available.`
-                : "No newer version is available yet."
-              : "This app needs a newer version of Mira on this machine."}
+                ? `Versiunea ${release.targetVersion} este disponibilă.`
+                : "Nu există încă o versiune mai nouă."
+              : "Aplicația are nevoie de o versiune mai nouă de Mira pe acest calculator."}
         </Text>
         {error || state.status === "failed" ? (
           <Text selectable accessibilityRole="alert" className="text-sm text-danger-foreground">
@@ -110,7 +110,7 @@ export function OutdatedServerUpdateSection({
       </View>
       <SettingsActionRow
         icon="arrow.clockwise"
-        label="Check for updates"
+        label="Verifică actualizările"
         disabled={busy}
         loading={checking}
         onPress={() => void check()}
@@ -118,7 +118,11 @@ export function OutdatedServerUpdateSection({
       {release?.targetVersion ? (
         <SettingsActionRow
           icon="arrow.up.circle"
-          label={state.status === "failed" ? "Retry update" : `Update to ${release.targetVersion}`}
+          label={
+            state.status === "failed"
+              ? "Reîncearcă actualizarea"
+              : `Actualizează la ${release.targetVersion}`
+          }
           disabled={busy}
           loading={state.status === "running"}
           onPress={requestUpdate}

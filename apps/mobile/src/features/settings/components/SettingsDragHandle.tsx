@@ -40,10 +40,10 @@ export function SettingsDragHandle(props: {
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
+        accessibilityLabel={`Reordonează ${props.title}`}
         accessibilityActions={[
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp ? [{ name: "decrement", label: "Mută în sus" }] : []),
+          ...(props.canMoveDown ? [{ name: "increment", label: "Mută în jos" }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");

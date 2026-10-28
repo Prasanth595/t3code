@@ -27,13 +27,13 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
         className="text-foreground"
         style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
       >
-        The quick brown fox jumps over the lazy dog.
+        Vulpea maro sare peste câinele leneș.
       </Text>
       <Text
         className="text-foreground-muted"
         style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
       >
-        Messages, labels, and headings scale with this size.
+        Mesajele, etichetele și titlurile se scalează cu această mărime.
       </Text>
     </View>
   );

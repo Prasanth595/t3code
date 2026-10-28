@@ -98,14 +98,15 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
 }
 
 function singleToolCallLabel(entry: WorkLogEntry): string {
-  if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
+  if (entry.itemType === "reasoning")
+    return entry.detail?.trim().replace(/\s+/g, " ") || "S-a gândit";
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
   const title =
     item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
   if (title) return title;
-  if (entry.itemType === "web_search") return entry.toolTitle ?? "Web search";
+  if (entry.itemType === "web_search") return entry.toolTitle ?? "Căutare pe internet";
   return workEntryDisplayLabel(entry, undefined);
 }
 
@@ -172,10 +173,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
     return entry.changedFiles!.length === 1
       ? path
-      : `${path} +${entry.changedFiles!.length - 1} more`;
+      : `${path} +încă ${entry.changedFiles!.length - 1}`;
   }
   if (action === "read" && !entry.viewedImagePath) {
-    return "Read file";
+    return "A citit fișierul";
   }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
@@ -243,7 +244,7 @@ export function liveWorkEntryLabel(
   if (entry.itemType === "reasoning") {
     return (
       entry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+      (status === "inProgress" ? "Se gândește" : "S-a gândit")
     );
   }
   const toolPresentation = resolveWorkEntryToolPresentation({
@@ -255,15 +256,15 @@ export function liveWorkEntryLabel(
   if (command) {
     const verb =
       status === "inProgress"
-        ? "Running"
+        ? "Rulează"
         : status === "failed"
-          ? "Failed"
+          ? "Eșuat"
           : status === "declined"
-            ? "Declined"
+            ? "Refuzat"
             : status === "stopped"
-              ? "Stopped"
-              : "Ran";
-    return `${verb} ${commandProgramName(command) ?? "command"}`;
+              ? "Oprit"
+              : "A rulat";
+    return `${verb} ${commandProgramName(command) ?? "comanda"}`;
   }
   return workEntryDisplayLabel(entry, workspaceRoot);
 }
@@ -1164,11 +1165,11 @@ function deriveTurnFolds(input: {
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
+        ? `Ai oprit după ${duration}`
+        : "Ai oprit acest răspuns"
       : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+        ? `A lucrat ${duration}`
+        : "A lucrat";
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1199,7 +1200,7 @@ function deriveTurnFolds(input: {
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        label: segmentMs !== null ? `A continuat ${formatDuration(segmentMs)}` : "A continuat",
       });
     }
   }
@@ -1582,7 +1583,7 @@ export function deriveMessagesTimelineRows(input: {
     const reason = compactionRuns.get(runId);
     if (reason !== undefined) return IDLE_COMPACTION_TITLES[reason];
     const age = resumeCompactionAgeByEntryId.get(entryId);
-    return age ? `Context compacted after ${age} idle` : undefined;
+    return age ? `Context compactat după ${age} de inactivitate` : undefined;
   };
   const activeCompactionEntry = timelineEntries.find(
     (entry): entry is Extract<TimelineEntry, { kind: "work" }> =>
@@ -1621,7 +1622,7 @@ export function deriveMessagesTimelineRows(input: {
     const age = activeCompactionEntry
       ? resumeCompactionAgeByEntryId.get(activeCompactionEntry.id)
       : undefined;
-    return age ? `Compacting after ${age} idle…` : IDLE_COMPACTING_LABELS.onReturn;
+    return age ? `Se compactează după ${age} de inactivitate…` : IDLE_COMPACTING_LABELS.onReturn;
   })();
   const appendWorkingRow = () => {
     if (compactionOnlyRunFinished) return;
@@ -1695,7 +1696,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: supersededFold.createdAt,
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
-        label: "Superseded attempt",
+        label: "Încercare înlocuită",
         expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
       });
     }
@@ -1974,8 +1975,8 @@ export function deriveMessagesTimelineRows(input: {
           label: pending
             ? reason
               ? IDLE_COMPACTING_LABELS[reason]
-              : "Compacting context"
-            : "Context compaction",
+              : "Se compactează contextul"
+            : "Compactare context",
           tokenCounts: null,
           active: pending,
         });

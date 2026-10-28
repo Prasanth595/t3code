@@ -77,7 +77,7 @@ export function resolveSubagentPillSegment(
   if (turn.liveCount > 0) {
     return {
       label: `${turn.liveCount}/${total}`,
-      accessibilityLabel: `${turn.liveCount} of ${total} agents working`,
+      accessibilityLabel: `${turn.liveCount} din ${total} agenți lucrează`,
     };
   }
   return {

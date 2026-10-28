@@ -50,17 +50,16 @@ import { searchableSetting } from "./settingsSearch";
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
     repo_conventions: {
-      label: "Repository conventions",
-      description: "In each project, matches recent change descriptions and change request titles.",
+      label: "Convențiile repository-ului",
+      description: "În fiecare proiect, urmează descrierile recente și titlurile PR-urilor.",
     },
     conventional_commits: {
       label: "Conventional Commits",
-      description: "Use Conventional Commit prefixes and keep change request text concise.",
+      description: "Folosește prefixe Conventional Commit și texte PR concise.",
     },
     custom: {
-      label: "Custom instructions",
-      description:
-        "Use your instructions for change descriptions and change requests in every project.",
+      label: "Instrucțiuni personalizate",
+      description: "Folosește instrucțiunile tale pentru descrieri și PR-uri în fiecare proiect.",
     },
   };
 
@@ -178,7 +177,7 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Text generation">
+    <SettingsSection id="source-control-text-generation" title="Generare text">
       <BranchNamingSettings />
       <SettingsRow
         serverScoped
@@ -217,11 +216,11 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label="Source control writing style"
+              aria-label="Stil texte control al versiunilor"
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
-                  value === null ? "Mixed" : MODE_OPTIONS[value].label
+                  value === null ? "Mixt" : MODE_OPTIONS[value].label
                 }
               </SelectValue>
             </SelectTrigger>
@@ -243,8 +242,8 @@ export function SourceControlWritingSettingsSection() {
                   value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
-                  aria-label="Custom source control instructions for all selected environments"
-                  placeholder="Write the instructions each selected environment should use."
+                  aria-label="Instrucțiuni personalizate pentru toate mediile selectate"
+                  placeholder="Scrie instrucțiunile pe care să le folosească fiecare mediu selectat."
                 />
                 <Button
                   size="sm"
@@ -261,7 +260,7 @@ export function SourceControlWritingSettingsSection() {
                     setEditingAllInstructions(false);
                   }}
                 >
-                  Apply instructions to all
+                  Aplică instrucțiunile tuturor
                 </Button>
               </>
             ) : (
@@ -273,7 +272,7 @@ export function SourceControlWritingSettingsSection() {
                   setEditingAllInstructions(true);
                 }}
               >
-                Write custom instructions for all
+                Scrie instrucțiuni pentru toate
               </Button>
             )}
           </div>
@@ -290,8 +289,8 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder="Titluri concise. Puncte scurte în descrieri."
+              aria-label="Instrucțiuni personalizate pentru texte"
             />
           </div>
         ) : null}
@@ -302,7 +301,7 @@ export function SourceControlWritingSettingsSection() {
         settingKeys={["sourceControlWritingStyle"]}
         mixed={templatesMixed}
         {...searchableSetting("follow-change-request-templates")}
-        description="Use the repository's template for change request descriptions when available."
+        description="Folosește șablonul repository-ului pentru descrierile PR-urilor, când există."
         resetAction={
           templatesMixed ||
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
@@ -329,7 +328,7 @@ export function SourceControlWritingSettingsSection() {
                 },
               })
             }
-            aria-label="Follow change request templates"
+            aria-label="Urmează șabloanele de PR"
           />
         }
       />
@@ -338,17 +337,17 @@ export function SourceControlWritingSettingsSection() {
         serverScoped
         settingKeys={["sourceControlWriterModelSelection"]}
         {...searchableSetting("source-control-writer-model")}
-        description="Model for source control text and branch or bookmark names. Off uses the environment's text generation model."
+        description="Model pentru textele de control al versiunilor și numele branch-urilor. Oprit folosește modelul de generare text al mediului."
         control={
           !hasServerTargets ? (
             <span className="text-sm text-muted-foreground">
-              Connect an environment to choose its source control writer model.
+              Conectează un mediu ca să-i alegi modelul pentru texte.
             </span>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-2">
               {usesDedicatedModel && !canEnableDedicatedModel ? (
                 <span className="text-sm text-muted-foreground">
-                  No text generation providers available.
+                  Niciun furnizor de generare text disponibil.
                 </span>
               ) : null}
               {usesDedicatedModel && canEnableDedicatedModel ? (
@@ -360,8 +359,8 @@ export function SourceControlWritingSettingsSection() {
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  triggerAriaLabel="Source control writer model"
-                  {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
+                  triggerAriaLabel="Model pentru texte de control al versiunilor"
+                  {...(mixedWriterModel ? { triggerLabel: "Mixt" } : {})}
                   {...(environmentId
                     ? {
                         onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
@@ -378,7 +377,7 @@ export function SourceControlWritingSettingsSection() {
                     if (reason) {
                       toastManager.add({
                         type: "error",
-                        title: "Source control writer model not saved",
+                        title: "Modelul pentru texte nu a fost salvat",
                         description: reason,
                       });
                       return;
@@ -428,7 +427,7 @@ export function SourceControlWritingSettingsSection() {
                       : null,
                   })
                 }
-                aria-label="Use a separate source control writer model"
+                aria-label="Folosește un model separat pentru texte"
               />
             </div>
           )
@@ -440,13 +439,13 @@ export function SourceControlWritingSettingsSection() {
         settingKeys={["reviewGuidesEnabled"]}
         mixed={mixedReviewGuidesEnabled}
         {...searchableSetting("review-guides")}
-        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make."
+        description="Adaugă fila Ghid la pull request-uri: un agent scrie un tur al modificării, pas cu pas, cu deciziile pe care trebuie să le ia un maintainer."
         control={
           <Switch
             mixed={mixedReviewGuidesEnabled}
             checked={mixedReviewGuidesEnabled ? false : settings.reviewGuidesEnabled}
             onCheckedChange={(checked) => updateSettings({ reviewGuidesEnabled: Boolean(checked) })}
-            aria-label="Review guides"
+            aria-label="Ghiduri de revizuire"
           />
         }
       />
@@ -457,11 +456,11 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideModelSelection"]}
             {...searchableSetting("review-guide-model")}
-            description="Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
+            description="Modelul care citește un pull request ca să-i scrie ghidul. Citește modificarea în mulți pași, așa că un model mai puternic ajută. Oprit folosește modelul pentru texte."
             control={
               !hasServerTargets ? (
                 <span className="text-sm text-muted-foreground">
-                  Connect an environment to choose its review guide model.
+                  Conectează un mediu ca să-i alegi modelul pentru ghiduri.
                 </span>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -474,15 +473,15 @@ export function SourceControlWritingSettingsSection() {
                       instanceEntries={instanceEntries}
                       modelOptionsByInstance={reviewGuideModelOptionsByInstance}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      triggerAriaLabel="Review guide model"
-                      {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
+                      triggerAriaLabel="Model ghid de revizuire"
+                      {...(mixedReviewGuideModel ? { triggerLabel: "Mixt" } : {})}
                       getModelDisabledReason={writerModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
                         const reason = writerModelDisabledReason(instanceId, model);
                         if (reason) {
                           toastManager.add({
                             type: "error",
-                            title: "Review guide model not saved",
+                            title: "Modelul pentru ghiduri nu a fost salvat",
                             description: reason,
                           });
                           return;
@@ -534,7 +533,7 @@ export function SourceControlWritingSettingsSection() {
                       if (reason) {
                         toastManager.add({
                           type: "error",
-                          title: "Review guide model not saved",
+                          title: "Modelul pentru ghiduri nu a fost salvat",
                           description: reason,
                         });
                         return;
@@ -547,7 +546,7 @@ export function SourceControlWritingSettingsSection() {
                         ),
                       });
                     }}
-                    aria-label="Use a separate review guide model"
+                    aria-label="Folosește un model separat pentru ghiduri"
                   />
                 </div>
               )
@@ -558,7 +557,7 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideInstructions"]}
             {...searchableSetting("review-guide-instructions")}
-            description="Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same."
+            description="Preferințele tale pentru ghiduri: ce să arate întâi, pe ce să insiste sau ce să sară. Formatul ghidului rămâne același."
             resetAction={
               mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
                 <SettingResetButton
@@ -571,7 +570,7 @@ export function SourceControlWritingSettingsSection() {
             <div className="mt-3 max-w-2xl pb-3.5">
               <Textarea
                 key={`${scopeKey}:${mixedReviewGuideInstructions}:${settings.reviewGuideInstructions}`}
-                aria-label="Review guide instructions"
+                aria-label="Instrucțiuni ghid de revizuire"
                 onChange={() => {
                   reviewGuideInstructionsEdited.current = true;
                 }}
@@ -579,7 +578,7 @@ export function SourceControlWritingSettingsSection() {
                 defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
                 placeholder={
                   mixedReviewGuideInstructions
-                    ? "Mixed. Enter instructions to apply to all selected targets."
+                    ? "Mixt. Introdu instrucțiuni pentru toate țintele selectate."
                     : "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences."
                 }
                 onBlur={(event) => {

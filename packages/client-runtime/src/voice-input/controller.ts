@@ -162,19 +162,19 @@ function errorCode(error: unknown): string | null {
 
 function preparationErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
-    return "Voice transcription is still finishing. Try again shortly.";
+    return "Transcrierea vocală încă se termină. Încearcă din nou imediat.";
   }
   if (errorCode(error) === "unsupported-locale") {
-    return "Voice transcription is not available for this language.";
+    return "Transcrierea vocală nu e disponibilă pentru această limbă.";
   }
-  return "Could not prepare voice transcription.";
+  return "Transcrierea vocală nu a putut fi pregătită.";
 }
 
 function transcriptionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
-    return "Voice transcription is still finishing. Try again shortly.";
+    return "Transcrierea vocală încă se termină. Încearcă din nou imediat.";
   }
-  return "Could not transcribe this recording.";
+  return "Înregistrarea nu a putut fi transcrisă.";
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -204,7 +204,7 @@ export class VoiceInputController {
     if (this.state.phase !== "idle" && this.state.phase !== "error") return;
     const initiatingDraft = this.dependencies.readDraft();
     if (!initiatingDraft) {
-      this.setError("This draft is no longer available.", "retry");
+      this.setError("Ciorna nu mai e disponibilă.", "retry");
       return;
     }
     let sessionToken: VoiceInputSession | null = null;
@@ -222,7 +222,7 @@ export class VoiceInputController {
       }
       sessionToken = acquireSession();
       if (!sessionToken) {
-        this.setError("Another voice recording is already active.", "retry");
+        this.setError("O altă înregistrare vocală e deja activă.", "retry");
         return;
       }
       this.sessionToken = sessionToken;
@@ -231,7 +231,7 @@ export class VoiceInputController {
 
       const transcriber = this.dependencies.getTranscriber();
       if (!transcriber) {
-        this.setError("Voice transcription is not available.", null);
+        this.setError("Transcrierea vocală nu e disponibilă.", null);
         return;
       }
 
@@ -239,7 +239,7 @@ export class VoiceInputController {
       if (!this.isCurrent(operationToken)) return;
       if (!permission.granted) {
         this.setError(
-          "Microphone access is required for voice input.",
+          "Dictarea necesită acces la microfon.",
           permission.canAskAgain ? "retry" : "settings",
         );
         return;
@@ -265,7 +265,7 @@ export class VoiceInputController {
 
       const capturedDraft = this.dependencies.readDraft();
       if (!capturedDraft || capturedDraft.ownerKey !== initiatingDraft.ownerKey) {
-        this.setError("This draft is no longer available.", "retry");
+        this.setError("Ciorna nu mai e disponibilă.", "retry");
         return;
       }
       this.capturedDraft = capturedDraft;
@@ -273,7 +273,7 @@ export class VoiceInputController {
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {
       if (this.isCurrent(operationToken))
-        this.setError("Could not start voice recording.", "retry");
+        this.setError("Înregistrarea vocală nu a putut porni.", "retry");
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
         if (this.isCurrent(operationToken) && this.state.phase === "error") {
@@ -312,7 +312,7 @@ export class VoiceInputController {
   }
 
   interruptRecording(
-    message = "Voice recording was interrupted.",
+    message = "Înregistrarea vocală a fost întreruptă.",
     completedUri: string | null = null,
   ): Promise<void> | void {
     if (this.state.phase !== "recording") return;
@@ -324,7 +324,7 @@ export class VoiceInputController {
   appMovedToBackground(): Promise<void> | void {
     if (this.state.phase === "preparing") {
       this.invalidateOperation();
-      this.setError("Voice input stopped when the app moved to the background.", "retry");
+      this.setError("Dictarea s-a oprit când aplicația a trecut în fundal.", "retry");
       return;
     }
     return this.interruptRecording();
@@ -334,7 +334,7 @@ export class VoiceInputController {
     if (this.state.phase !== "recording") return;
     if (status.hasError) {
       return this.interruptRecording(
-        status.error ?? "Voice recording was interrupted.",
+        status.error ?? "Înregistrarea vocală a fost întreruptă.",
         status.url,
       );
     }
@@ -383,7 +383,7 @@ export class VoiceInputController {
         !this.transcriptionAbortController ||
         !this.capturedDraft
       ) {
-        this.setError("Could not finish voice recording.", "retry");
+        this.setError("Înregistrarea vocală nu a putut fi terminată.", "retry");
         return;
       }
 
@@ -412,13 +412,13 @@ export class VoiceInputController {
       );
       if (result.kind === "stale") {
         this.setError(
-          "The draft changed while voice input was running. The transcript was not added.",
+          "Ciorna s-a schimbat în timpul dictării. Transcrierea nu a fost adăugată.",
           "retry",
         );
         return;
       }
       if (result.kind === "empty") {
-        this.setError("No speech was detected.", "retry");
+        this.setError("Nu s-a detectat vorbire.", "retry");
         return;
       }
 
@@ -426,7 +426,7 @@ export class VoiceInputController {
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {
-        this.setError("Could not finish voice recording.", "retry");
+        this.setError("Înregistrarea vocală nu a putut fi terminată.", "retry");
       }
     } finally {
       this.finishing = false;

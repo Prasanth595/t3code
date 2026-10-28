@@ -155,8 +155,8 @@ it.each(["workspace-file", "media-file"] as const)(
       ]),
       { x: 1, y: 1 },
     );
-    await expect(useMediaActions(source).save()).rejects.toThrow("cannot read host files");
-    await expect(useMediaActions(source).copyImage()).rejects.toThrow("cannot read host files");
+    await expect(useMediaActions(source).save()).rejects.toThrow("nu poate citi fișierele");
+    await expect(useMediaActions(source).copyImage()).rejects.toThrow("nu poate citi fișierele");
     expect(state.mint).not.toHaveBeenCalled();
     expect(state.download).not.toHaveBeenCalled();
     expect(state.clipboard).not.toHaveBeenCalled();

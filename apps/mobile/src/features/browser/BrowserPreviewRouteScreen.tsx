@@ -105,7 +105,7 @@ function BrowserPreviewScreen({
   }, [focused, loaded, tabs.length, onClose]);
   const onPictureInPicture = useCallback((state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
-    if (detail) Dialog.alert("Picture in picture is unavailable", detail);
+    if (detail) Dialog.alert("Picture in picture nu e disponibil", detail);
   }, []);
   const selectTab = (next: string) => {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
@@ -128,7 +128,7 @@ function BrowserPreviewScreen({
             ? [
                 {
                   accessibilityLabel: pictureInPicture.active
-                    ? "Exit picture in picture"
+                    ? "Ieși din picture in picture"
                     : "Picture in picture",
                   icon: {
                     ios: pictureInPicture.active ? "pip.exit" : "pip.enter",
@@ -144,7 +144,7 @@ function BrowserPreviewScreen({
           tabs.length > 1
             ? [
                 {
-                  title: "Tabs",
+                  title: "File",
                   icon: "square.on.square",
                   items: tabs.map((entry) => ({
                     id: entry.tabId,
@@ -162,7 +162,7 @@ function BrowserPreviewScreen({
         <SheetHeader
           title={tab ? browserTabTitle(tab) : "Browser"}
           onClose={onClose}
-          accessibilityLabel="Close browser"
+          accessibilityLabel="Închide browserul"
         />
       ) : null}
       {tab ? (
@@ -228,31 +228,31 @@ function BrowserAddressBar({
     try {
       onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
     } catch {
-      Dialog.alert("Could not open this address", "Enter an http or https URL.");
+      Dialog.alert("Adresa nu a putut fi deschisă", "Introdu o adresă http sau https.");
     }
   };
   return (
     <View className="flex-row items-center gap-1 px-2 pb-2">
       <ControlPill
         icon="chevron.left"
-        accessibilityLabel="Back"
+        accessibilityLabel="Înapoi"
         disabled={!ready || !tab.canGoBack}
         onPress={() => onCommand({ type: "history", delta: -1 })}
       />
       <ControlPill
         icon="chevron.right"
-        accessibilityLabel="Forward"
+        accessibilityLabel="Înainte"
         disabled={!ready || !tab.canGoForward}
         onPress={() => onCommand({ type: "history", delta: 1 })}
       />
       <TextInput
-        accessibilityLabel="Address"
+        accessibilityLabel="Adresă"
         editable={ready}
         value={draft ?? url}
         onChangeText={setDraft}
         onBlur={() => setDraft(null)}
         onSubmitEditing={submit}
-        placeholder="Enter a URL"
+        placeholder="Introdu o adresă"
         placeholderTextColorClassName="accent-placeholder"
         autoCapitalize="none"
         autoCorrect={false}
@@ -264,7 +264,7 @@ function BrowserAddressBar({
       />
       <ControlPill
         icon="arrow.clockwise"
-        accessibilityLabel="Reload page"
+        accessibilityLabel="Reîncarcă pagina"
         disabled={!ready}
         onPress={() => onCommand({ type: "reload" })}
       />

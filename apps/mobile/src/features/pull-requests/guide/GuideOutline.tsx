@@ -30,16 +30,16 @@ export function GuideOutline({
           </Text>
         </View>
         <Menu
-          title="Guide options"
+          title="Opțiuni ghid"
           actions={[
             {
               id: "word-wrap",
-              title: "Word wrap",
+              title: "Încadrare text",
               image: "text.alignleft",
               state: appearance.codeWordBreak ? "on" : "off",
             },
             ...(onRewrite
-              ? [{ id: "rewrite", title: "Rewrite guide", image: "arrow.clockwise" }]
+              ? [{ id: "rewrite", title: "Rescrie ghidul", image: "arrow.clockwise" }]
               : []),
           ]}
           onPressAction={({ nativeEvent }) =>
@@ -50,7 +50,7 @@ export function GuideOutline({
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Guide options"
+            accessibilityLabel="Opțiuni ghid"
             className="h-11 w-11 items-center justify-center rounded-full active:bg-grouped-card"
           >
             <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
@@ -70,7 +70,7 @@ export function GuideOutline({
           <Pressable
             key={`${guide.headSha}:${JSON.stringify(stop)}`}
             accessibilityRole="button"
-            accessibilityLabel={`Stop ${position + 1}: ${stop.title}`}
+            accessibilityLabel={`Oprirea ${position + 1}: ${stop.title}`}
             onPress={() => onOpen(position)}
             className="flex-row gap-4 active:opacity-60"
           >
@@ -102,7 +102,7 @@ export function GuideOutline({
       })}
       {guide.stops.length ? (
         <View className="self-end">
-          <Button label="Start tour" tone="text" onPress={() => onOpen(0)} icon="arrow.right" />
+          <Button label="Începe turul" tone="text" onPress={() => onOpen(0)} icon="arrow.right" />
         </View>
       ) : null}
     </View>

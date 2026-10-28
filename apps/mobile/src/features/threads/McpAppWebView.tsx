@@ -68,7 +68,7 @@ const commandFailure = (result: {
 }) => {
   const error = squashAtomCommandFailure(result);
   return new McpAppHostRefusal(
-    error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
+    error instanceof Error && error.message.trim() !== "" ? error.message : "Cererea a eșuat.",
   );
 };
 
@@ -78,7 +78,7 @@ const confirm = (title: string, message: string, action: string) =>
       title,
       message,
       [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: "Anulează", style: "cancel", onPress: () => resolve(false) },
         { text: action, onPress: () => resolve(true) },
       ],
       // Android dismisses earlier alerts when showing another; decline dismissed requests to release their slots.
@@ -289,16 +289,17 @@ export function ThreadMcpApp(props: {
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
-        if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        if (!info.value.callable)
+          throw new McpAppHostRefusal("Această aplicație nu poate folosi acel instrument.");
         if (
           !info.value.readOnly &&
           !(await confirm(
-            `Allow ${app.server} to run ${info.value.title ?? name}?`,
+            `Permiți ca ${app.server} să ruleze ${info.value.title ?? name}?`,
             JSON.stringify(args, null, 2),
-            "Allow",
+            "Permite",
           ))
         ) {
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal("Refuzat de utilizator.");
         }
         const result = await latest.current.callTool({
           environmentId,
@@ -318,16 +319,16 @@ export function ThreadMcpApp(props: {
       },
       openLink: async (url) => {
         // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
-        if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+        if (!(await confirm(`Deschizi un link de la ${app.server}?`, url, "Deschide"))) {
+          throw new McpAppHostRefusal("Refuzat de utilizator.");
         }
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
-          throw new McpAppHostRefusal("The link could not be opened.");
+          throw new McpAppHostRefusal("Link-ul nu a putut fi deschis.");
         }
       },
       sendMessage: async (text) => {
-        if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+        if (!(await confirm(`Trimiți acest mesaj de la ${app.server}?`, text, "Trimite"))) {
+          throw new McpAppHostRefusal("Refuzat de utilizator.");
         }
         await enqueueThreadOutboxMessage({
           environmentId: latest.current.props.environmentId,
@@ -389,8 +390,8 @@ export function ThreadMcpApp(props: {
       },
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
-        if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+        if (!(await confirm(`Salvezi un fișier de la ${app.server}?`, names, "Salvează"))) {
+          throw new McpAppHostRefusal("Refuzat de utilizator.");
         }
         for (const file of files) {
           let bytes: Uint8Array | undefined;
@@ -409,16 +410,17 @@ export function ThreadMcpApp(props: {
             const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
             if (typeof declared === "string") mimeType = declared;
           }
-          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
+          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} nu are conținut.`);
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
-            throw new McpAppHostRefusal(`${file.name} is too large to save.`);
+            throw new McpAppHostRefusal(`${file.name} e prea mare pentru a fi salvat.`);
           }
           const shared = await shareGeneratedAttachment({
             bytes,
             attachment: { name: file.name, mimeType },
             signal: new AbortController().signal,
           });
-          if (!shared) throw new McpAppHostRefusal("Sharing is not available on this device.");
+          if (!shared)
+            throw new McpAppHostRefusal("Partajarea nu e disponibilă pe acest dispozitiv.");
         }
       },
       onRequestTeardown: () => {
@@ -483,7 +485,7 @@ export function ThreadMcpApp(props: {
         <Text className="text-sm text-foreground-muted">The {app.server} app was closed</Text>
         <View className="items-center">
           <Button
-            label="Show app"
+            label="Arată aplicația"
             tone="secondary"
             onPress={() => {
               setDocumentKey((value) => value + 1);

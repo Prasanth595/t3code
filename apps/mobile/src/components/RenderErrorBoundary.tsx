@@ -87,7 +87,7 @@ export function RenderFailureView(
     readonly exit?: { readonly label: string; readonly onPress: () => void };
   },
 ) {
-  const title = props.title ?? "This screen couldn't be displayed";
+  const title = props.title ?? "Acest ecran nu a putut fi afișat";
   return (
     <ScrollView
       className="flex-1 bg-screen"
@@ -100,15 +100,15 @@ export function RenderFailureView(
         {title}
       </Text>
       <Text className="text-center text-sm text-foreground-muted">
-        Try again. If it keeps happening, copy the details for a bug report.
+        Încearcă din nou. Dacă se repetă, copiază detaliile pentru a raporta problema.
       </Text>
       <Text selectable className="text-center font-mono text-xs text-danger-foreground">
         {props.details.split("\n", 1)[0]?.slice(0, 300)}
       </Text>
       <View className="w-full max-w-xs gap-2">
-        <Button label="Try again" onPress={props.retry} tone="primary" fullWidth />
+        <Button label="Încearcă din nou" onPress={props.retry} tone="primary" fullWidth />
         <Button
-          label="Copy details"
+          label="Copiază detaliile"
           onPress={() => copyTextWithHaptic(props.details, { target: "error details" })}
           fullWidth
         />

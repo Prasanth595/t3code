@@ -46,19 +46,19 @@ export function getTerminalStatusLabel(input: {
   readonly hasRunningSubprocess?: boolean;
 }): string {
   if (input.status === "running") {
-    return input.hasRunningSubprocess ? "Task running" : "Ready";
+    return input.hasRunningSubprocess ? "Sarcină în curs" : "Pregătit";
   }
   if (input.status === "starting") {
-    return "Starting";
+    return "Pornește";
   }
   if (input.status === "exited") {
-    return "Exited";
+    return "Închis";
   }
   if (input.status === "error") {
-    return "Error";
+    return "Eroare";
   }
 
-  return "Not started";
+  return "Nepornit";
 }
 
 /** Count the mounted terminal before sessions load, or new-terminal navigation may replace it with itself. */

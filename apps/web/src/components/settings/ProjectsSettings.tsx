@@ -22,7 +22,7 @@ export function ProjectsSettings() {
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >
               <LayersIcon />
-              Show all environments
+              Arată toate mediile
             </Button>
           ) : null}
         </div>
@@ -47,7 +47,7 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
+          Alege un proiect ca să-i gestionezi numele, pictograma, checkout-urile și acțiunile.
         </SettingsScopeNotice>
       )}
     </div>

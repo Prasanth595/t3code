@@ -55,7 +55,7 @@ export function Sheet(props: SheetProps) {
                 {
                   type: "button",
                   icon: { name: "xmark", type: "sfSymbol" },
-                  accessibilityLabel: `Close ${props.title}`,
+                  accessibilityLabel: `Închide ${props.title}`,
                   identifier: `app-sheet-close-${screenId}`,
                   onPress: close,
                 },

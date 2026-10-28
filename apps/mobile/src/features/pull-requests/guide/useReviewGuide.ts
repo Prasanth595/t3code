@@ -51,7 +51,7 @@ export function useReviewGuide(params: PullRequestParams) {
     setStarting(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "Could not start the review guide.");
+      setError(cause instanceof Error ? cause.message : "Ghidul de revizuire nu a putut porni.");
     }
   };
   return { ...query, enabled, canWrite, running, write, startError: error };

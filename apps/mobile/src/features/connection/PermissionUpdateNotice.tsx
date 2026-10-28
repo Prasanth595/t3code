@@ -73,9 +73,9 @@ export function PermissionUpdateNotice() {
       void SecureStore.setItemAsync(storageKey, JSON.stringify([...next])).catch(() => {});
     };
     Dialog.alert(
-      `Permissions have changed for ${environment.label}`,
-      "This connection still uses the old permissions, so some actions may no longer be available. Pair again using a new link with the permissions you need.",
-      [{ text: "Got it", onPress: dismiss }],
+      `Permisiunile s-au schimbat pentru ${environment.label}`,
+      "Conexiunea folosește încă permisiunile vechi, așa că unele acțiuni pot să nu mai fie disponibile. Asociază din nou folosind un link nou cu permisiunile de care ai nevoie.",
+      [{ text: "Am înțeles", onPress: dismiss }],
       { cancelable: false },
     );
   }, [affected, dismissed]);

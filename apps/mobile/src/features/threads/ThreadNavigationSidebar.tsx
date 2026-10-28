@@ -354,12 +354,12 @@ function ThreadNavigationSidebarPane(
   const listMenuActions = [
     {
       id: "environment",
-      title: "Environment",
+      title: "Mediu",
       subactions: [
         {
           id: "environment:all",
-          title: "All environments",
-          subtitle: "Show threads from every environment",
+          title: "Toate mediile",
+          subtitle: "Arată conversațiile din toate mediile",
           state: options.selectedEnvironmentId === null ? "on" : "off",
         },
         ...environments.map((environment) => ({
@@ -377,12 +377,12 @@ function ThreadNavigationSidebarPane(
       : ([
           {
             id: "project",
-            title: "Project",
+            title: "Proiect",
             subactions: [
               {
                 id: "project:all",
-                title: "All projects",
-                subtitle: "Show threads from every project",
+                title: "Toate proiectele",
+                subtitle: "Arată conversațiile din toate proiectele",
                 state: selectedProjectKey === null ? "on" : "off",
               },
               ...projectFilterOptions.map((project) => ({
@@ -700,16 +700,16 @@ function ThreadNavigationSidebarPane(
       }
     >
       {catalogState.isLoadingConnections
-        ? "Loading threads…"
+        ? "Se încarcă conversațiile…"
         : Platform.OS === "android" && !catalogState.hasConnections
-          ? "No environments connected"
+          ? "Niciun mediu conectat"
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
-              ? "Searching thread messages…"
-              : "No matching threads"
+              ? "Se caută în mesaje…"
+              : "Nicio conversație găsită"
             : selectedProjectScope !== null
-              ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+              ? `Nicio conversație în ${selectedProjectScope.title}`
+              : "Nicio conversație încă"}
     </Text>
   );
 
@@ -731,7 +731,7 @@ function ThreadNavigationSidebarPane(
               hideNavigationBar: false,
               hideWhenScrolling: false,
               obscureBackground: false,
-              placeholder: "Search",
+              placeholder: "Caută",
               placement: "stacked",
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
@@ -885,7 +885,10 @@ function ThreadNavigationSidebarPane(
             />
             <View className="flex-row items-center gap-2.5">
               <Menu actions={listMenuActions} onPressAction={handleListMenuAction}>
-                <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
+                <SidebarFilterButton
+                  accessibilityLabel="Filtrează conversațiile"
+                  icon={filterIcon}
+                />
               </Menu>
               <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
             </View>
@@ -900,12 +903,12 @@ function ThreadNavigationSidebarPane(
             />
             <TextInput
               ref={searchInputRef}
-              accessibilityLabel="Search threads"
+              accessibilityLabel="Caută conversații"
               autoCapitalize="none"
               autoCorrect={false}
               clearButtonMode="while-editing"
               onChangeText={props.onSearchQueryChange}
-              placeholder="Search"
+              placeholder="Caută"
               placeholderTextColorClassName="accent-placeholder"
               selectionColorClassName={undefined}
               cursorColorClassName={undefined}

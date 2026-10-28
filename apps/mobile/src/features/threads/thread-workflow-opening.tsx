@@ -86,7 +86,7 @@ export function ThreadWorkflowOpening(props: {
       <Pressable
         key={member.id}
         accessibilityRole={threadId === null ? undefined : "link"}
-        accessibilityHint={threadId === null ? undefined : "Opens this agent's thread"}
+        accessibilityHint={threadId === null ? undefined : "Deschide conversația acestui agent"}
         disabled={threadId === null}
         onPress={() => {
           if (threadId !== null)
@@ -188,7 +188,7 @@ function WorkflowScript(props: { readonly script: string }) {
           className="self-start py-1 active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-foreground-muted">
-            {expanded ? "Show less" : "Show full script"}
+            {expanded ? "Arată mai puțin" : "Arată tot scriptul"}
           </Text>
         </Pressable>
       ) : null}

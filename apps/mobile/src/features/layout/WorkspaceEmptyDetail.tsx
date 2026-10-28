@@ -26,12 +26,12 @@ export function WorkspaceEmptyDetail(props: {
       {props.onAddConnection ? (
         <View className="w-full max-w-[430px]">
           <EmptyState
-            title="No environments connected"
-            detail="Add an environment to load projects and start coding sessions."
+            title="Niciun mediu conectat"
+            detail="Adaugă un mediu ca să încarci proiecte și să pornești sesiuni de lucru."
             variant="plain"
             action={
               <FloatingActionButton
-                label="Add environment"
+                label="Adaugă mediu"
                 icon="plus"
                 variant="extended"
                 tone="primary"
@@ -50,19 +50,19 @@ export function WorkspaceEmptyDetail(props: {
           />
           <Text className="text-center text-xl font-t3-bold">
             {settings
-              ? "Select a setting"
+              ? "Alege o setare"
               : pullRequests
-                ? "Select a pull request"
-                : "Select a thread"}
+                ? "Alege un pull request"
+                : "Alege o conversație"}
           </Text>
           <Text className="text-center text-base text-foreground-muted">
             {settings
-              ? "Choose a page from the sidebar."
+              ? "Alege o pagină din bara laterală."
               : pullRequests
-                ? "Choose a pull request from the sidebar to review it."
+                ? "Alege un pull request din bara laterală ca să-l revizuiești."
                 : Platform.OS === "android"
-                  ? "Choose a thread from the sidebar or start a new thread."
-                  : "Choose a thread from the sidebar or start a new task."}
+                  ? "Alege o conversație din bara laterală sau pornește una nouă."
+                  : "Alege o conversație din bara laterală sau pornește o sarcină nouă."}
           </Text>
           {props.onStartNewTask && !pullRequests && !settings ? (
             Platform.OS === "android" ? (

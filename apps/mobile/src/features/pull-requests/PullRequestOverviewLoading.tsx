@@ -24,7 +24,7 @@ export function PullRequestOverviewLoading({
   return (
     <View
       className="gap-5"
-      accessibilityLabel="Loading pull request details"
+      accessibilityLabel="Se încarcă detaliile"
       accessibilityState={{ busy: true }}
     >
       <PullRequestStackCard params={params} state={stack} />
@@ -33,12 +33,12 @@ export function PullRequestOverviewLoading({
           compact
           title={
             summary.checksState === "passing"
-              ? "Checks completed"
+              ? "Verificări terminate"
               : summary.checksState === "failing"
-                ? "Checks failing"
+                ? "Verificări eșuate"
                 : summary.checksState === "pending"
-                  ? "Checks running"
-                  : "Checks"
+                  ? "Verificări în curs"
+                  : "Verificări"
           }
           icon={
             summary.checksState === "passing"
@@ -59,7 +59,7 @@ export function PullRequestOverviewLoading({
         </PullRequestCardRow>
         <PullRequestCardRow
           compact
-          title={review?.accessibleLabel ?? "Reviews"}
+          title={review?.accessibleLabel ?? "Revizuiri"}
           icon={review?.icon ?? "bubble.left"}
           tint={review?.tint}
         >
@@ -69,9 +69,9 @@ export function PullRequestOverviewLoading({
           compact
           title={
             conflicting
-              ? `Conflicts with ${summary.baseBranch}`
+              ? `Conflicte cu ${summary.baseBranch}`
               : clean
-                ? `No conflicts with ${summary.baseBranch}`
+                ? `Fără conflicte cu ${summary.baseBranch}`
                 : "Branch"
           }
           icon={
@@ -97,7 +97,7 @@ export function PullRequestOverviewLoading({
         </View>
       ) : null}
       <View className="gap-3">
-        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
+        <PullRequestSectionHeading>Descriere</PullRequestSectionHeading>
         <View className="gap-3 py-1">
           <View className="h-4 w-full rounded bg-subtle-strong" />
           <View className="h-4 w-full rounded bg-subtle-strong" />

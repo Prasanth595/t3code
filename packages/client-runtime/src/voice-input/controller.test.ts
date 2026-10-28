@@ -113,7 +113,7 @@ describe("VoiceInputController", () => {
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });
     await unsupported.controller.start();
-    expect(unsupported.controller.currentState.error).toContain("not available");
+    expect(unsupported.controller.currentState.error).toContain("nu e disponibilă");
     expect(unsupported.recorder.record).not.toHaveBeenCalled();
 
     const denied = createHarness({
@@ -343,7 +343,7 @@ describe("VoiceInputController", () => {
     await stopping;
 
     expect(harness.commits).toEqual([]);
-    expect(harness.controller.currentState.error).toContain("draft changed");
+    expect(harness.controller.currentState.error).toContain("Ciorna s-a schimbat");
   });
 
   it("queues the next recording until canceled preparation settles", async () => {
@@ -380,7 +380,7 @@ describe("VoiceInputController", () => {
     await first.controller.start();
     const next = createHarness();
     await next.controller.start();
-    expect(next.controller.currentState.error).toContain("already active");
+    expect(next.controller.currentState.error).toContain("deja activă");
     expect(next.recorder.record).not.toHaveBeenCalled();
     await first.controller.interruptRecording();
   });
@@ -411,7 +411,7 @@ describe("VoiceInputController", () => {
     expect(next.deleted).toEqual([]);
     const blocked = createHarness();
     await blocked.controller.start();
-    expect(blocked.controller.currentState.error).toContain("already active");
+    expect(blocked.controller.currentState.error).toContain("deja activă");
     await next.controller.interruptRecording();
   });
 
@@ -479,7 +479,7 @@ describe("VoiceInputController", () => {
     await starting;
 
     expect(harness.recorder.record).not.toHaveBeenCalled();
-    expect(harness.controller.currentState.error).toContain("no longer available");
+    expect(harness.controller.currentState.error).toContain("nu mai e disponibilă");
   });
 
   it("discards recorder errors and audio interruptions without transcribing", async () => {
@@ -529,6 +529,6 @@ describe("VoiceInputController", () => {
     await starting;
 
     expect(harness.recorder.record).not.toHaveBeenCalled();
-    expect(harness.controller.currentState.error).toContain("background");
+    expect(harness.controller.currentState.error).toContain("fundal");
   });
 });

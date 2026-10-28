@@ -73,11 +73,11 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const selectionLabel =
     selectedLines.length === 1
       ? firstNumber !== null
-        ? `Line ${firstNumber}`
-        : "File comment"
+        ? `Linia ${firstNumber}`
+        : "Comentariu pe fișier"
       : firstNumber !== null && lastNumber !== null
-        ? `Lines ${firstNumber}-${lastNumber}`
-        : `${selectedLines.length} lines selected`;
+        ? `Liniile ${firstNumber}-${lastNumber}`
+        : `${selectedLines.length} linii selectate`;
   const previewHeight = Math.max(
     Math.min(selectedLines.length, REVIEW_COMMENT_PREVIEW_MAX_LINES) * codeSurface.rowHeight,
     codeSurface.rowHeight,
@@ -160,7 +160,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
               <Text className="text-base font-t3-bold text-foreground">No selection</Text>
               <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-                Select a diff line or range first.
+                Alege mai întâi o linie sau un interval din diff.
               </Text>
             </View>
           ) : (
@@ -235,7 +235,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         autoFocus
                         multiline
                         scrollEnabled
-                        placeholder="Leave a comment..."
+                        placeholder="Lasă un comentariu..."
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
@@ -267,15 +267,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         {!isAndroid && target ? (
           <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel="Adaugă imagine"
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel="Comentează"
               icon="arrow.up"
-              label="Comment"
+              label="Comentează"
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}
@@ -293,15 +293,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             style={{ paddingBottom: Math.max(insets.bottom, 10) }}
           >
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel="Adaugă imagine"
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel="Comentează"
               icon="arrow.up"
-              label="Comment"
+              label="Comentează"
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}

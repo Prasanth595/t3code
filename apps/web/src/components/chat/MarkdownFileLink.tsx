@@ -86,8 +86,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Fișierul nu a putut fi deschis",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       } catch (cause) {
@@ -98,8 +98,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: "Fișierul nu a putut fi deschis",
+            description: cause instanceof Error ? cause.message : "A apărut o eroare.",
           }),
         );
       }
@@ -136,8 +136,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Fișierul nu a putut fi deschis în browser",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       } catch (cause) {
@@ -148,8 +148,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: "Fișierul nu a putut fi deschis în browser",
+            description: cause instanceof Error ? cause.message : "A apărut o eroare.",
           }),
         );
       }
@@ -174,8 +174,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to reveal file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Fișierul nu a putut fi afișat în dosar",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       } catch (cause) {
@@ -186,8 +186,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to reveal file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: "Fișierul nu a putut fi afișat în dosar",
+            description: cause instanceof Error ? cause.message : "A apărut o eroare.",
           }),
         );
       }
@@ -199,8 +199,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Failed to copy ${title.toLowerCase()}`,
-          description: "Clipboard API unavailable.",
+          title: `${title} nu a putut fi copiată`,
+          description: "Clipboard-ul nu e disponibil.",
         }),
       );
       return;
@@ -232,8 +232,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: `${title} nu a putut fi copiată`,
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       },
@@ -248,10 +248,10 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       const copyItems = markdownFileCopyMenuItems({ targetPath, workspaceRelativePath });
       const clicked = await api.contextMenu.show(
         [
-          ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
+          ...(onOpenMedia ? ([{ id: "preview-media", label: "Previzualizează" }] as const) : []),
           ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
           ...(onOpenInBrowser
-            ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+            ? ([{ id: "open-in-browser", label: "Deschide în browserul integrat" }] as const)
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
           ...copyItems.map(({ id, label }) => ({ id, label })),
@@ -281,7 +281,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             resolveCopyPaths().then((paths) =>
               clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
             ),
-          clicked === "copy-relative" ? "Relative path" : "Full path",
+          clicked === "copy-relative" ? "Calea relativă" : "Calea completă",
         );
       }
     } catch (cause) {
@@ -359,7 +359,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               kind="mention"
               dir="ltr"
               render={<button type="button" />}
-              aria-label={`File options for ${label}`}
+              aria-label={`Opțiuni fișier pentru ${label}`}
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}

@@ -23,24 +23,24 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   const Detail = approval.requestKind === "mcp-elicitation" ? "span" : "code";
   const fallbackLabel =
     approval.requestKind === "mcp-elicitation"
-      ? "App access approval"
+      ? "Aprobare acces aplicație"
       : approval.requestKind === "command"
-        ? "Command approval"
+        ? "Aprobare comandă"
         : approval.requestKind === "file-read"
-          ? "File read approval"
+          ? "Aprobare citire fișier"
           : approval.requestKind === "permission"
-            ? "App permission approval"
-            : "File change approval";
+            ? "Aprobare permisiune aplicație"
+            : "Aprobare modificare fișier";
   const detailAriaLabel =
     approval.requestKind === "mcp-elicitation"
-      ? "App access request"
+      ? "Cerere acces aplicație"
       : approval.requestKind === "command"
-        ? "Command"
+        ? "Comandă"
         : approval.requestKind === "file-read"
-          ? "File to read"
+          ? "Fișier de citit"
           : approval.requestKind === "permission"
-            ? "Permission request"
-            : "File change";
+            ? "Cerere de permisiune"
+            : "Modificare fișier";
 
   return (
     <span
@@ -83,7 +83,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         tabIndex={0}
       >
         {approval.responseCapability === "not_resumable"
-          ? "Provider process is gone. Interrupt or restart the run to respond."
+          ? "Procesul furnizorului s-a oprit. Întrerupe sau repornește rularea ca să răspunzi."
           : approval.detail || fallbackLabel}
       </Detail>
       {approval.reason ? (

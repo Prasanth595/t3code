@@ -84,9 +84,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     setBusy(false);
     if (result && AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(
-        cause instanceof Error ? cause.message : "The provider could not complete this action.",
-      );
+      setError(cause instanceof Error ? cause.message : "Furnizorul nu a putut finaliza acțiunea.");
     }
   };
   const post = () =>
@@ -99,7 +97,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
       });
       if (AsyncResult.isFailure(response)) return response;
       setBody((current) => (current === submitted ? "" : current));
-      setNotice("Reply posted.");
+      setNotice("Răspuns publicat.");
       refresh();
       return response;
     });
@@ -132,16 +130,16 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     ).values(),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const canReply = permissions.canReply && Boolean(thread);
-  const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
+  const resolveLabel = thread?.isResolved ? "Marchează nerezolvată" : "Rezolvă";
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions
-          options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}
+          options={{ title: "Discuție", unstable_headerSubtitle: `#${params.number}` }}
         />
         {Platform.OS === "android" ? (
           <AndroidScreenHeader
-            title="Discussion"
+            title="Discuție"
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}
             actions={
@@ -185,25 +183,25 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   {thread.line ? `:${thread.line}` : ""}
                 </Text>
                 <Text className="text-xs text-foreground-muted">
-                  {thread.isResolved ? "Resolved" : "Unresolved"}
-                  {thread.isOutdated ? " · Outdated" : ""}
+                  {thread.isResolved ? "Rezolvată" : "Nerezolvată"}
+                  {thread.isOutdated ? " · Depășită" : ""}
                 </Text>
                 <Button
-                  label="View file diff"
+                  label="Vezi diff-ul fișierului"
                   onPress={() =>
                     navigation.navigate("PullRequestFile", { ...params, path: thread.path })
                   }
                 />
               </View>
             ) : !activity.isPending ? (
-              <Text>This discussion is no longer available.</Text>
+              <Text>Această discuție nu mai e disponibilă.</Text>
             ) : null}
             {comments.map((comment) => (
               <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
                 <View className="flex-row items-center gap-2">
                   <PullRequestAvatar actor={comment.author} size={28} />
                   <Text className="min-w-0 flex-1 text-sm font-t3-medium">
-                    {comment.author?.login ?? "Unknown author"}
+                    {comment.author?.login ?? "Autor necunoscut"}
                   </Text>
                   <Text className="text-2xs text-foreground-muted">
                     {relativeTime(comment.createdAt)}
@@ -224,7 +222,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             ))}
             {nextCursor ? (
               <Button
-                label={busy ? "Loading…" : "Load more replies"}
+                label={busy ? "Se încarcă…" : "Încarcă mai multe răspunsuri"}
                 disabled={busy}
                 onPress={() => void more()}
               />
@@ -245,10 +243,10 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               className="flex-row items-end gap-1 p-1"
             >
               <TextInput
-                accessibilityLabel="Discussion reply"
+                accessibilityLabel="Răspuns la discuție"
                 multiline
                 maxLength={65536}
-                placeholder="Reply…"
+                placeholder="Răspunde…"
                 placeholderTextColorClassName="accent-foreground-muted"
                 value={body}
                 onChangeText={setBody}
@@ -257,7 +255,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               />
               <View>
                 <Button
-                  label={busy ? "Posting…" : "Reply"}
+                  label={busy ? "Se publică…" : "Răspunde"}
                   tone="contrast"
                   disabled={busy || !body.trim()}
                   onPress={() => void post()}

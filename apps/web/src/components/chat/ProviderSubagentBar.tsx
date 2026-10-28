@@ -71,10 +71,10 @@ export function ProviderSubagentBar(props: {
         />
       </div>
       <span role="status" className="sr-only">
-        {`${modelDescription} subagent: ${announcement}`}
+        {`Subagent ${modelDescription}: ${announcement}`}
       </span>
       <span className="shrink-0 text-muted-foreground @max-[640px]/composer-surface:sr-only">
-        Runs on its own
+        Rulează singur
       </span>
       {props.onOpenParent ? (
         <Button size="sm" variant="ghost" onClick={props.onOpenParent}>

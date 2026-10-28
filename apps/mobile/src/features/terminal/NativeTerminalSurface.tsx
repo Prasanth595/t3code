@@ -74,10 +74,10 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.readOnly
-    ? "Viewing terminal output."
+    ? "Se afișează rezultatul terminalului."
     : props.isRunning
-      ? "Native terminal unavailable. Using text fallback."
-      : "Open terminal to start a shell.";
+      ? "Terminalul nativ nu e disponibil. Se folosește varianta text."
+      : "Deschide terminalul ca să pornești un shell.";
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;

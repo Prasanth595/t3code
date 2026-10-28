@@ -7,38 +7,38 @@ export function threadRelationshipStatusLabel(status: string | null): string {
   switch (status) {
     case "preparing":
     case "starting":
-      return "Starting";
+      return "Pornește";
     case "running":
     case "in_progress":
-      return "Running";
+      return "Rulează";
     case "pending":
     case "queued":
-      return "Queued";
+      return "În coadă";
     case "waiting":
     case "blocked":
-      return "Waiting";
+      return "Așteaptă";
     case "completed":
-      return "Done";
+      return "Gata";
     case "failed":
     case "error":
-      return "Failed";
+      return "Eșuat";
     case "cancelled":
     case "interrupted":
-      return "Stopped";
+      return "Oprit";
     case "rolled_back":
-      return "Reverted";
+      return "Anulat";
     case "resolved_native":
-      return "Resolved (native)";
+      return "Rezolvat (nativ)";
     case "resolved_portable":
-      return "Resolved (portable)";
+      return "Rezolvat (portabil)";
     case "consumed":
-      return "Consumed";
+      return "Consumat";
     case "superseded":
-      return "Superseded";
+      return "Înlocuit";
     case "idle":
-      return "Idle";
+      return "Inactiv";
     default:
-      return "Unknown";
+      return "Necunoscut";
   }
 }
 

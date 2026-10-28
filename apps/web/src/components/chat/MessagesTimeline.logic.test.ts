@@ -496,7 +496,7 @@ describe("deriveMessagesTimelineRows", () => {
       });
       expect(runningRows.find((row) => row.kind === "context-compaction")).toMatchObject({
         active: true,
-        label: "Compacting context",
+        label: "Se compactează contextul",
       });
       expect(runningRows.some((row) => row.kind === "thinking")).toBe(false);
 
@@ -515,7 +515,7 @@ describe("deriveMessagesTimelineRows", () => {
       });
       expect(completedRows.find((row) => row.kind === "context-compaction")).toMatchObject({
         active: false,
-        label: "Context compacted 899K → 19K tokens",
+        label: "Context compactat 899K → 19K tokeni",
         tokenCounts: { before: "899K", after: "19K" },
       });
       expect(completedRows.at(-1)?.kind).toBe("thinking");
@@ -581,14 +581,14 @@ describe("deriveMessagesTimelineRows", () => {
         {
           kind: "context-compaction",
           active: true,
-          label: "Compacting before the cache expires…",
+          label: "Se compactează înainte să expire cache-ul…",
         },
-        "Context automatically compacted before cache expiry",
+        "Context compactat automat înainte să expire cache-ul",
       ],
       [
         "onReturn",
-        { kind: "working", compacting: "Compacting after being idle…" },
-        "Context compacted after being idle",
+        { kind: "working", compacting: "Se compactează după inactivitate…" },
+        "Context compactat după inactivitate",
       ],
       [undefined, { kind: "context-compaction", active: true }, undefined],
     ] as const) {
@@ -781,16 +781,16 @@ describe("deriveMessagesTimelineRows", () => {
       return rows.slice(rows.findIndex((row) => row.id.includes("live-user")) + 1);
     };
     expect(liveRows("running")).toMatchObject([
-      { kind: "working", compacting: "Compacting after 1h 5m idle…" },
+      { kind: "working", compacting: "Se compactează după 1h 5m de inactivitate…" },
     ]);
     expect(liveRows("completed")).toMatchObject([
-      { kind: "context-compaction", title: "Context compacted after 1h 5m idle" },
+      { kind: "context-compaction", title: "Context compactat după 1h 5m de inactivitate" },
     ]);
     const laterRows = rowsFor("running", true);
     const dividers = laterRows.filter((row) => row.kind === "context-compaction");
     expect(dividers).toHaveLength(2);
     expect(dividers[0]).toMatchObject({
-      title: "Context compacted after 1h 5m idle",
+      title: "Context compactat după 1h 5m de inactivitate",
       active: false,
     });
     expect(dividers[1]).toMatchObject({ active: true });
@@ -998,7 +998,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    expect(foldRow?.label).toBe("Worked for 22s");
+    expect(foldRow?.label).toBe("A lucrat 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -1227,7 +1227,7 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "turn-fold",
     );
     expect(foldRow?.runId).toBe("turn-1");
-    expect(foldRow?.label).toBe("Worked for 12s");
+    expect(foldRow?.label).toBe("A lucrat 12s");
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
@@ -1262,7 +1262,7 @@ describe("deriveMessagesTimelineRows", () => {
       expect.objectContaining({
         kind: "turn-fold",
         runId: "turn-1",
-        label: "You stopped after 47s",
+        label: "Ai oprit după 47s",
         expanded: false,
       }),
     ]);
@@ -1337,7 +1337,7 @@ describe("deriveMessagesTimelineRows", () => {
             "steer",
           ]);
           expect(rows[1]?.createdAt).toBe(time(0));
-          if (!isWorking) expect(rows[1]).toMatchObject({ label: "Worked for 20s", expanded });
+          if (!isWorking) expect(rows[1]).toMatchObject({ label: "A lucrat 20s", expanded });
           expect(rows.some((row) => row.id === "final")).toBe(true);
           expect(rows.some((row) => row.id === "work")).toBe(isWorking || expanded);
         }
@@ -1399,8 +1399,8 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${segmentKey}`,
       "final",
     ]);
-    expect(collapsed[1]).toMatchObject({ label: "Worked for 30s" });
-    expect(collapsed[3]).toMatchObject({ label: "Continued for 20s", createdAt: time(10) });
+    expect(collapsed[1]).toMatchObject({ label: "A lucrat 30s" });
+    expect(collapsed[3]).toMatchObject({ label: "A continuat 20s", createdAt: time(10) });
 
     expect(rows(new Set([segmentKey])).map((row) => row.id)).toEqual([
       "prompt",
@@ -1863,10 +1863,10 @@ describe("deriveMessagesTimelineRows", () => {
     const settled = rows({ resume: "completed", working: false });
     expect(shape(settled)).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:resume-answer",
     ]);
 
@@ -1879,17 +1879,17 @@ describe("deriveMessagesTimelineRows", () => {
     });
     expect(shape(expanded)).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "work-toggle",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:resume-answer",
     ]);
 
     expect(shape(rows({ resume: "running", working: true }))).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:launch-answer",
       "user:resume",
       "working",
@@ -1898,7 +1898,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(shape(rows({ resume: "failed", working: false }))).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:launch-answer",
       "user:resume",
       "work",
@@ -2491,8 +2491,8 @@ describe("deriveMessagesTimelineRows", () => {
       expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
         hiddenCount: statuses.some((status) => status === "error") ? 2 : 3,
         summary: statuses.some((status) => status === "error")
-          ? "Received 1 update and used 1 tool"
-          : "Used 2 tools and received 1 update",
+          ? "A primit 1 actualizare și a folosit 1 instrument"
+          : "A folosit 2 instrumente și a primit 1 actualizare",
         hasFailure,
       });
       if (statuses.some((status) => status === "error")) {
@@ -2601,7 +2601,7 @@ describe("v2 run and attempt history", () => {
     );
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    expect(foldRow?.label).toBe("Worked for 22s");
+    expect(foldRow?.label).toBe("A lucrat 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -2774,7 +2774,7 @@ describe("v2 run and attempt history", () => {
     expect(collapsedRows.find((row) => row.kind === "attempt-fold")).toMatchObject({
       attemptId: supersededAttemptId,
       runId,
-      label: "Superseded attempt",
+      label: "Încercare înlocuită",
       expanded: false,
     });
 
@@ -2910,7 +2910,7 @@ describe("v2 run and attempt history", () => {
       const rows = rowsFor(11, "running");
       expect(rows.find((row) => row.kind === "attempt-fold")).toMatchObject({
         attemptId: supersededAttempt.id,
-        label: "Superseded attempt",
+        label: "Încercare înlocuită",
       });
       expect(rows.map((row) => row.id)).not.toContain("old-reply-entry");
     });

@@ -102,11 +102,11 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
 }
 
 export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
-  if (depth === 0) return "Clear all conditions";
+  if (depth === 0) return "Șterge toate condițiile";
   if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
-    return "Remove condition";
+    return "Elimină condiția";
   }
-  return "Remove group and its conditions";
+  return "Elimină grupul și condițiile lui";
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -124,7 +124,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: "Folosește variabile cu !, &&, || și paranteze.",
     };
   }
 
@@ -204,17 +204,17 @@ export interface KeybindingGroup {
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
-    title: "Navigation",
+    title: "Navigare",
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
+  { id: "threads", title: "Conversații", prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "composer", title: "Editor", prefixes: ["composer", "modelPicker"] },
   { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  { id: "preview", title: "Previzualizare și diff", prefixes: ["preview", "diff"] },
+  { id: "appearance", title: "Aspect", prefixes: ["theme", "appearance", "themeEditor"] },
+  { id: "scripts", title: "Scripturi proiect", prefixes: ["script"] },
 ] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
+const OTHER_KEYBINDING_GROUP = { id: "other", title: "Altele" } as const;
 
 function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
   const prefix = String(command).split(".")[0] ?? "";

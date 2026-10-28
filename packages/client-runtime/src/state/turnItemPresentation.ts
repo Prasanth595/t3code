@@ -6,7 +6,7 @@ import {
 
 import type { ThreadStructureTurnItem } from "./models.ts";
 
-const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+const WORKSPACE_PREPARATION_INPUT = "Se pregătește spațiul de lucru";
 
 export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {
   return (

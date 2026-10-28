@@ -57,10 +57,10 @@ function WorkspaceRootTitle(props: {
   const { state, settingsOpen } = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
-    ? "Settings"
+    ? "Setări"
     : enabled.length
       ? TAB_TITLES[state.selectedTab]
-      : "Navigation";
+      : "Navigare";
   return (
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
@@ -151,10 +151,10 @@ function WorkspaceRootContent() {
             ]}
             options={{
               title: settingsOpen
-                ? "Settings"
+                ? "Setări"
                 : enabled.length
                   ? TAB_TITLES[state.selectedTab]
-                  : "Navigation",
+                  : "Navigare",
               headerShown: true,
               headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
               headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
@@ -182,7 +182,9 @@ function WorkspaceRootContent() {
                 ? [
                     {
                       accessibilityLabel:
-                        state.selectedTab === "threads" ? "Search threads" : "Search pull requests",
+                        state.selectedTab === "threads"
+                          ? "Caută conversații"
+                          : "Caută pull request-uri",
                       icon: "magnifyingglass" as const,
                       onPress: () => {
                         dispatchHardwareKeyboardCommand("focusSearch");
@@ -191,7 +193,7 @@ function WorkspaceRootContent() {
                   ]
                 : []),
               {
-                accessibilityLabel: "Settings",
+                accessibilityLabel: "Setări",
                 icon: "gearshape",
                 onPress: () => selectTab("settings"),
               },

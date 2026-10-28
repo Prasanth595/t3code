@@ -38,10 +38,10 @@ export function composerContextSendBlockReason(
 ): string | null {
   if (!context) return null;
   if (context.records.length > COMPOSER_CONTEXT_MAX_RECORDS) {
-    return `Remove context items until there are at most ${COMPOSER_CONTEXT_MAX_RECORDS}.`;
+    return `Elimină elemente de context până rămân cel mult ${COMPOSER_CONTEXT_MAX_RECORDS}.`;
   }
   return !isMessageContext(context) || decodeMessageContext(context)._tag === "None"
-    ? "This draft has too much context to send. Remove some context items and try again."
+    ? "Ciorna are prea mult context. Elimină câteva elemente și încearcă din nou."
     : null;
 }
 

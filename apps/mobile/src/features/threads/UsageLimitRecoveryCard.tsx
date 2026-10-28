@@ -61,7 +61,7 @@ export function UsageLimitRecoveryCard({
   async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
-      setError("The reset time has passed. Retry the thread manually.");
+      setError("Ora de resetare a trecut. Reia conversația manual.");
       return;
     }
     setPending(true);
@@ -80,26 +80,28 @@ export function UsageLimitRecoveryCard({
     setPending(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
+      setError(
+        cause instanceof Error ? cause.message : "Reluarea după limită nu a putut fi schimbată.",
+      );
     }
   }
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm text-warning-foreground">
         {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
+          ? `Limita se resetează ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+          : "Furnizorul nu a raportat ora de resetare. Reîncearcă manual când limita e disponibilă."}
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
-            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            label={scheduled ? "Anulează reluarea automată" : "Reia la resetare"}
             tone="secondary"
             disabled={pending}
             onPress={() => void toggle("resume")}
           />
           <Button
-            label={snoozed ? "Wake now" : "Snooze until reset"}
+            label={snoozed ? "Reactivează acum" : "Amână până la resetare"}
             tone="secondary"
             disabled={pending || (!snoozed && resetPassed)}
             onPress={() => void toggle("snooze")}

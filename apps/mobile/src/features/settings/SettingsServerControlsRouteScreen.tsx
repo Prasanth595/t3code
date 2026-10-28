@@ -43,10 +43,10 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 type SettingsPage = "new-threads" | "source-control" | "agent-behavior" | "maintenance";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
-  "new-threads": "New threads",
-  "source-control": "Source control",
-  "agent-behavior": "Agent behavior",
-  maintenance: "Maintenance",
+  "new-threads": "Conversații noi",
+  "source-control": "Controlul versiunilor",
+  "agent-behavior": "Comportamentul agentului",
+  maintenance: "Întreținere",
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -70,16 +70,20 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or initialize recursively.",
+    label: "Moștenește",
+    description: "Folosește t3.json din repository sau inițializează recursiv.",
   },
-  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
+  { mode: "recursive", label: "Recursiv", description: "Inițializează și submodulele imbricate." },
   {
     mode: "top-level",
-    label: "Top level only",
-    description: "Skip submodules declared inside other submodules.",
+    label: "Doar primul nivel",
+    description: "Sari peste submodulele declarate în alte submodule.",
   },
-  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
+  {
+    mode: "none",
+    label: "Sari peste",
+    description: "Lasă submodulele goale pentru un script de configurare.",
+  },
 ];
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
@@ -89,18 +93,18 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or the current checkout.",
+    label: "Moștenește",
+    description: "Folosește t3.json din repository sau checkout-ul curent.",
   },
   {
     mode: "local",
-    label: "Current checkout",
-    description: "Start new threads in the existing workspace.",
+    label: "Checkout-ul curent",
+    description: "Pornește conversațiile noi în spațiul de lucru existent.",
   },
   {
     mode: "worktree",
-    label: "New worktree",
-    description: "Give each new thread a separate checkout.",
+    label: "Worktree nou",
+    description: "Fiecare conversație nouă primește un checkout separat.",
   },
 ];
 
@@ -111,13 +115,13 @@ const STREAMING_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "turn",
-    label: "After the turn",
-    description: "Show the answer when the agent finishes.",
+    label: "După rundă",
+    description: "Arată răspunsul când agentul termină.",
   },
   {
     mode: "paragraph",
-    label: "Finished paragraphs",
-    description: "Show each paragraph or code block as it completes.",
+    label: "Paragrafe terminate",
+    description: "Arată fiecare paragraf sau bloc de cod pe măsură ce e gata.",
   },
 ];
 
@@ -261,14 +265,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
           {!hasConnectedSelection || reference === null ? (
             <Text className="px-2 text-base text-foreground-muted">
               {projectSelected
-                ? "Select a project with a checkout on a connected environment."
-                : "Use the filter above to select a connected environment."}
+                ? "Alege un proiect cu un checkout într-un mediu conectat."
+                : "Folosește filtrul de mai sus ca să alegi un mediu conectat."}
             </Text>
           ) : (
             <>
               {projectSelected ? (
                 <SettingsProjectOverridesSection
-                  projectLabel={selectedProject?.label ?? "Unavailable project"}
+                  projectLabel={selectedProject?.label ?? "Proiect indisponibil"}
                   hasOverrides={targets.some((target) =>
                     PAGE_PROJECT_KEYS[props.page].some((key) => target.sources[key] === "project"),
                   )}
@@ -281,7 +285,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "new-threads" ? (
                 <>
                   <SettingsSection
-                    title="Default workspace"
+                    title="Spațiu de lucru implicit"
                     trailing={
                       pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -306,7 +310,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     ))}
                   </SettingsSection>
                   <SettingsSection
-                    title="Worktree submodules"
+                    title="Submodule worktree"
                     trailing={
                       pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -331,7 +335,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     ))}
                   </SettingsSection>
                   <SettingsSection
-                    title="Default permissions"
+                    title="Permisiuni implicite"
                     trailing={
                       pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -363,21 +367,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     disabled={disabledFor("branchNamingMode")}
                     onChange={write}
                   />
-                  <SettingsSection title="Pull requests">
+                  <SettingsSection title="Pull request-uri">
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
-                      label="Remove agent credits when merging"
-                      subtitle="Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+                      label="Elimină creditele agentului la merge"
+                      subtitle="Elimină creditele recunoscute ale agentului din mesajele de merge și squash, unde e suportat, păstrând coautorii umani. Include auto-merge. Exclude cozile de merge, merge-urile de stack și commit-urile existente."
                       value={uniform("removeAgentCreditsOnMerge")}
                       disabled={disabledFor("removeAgentCreditsOnMerge")}
                       onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
                     />
                   </SettingsSection>
-                  <SettingsSection title="Default branch">
+                  <SettingsSection title="Branch implicit">
                     <SettingsSwitchRow
                       icon="arrow.down.circle"
-                      label="Automatically pull"
-                      subtitle="Keep the default branch current when there are no local changes."
+                      label="Pull automat"
+                      subtitle="Ține branch-ul implicit la zi când nu există modificări locale."
                       value={uniform("defaultAutoPull")}
                       disabled={disabledFor("defaultAutoPull")}
                       onValueChange={(value) => write({ defaultAutoPull: value })}
@@ -386,8 +390,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   <SettingsSection title="Worktrees">
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
-                      label="Start from remote"
-                      subtitle="Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing."
+                      label="Pornește din remote"
+                      subtitle="Folosește ultimul commit al branch-ului remote urmărit de branch-ul de bază, chiar dacă are alt nume. Altfel folosește branch-ul cu același nume din origin. Folosește branch-ul local dacă cel remote lipsește."
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
@@ -399,7 +403,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "agent-behavior" ? (
                 <>
                   <SettingsSection
-                    title="Response streaming"
+                    title="Afișarea răspunsului"
                     trailing={
                       pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -418,11 +422,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
-                  <SettingsSection title="Preview browser">
+                  <SettingsSection title="Browser de previzualizare">
                     <SettingsSwitchRow
                       icon="globe"
-                      label="Agent browser access"
-                      subtitle="Allow agents to use the in-app preview browser."
+                      label="Acces agent la browser"
+                      subtitle="Permite agenților să folosească browserul de previzualizare din aplicație."
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
@@ -442,13 +446,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   ) : null}
                   {!projectSelected ? (
-                    <SettingsSection title="Manage environments">
+                    <SettingsSection title="Gestionează mediile">
                       {selectedTargets.map((target) => (
                         <SettingsRow
                           key={target.environmentId}
                           icon="server.rack"
                           label={target.label}
-                          value="Server and provider updates"
+                          value="Actualizări server și furnizori"
                           onPress={() =>
                             navigation.navigate("SettingsEnvironmentDetail", {
                               environmentId: target.environmentId,
@@ -458,14 +462,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ))}
                     </SettingsSection>
                   ) : null}
-                  <SettingsSection title="Updates">
+                  <SettingsSection title="Actualizări">
                     <SettingsSwitchRow
                       icon="arrow.clockwise"
-                      label="Check provider updates"
+                      label="Verifică actualizările furnizorilor"
                       subtitle={
                         projectSelected
-                          ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear."
+                          ? "Setare pentru tot mediul. Alege Toate proiectele ca s-o schimbi."
+                          : "Verifică versiuni noi pentru CLI-urile furnizorilor și actualizează catalogul de modele. Când e oprit, modelele noi s-ar putea să nu apară."
                       }
                       value={uniform("enableProviderUpdateChecks")}
                       disabled={disabledFor("enableProviderUpdateChecks")}
@@ -474,11 +478,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"
-                        label="Continue after restart"
+                        label="Continuă după repornire"
                         subtitle={
                           supportsContinuation
-                            ? "Resume interrupted threads after an update or restart."
-                            : "Update older servers to control restart continuation."
+                            ? "Reia conversațiile întrerupte după o actualizare sau repornire."
+                            : "Actualizează serverele mai vechi ca să controlezi continuarea după repornire."
                         }
                         value={uniform("continueThreadsAfterServerUpdate")}
                         disabled={
@@ -505,8 +509,8 @@ function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
     <Text
       accessibilityLabel={
         props.projectSelected
-          ? "Selected project checkouts use different values"
-          : "Selected environments use different values"
+          ? "Checkout-urile selectate folosesc valori diferite"
+          : "Mediile selectate folosesc valori diferite"
       }
       className="px-2 text-sm text-foreground-muted android:px-4"
     >

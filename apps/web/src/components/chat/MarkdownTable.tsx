@@ -46,8 +46,8 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
   const [hasClippedCells, setHasClippedCells] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
-  const copyLabel = copied ? "Copied" : "Copy table";
+  const expandLabel = expanded ? "Restrânge celulele" : "Extinde celulele";
+  const copyLabel = copied ? "Copiat" : "Copiază tabelul";
 
   const measureClippedCells = () => {
     const container = containerRef.current;
@@ -158,8 +158,8 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
             <TooltipPopup side="top">{copyLabel}</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("markdown")}>Copiază ca Markdown</MenuItem>
+            <MenuItem onClick={() => handleCopy("csv")}>Copiază ca CSV</MenuItem>
           </MenuPopup>
         </Menu>
       </div>

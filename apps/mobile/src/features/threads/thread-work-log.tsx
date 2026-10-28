@@ -815,9 +815,9 @@ function WorkspacePreparationRetryButton(props: {
   return (
     <View className="ml-7 mt-2">
       <Button
-        label="Retry"
+        label="Reîncearcă"
         tone="secondary"
-        accessibilityLabel="Retry workspace preparation"
+        accessibilityLabel="Reîncearcă pregătirea spațiului de lucru"
         disabled={busy}
         onPress={() => {
           setBusy(true);
@@ -905,12 +905,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         })
       : null;
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `Limita de utilizare a fost atinsă.${resetTime ? ` Reîncearcă după ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable
         accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
-        accessibilityHint="Long press to copy."
+        accessibilityHint="Ține apăsat pentru a copia."
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
         <View className="flex-1 py-1">
@@ -1003,13 +1003,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         ? turnItemOutputText(shownItem)
         : fetchedItem
           ? (turnItemOutputText(fetchedItem) ??
-            (outputImages.length > 0 || viewedImagePath ? null : "No output."))
+            (outputImages.length > 0 || viewedImagePath ? null : "Niciun rezultat."))
           : fetchedDetail.error
-            ? `Couldn't load output: ${fetchedDetail.error}`
+            ? `Rezultatul nu a putut fi încărcat: ${fetchedDetail.error}`
             : row.fetchesDetail
               ? fetchedDetail.data
-                ? "Output is no longer available."
-                : "Loading output…"
+                ? "Rezultatul nu mai e disponibil."
+                : "Se încarcă rezultatul…"
               : null;
   const exitLine =
     failedExitCode === null ? null : (
@@ -1045,13 +1045,15 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityRole={
           notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
         }
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
+        accessibilityLabel={
+          failed ? `${accessiblePreview}, apelul instrumentului a eșuat` : accessiblePreview
+        }
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
-            ? "Opens this agent's thread. Long press to copy."
+            ? "Deschide conversația agentului. Ține apăsat pentru a copia."
             : canExpand
-              ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
-              : "Long press to copy."
+              ? `Atinge de două ori pentru a ${expanded ? "ascunde" : "arăta"} detaliile. Ține apăsat pentru a copia.`
+              : "Ține apăsat pentru a copia."
         }
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
@@ -1299,7 +1301,9 @@ export function ThreadWorkGroupToggle(props: {
   readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
-  const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
+  const statusLabel = props.hasFailure
+    ? `${props.summary}, apelul instrumentului a eșuat`
+    : props.summary;
   const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
     props.summaryToolIcon ??
@@ -1335,7 +1339,7 @@ export function ThreadWorkGroupToggle(props: {
             accessibilityRole="button"
             accessibilityState={{ expanded: props.expanded }}
             accessibilityLabel={accessibilityLabel}
-            accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
+            accessibilityHint={`Atinge de două ori pentru a ${props.expanded ? "ascunde" : "arăta"} ${props.hiddenCount} ${props.hiddenCount === 1 ? "apel de instrument" : "apeluri de instrumente"}.`}
             onPress={() => {
               void Haptics.selectionAsync();
               props.onToggle();
@@ -1401,8 +1405,8 @@ export const ThreadAgentSpawnCard = function ThreadAgentSpawnCard(props: {
         accessibilityLabel={`${summary.title}, ${summary.status}`}
         accessibilityHint={
           canExpand
-            ? `Double tap to ${expanded ? "hide" : "show"} ${memberCount} ${memberCount === 1 ? "subagent" : "subagents"}. Long press to copy.`
-            : "Long press to copy."
+            ? `Atinge de două ori pentru a ${expanded ? "ascunde" : "arăta"} ${memberCount} ${memberCount === 1 ? "subagent" : "subagenți"}. Ține apăsat pentru a copia.`
+            : "Ține apăsat pentru a copia."
         }
         hitSlop={4}
         onPress={() => {
@@ -1499,7 +1503,7 @@ export function ThreadThinkingRow(props: {
   return (
     <View
       accessible
-      accessibilityLabel="Thinking"
+      accessibilityLabel="Se gândește"
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
@@ -1507,7 +1511,7 @@ export function ThreadThinkingRow(props: {
         key={props.rowSizing.textSizeKey}
         icon="brain"
         iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
+        label="Se gândește"
         showIcon
       />
     </View>

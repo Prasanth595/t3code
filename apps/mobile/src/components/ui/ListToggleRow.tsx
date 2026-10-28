@@ -19,7 +19,7 @@ export function ListToggleRow(
       accessory={
         props.value === null ? (
           <Pressable
-            accessibilityLabel={`Set ${props.label} on for selected environments`}
+            accessibilityLabel={`Activează ${props.label} pentru mediile selectate`}
             accessibilityRole="button"
             accessibilityHint={props.description}
             accessibilityState={{ disabled: Boolean(props.disabled) }}

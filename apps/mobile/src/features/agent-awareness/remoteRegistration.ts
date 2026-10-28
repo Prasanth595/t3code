@@ -490,7 +490,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
     const activity = startAgentLiveActivity(
       {
         title: "Mira",
-        subtitle: "Agent work in progress",
+        subtitle: "Agentul lucrează",
         activeCount: 1,
         updatedAt: nowIso,
         activities: [
@@ -501,7 +501,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
             threadTitle: input.threadTitle,
             modelTitle: "",
             phase: "starting",
-            status: "Connecting",
+            status: "Se conectează",
             updatedAt: nowIso,
             deepLink: "/",
           },
@@ -731,7 +731,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       deviceId,
       label:
         Constants.deviceName?.trim() ||
-        (Platform.OS === "android" ? "Android device" : "iOS device"),
+        (Platform.OS === "android" ? "Dispozitiv Android" : "Dispozitiv iOS"),
       ...(Platform.OS === "android"
         ? { platform: "android" as const, androidApiLevel: Number(Platform.Version) }
         : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),

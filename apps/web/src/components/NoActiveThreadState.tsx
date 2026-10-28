@@ -13,7 +13,7 @@ export function NoActiveThreadState() {
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                No active thread
+                Nicio conversație activă
               </span>
             </div>
           )}
@@ -22,9 +22,9 @@ export function NoActiveThreadState() {
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>Pick a thread to continue</EmptyTitle>
+              <EmptyTitle>Alege o conversație ca să continui</EmptyTitle>
               <EmptyDescription>
-                Select an existing thread or create a new one to get started.
+                Alege o conversație existentă sau creează una nouă ca să începi.
               </EmptyDescription>
             </EmptyHeader>
           </div>

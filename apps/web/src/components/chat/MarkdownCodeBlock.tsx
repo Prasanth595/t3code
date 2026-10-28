@@ -153,8 +153,8 @@ export function MarkdownCodeBlock({
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(() => getClientSettings().wordWrap);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
+  const wrapLabel = wrapped ? "Dezactivează încadrarea" : "Încadrează rândurile";
+  const copyLabel = copied ? "Copiat" : "Copiază codul";
   const command = code.trim();
   const canRun =
     onRunShellCommand !== undefined &&
@@ -273,13 +273,13 @@ export function MarkdownCodeBlock({
                     variant="ghost-muted"
                     size="icon-xs"
                     onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
+                    aria-label="Rulează în terminal"
                   />
                 }
               >
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
+              <TooltipPopup side="top">Rulează în terminal</TooltipPopup>
             </Tooltip>
           ) : null}
           {viewToggle}

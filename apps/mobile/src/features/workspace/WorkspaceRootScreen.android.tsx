@@ -51,11 +51,11 @@ export function WorkspaceRootScreen() {
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AndroidScreenHeader title="Pull requests" />
+              <AndroidScreenHeader title="Pull request-uri" />
               <View className="flex-1 items-center justify-center px-10">
                 <EmptyState
-                  title="Select a pull request"
-                  detail="Choose a pull request from the sidebar to review it."
+                  title="Alege un pull request"
+                  detail="Alege un pull request din bara laterală ca să-l revizuiești."
                   variant="plain"
                 />
               </View>

@@ -27,7 +27,7 @@ import { environmentStatusText } from "./environmentStatusText";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
-    return "Off";
+    return "Oprit";
   }
   return environmentStatusText({
     phase: environment.connectionState,
@@ -85,8 +85,8 @@ export function ConnectionEnvironmentRow(props: {
     }
     const error = Cause.squash(result.cause);
     Dialog.alert(
-      "Could not update environment",
-      error instanceof Error ? error.message : "The environment could not be updated.",
+      "Mediul nu a putut fi actualizat",
+      error instanceof Error ? error.message : "Mediul nu a putut fi actualizat.",
     );
   }, [label, url, props]);
 
@@ -98,8 +98,8 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityRole="button"
           accessibilityLabel={
             props.opensDetails
-              ? `Manage ${props.environment.environmentLabel}`
-              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+              ? `Gestionează ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Restrânge" : "Extinde"} detaliile pentru ${props.environment.environmentLabel}`
           }
           onPress={props.onToggle}
         >
@@ -131,7 +131,7 @@ export function ConnectionEnvironmentRow(props: {
               <Text className="text-xs text-danger-foreground">{diagnosis.headline}</Text>
               {connectionState.attempt > 0 ? (
                 <Text className="text-xs text-foreground-muted">
-                  {`Retrying · attempt ${connectionState.attempt}`}
+                  {`Se reîncearcă · încercarea ${connectionState.attempt}`}
                 </Text>
               ) : null}
             </>
@@ -165,7 +165,7 @@ export function ConnectionEnvironmentRow(props: {
         </Pressable>
 
         <ThemedSwitch
-          accessibilityLabel={`Enable ${props.environment.environmentLabel}`}
+          accessibilityLabel={`Activează ${props.environment.environmentLabel}`}
           style={{ alignSelf: "center" }}
           disabled={unsupported && !canRetry}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
@@ -175,8 +175,8 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityRole="button"
           accessibilityLabel={
             props.opensDetails
-              ? `Manage ${props.environment.environmentLabel}`
-              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+              ? `Gestionează ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Restrânge" : "Extinde"} detaliile pentru ${props.environment.environmentLabel}`
           }
           onPress={props.onToggle}
           style={{
@@ -210,15 +210,15 @@ export function ConnectionEnvironmentRow(props: {
           ) : null}
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
-              Managed by T3 Connect. Tunnel details update automatically.
+              Gestionat prin contul Mira. Detaliile tunelului se actualizează automat.
             </Text>
           ) : (
             <>
               <ConnectionFormField
-                label="Label"
+                label="Nume"
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholder="My MacBook"
+                placeholder="Laptopul meu"
                 value={label}
                 onChangeText={setLabel}
               />
@@ -240,7 +240,7 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.isRelayManaged ? null : (
                 <View className="flex-1">
                   <Button
-                    label="Save"
+                    label="Salvează"
                     tone="primary"
                     fullWidth
                     onPress={() => {
@@ -250,14 +250,14 @@ export function ConnectionEnvironmentRow(props: {
                 </View>
               )}
               <IconButton
-                accessibilityLabel="Reconnect environment"
+                accessibilityLabel="Reconectează mediul"
                 icon="arrow.clockwise"
                 variant="tonal"
                 disabled={!enabled}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
               />
               <IconButton
-                accessibilityLabel="Remove environment"
+                accessibilityLabel="Elimină mediul"
                 icon="trash"
                 variant="danger"
                 onPress={() => props.onRemove(props.environment.environmentId)}

@@ -44,8 +44,8 @@ const openPr = {
 
 describe("git action copy", () => {
   it("says PR for a GitHub ref", () => {
-    expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push & create PR");
-    expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("View PR");
+    expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push și creează PR");
+    expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("Vezi PR");
     const [, , prItem] = buildMenuItems(status(), false);
     expect(prItem?.label).toBe("Create PR");
     expect(
@@ -55,17 +55,17 @@ describe("git action copy", () => {
         isBusy: false,
         hasOriginRemote: true,
       }),
-    ).toBe("No local commits to include in a PR.");
+    ).toBe("Niciun commit local de inclus în PR.");
   });
 
   it("says MR for a GitLab ref", () => {
     expect(resolveQuickAction(status({ ...gitLab, aheadCount: 1 }), false).label).toBe(
-      "Push & create MR",
+      "Push și creează MR",
     );
     expect(
       resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
-    ).toBe("Commit, push & MR");
-    expect(resolveQuickAction(status({ ...gitLab, pr: openPr }), false).label).toBe("View MR");
+    ).toBe("Commit, push și MR");
+    expect(resolveQuickAction(status({ ...gitLab, pr: openPr }), false).label).toBe("Vezi MR");
     const [, , prItem] = buildMenuItems(status(gitLab), false);
     expect(prItem?.label).toBe("Create MR");
     expect(
@@ -75,7 +75,7 @@ describe("git action copy", () => {
         isBusy: false,
         hasOriginRemote: true,
       }),
-    ).toBe("No local commits to include in an MR.");
+    ).toBe("Niciun commit local de inclus în MR.");
   });
 
   it("names the host's change request in the default-branch dialog", () => {
@@ -91,6 +91,6 @@ describe("git action copy", () => {
         ...input,
         terminology: sourceControlClients.get("gitlab").changeRequest,
       }).continueLabel,
-    ).toBe("Commit, push & create MR");
+    ).toBe("Commit, push și creează MR");
   });
 });

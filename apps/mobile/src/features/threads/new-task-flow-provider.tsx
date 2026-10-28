@@ -327,7 +327,7 @@ export function NewTaskFlowProvider(
     return {
       environmentId: editingPendingTask.environmentId,
       id: creation.projectId,
-      title: creation.projectTitle ?? "Unknown project",
+      title: creation.projectTitle ?? "Proiect necunoscut",
       workspaceRoot: creation.projectCwd ?? "",
       repositoryIdentity: null,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
@@ -781,10 +781,10 @@ export function NewTaskFlowProvider(
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch machine",
+        "Calculatorul nu a putut fi schimbat",
         error instanceof Error
           ? error.message
-          : "The folder for threads without a project could not be created.",
+          : "Dosarul pentru conversațiile fără proiect nu a putut fi creat.",
       );
     }
     return false;

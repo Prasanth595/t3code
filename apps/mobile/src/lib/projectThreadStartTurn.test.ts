@@ -15,14 +15,14 @@ describe("project thread title", () => {
       name: "photo.png",
       mimeType: "image/png",
       text: "![photo.png](t3-context://v1/image/photo)",
-      title: "Attached image",
+      title: "Imagine atașată",
     },
     {
       type: "file" as const,
       name: "report.pdf",
       mimeType: "application/pdf",
       text: "",
-      title: "File: report.pdf",
+      title: "Fișier: report.pdf",
     },
     {
       type: "file" as const,

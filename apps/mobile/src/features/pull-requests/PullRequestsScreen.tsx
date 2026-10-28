@@ -54,7 +54,7 @@ function PullRequestScrollView(props: ScrollViewProps) {
 
 function PullRequestListErrors(props: { readonly messages: readonly string[] }) {
   const [expanded, setExpanded] = useState(false);
-  const title = `${props.messages.length} ${props.messages.length === 1 ? "error" : "errors"} loading pull requests`;
+  const title = `${props.messages.length} ${props.messages.length === 1 ? "eroare" : "erori"} la încărcarea pull request-urilor`;
   return (
     <View>
       <PullRequestCardRow
@@ -63,7 +63,7 @@ function PullRequestListErrors(props: { readonly messages: readonly string[] }) 
         compact
         last
         expanded={expanded}
-        accessibilityLabel={`${title}. ${expanded ? "Hide" : "Show"} details`}
+        accessibilityLabel={`${title}. ${expanded ? "Ascunde" : "Arată"} detaliile`}
         onPress={() => setExpanded((value) => !value)}
       />
       {expanded ? (
@@ -336,7 +336,7 @@ export function PullRequestsScreen(
                 key={JSON.stringify(targets)}
                 messages={result.data.errors.map(
                   (error) =>
-                    `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
+                    `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Mediu"}: ${error.message}`,
                 )}
               />
             ) : null}
@@ -347,15 +347,15 @@ export function PullRequestsScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more pull requests"
+                accessibilityLabel="Se încarcă mai multe"
               />
             </View>
           ) : result.loadMoreError ? (
             <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
               <Button
-                label="Try again"
-                accessibilityLabel="Retry loading more pull requests"
+                label="Încearcă din nou"
+                accessibilityLabel="Reîncearcă încărcarea"
                 onPress={() => void result.loadMore(true)}
               />
             </View>
@@ -363,8 +363,8 @@ export function PullRequestsScreen(
             // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
             <View className="items-center py-4">
               <Button
-                label="Load more"
-                accessibilityLabel="Load more pull requests"
+                label="Încarcă mai multe"
+                accessibilityLabel="Încarcă mai multe pull request-uri"
                 onPress={() => void result.loadMore()}
               />
             </View>
@@ -380,22 +380,22 @@ export function PullRequestsScreen(
               <EmptyState
                 title={
                   result.error
-                    ? "Couldn't load pull requests"
+                    ? "Pull request-urile nu au putut fi încărcate"
                     : targets.length && connectedTargets.length === 0
-                      ? "Environment offline"
+                      ? "Mediu offline"
                       : targets.length
                         ? query
-                          ? "No results"
-                          : "No matching pull requests"
-                        : "Connect an environment"
+                          ? "Niciun rezultat"
+                          : "Niciun pull request găsit"
+                        : "Conectează un mediu"
                 }
                 detail={
                   result.error ??
                   (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
+                    ? "Reconectează-te ca să încarci pull request-urile nesalvate pe acest dispozitiv."
                     : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                      ? "Aici apar pull request-urile din proiectele mediilor selectate."
+                      : "Adaugă un mediu din Setări ca să-i vezi pull request-urile.")
                 }
                 variant="plain"
               />

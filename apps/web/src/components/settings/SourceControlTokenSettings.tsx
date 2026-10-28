@@ -87,14 +87,14 @@ export function SourceControlTokenSettings({
                 />
               }
             >
-              Create a token
+              Creează un token
               <ExternalLinkIcon aria-hidden className="size-3" />
             </InlineButton>
           ) : null}
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Gazdă</Label>
             <Input
               id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
@@ -118,8 +118,8 @@ export function SourceControlTokenSettings({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {savedHosts.length === 0
-              ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
-              : `Saved for ${savedHosts.join(", ")}.`}
+              ? `Niciun token salvat; serverul folosește ${credentials.tokenEnvVar} sau autentificarea ${credentials.cliName}.`
+              : `Salvat pentru ${savedHosts.join(", ")}.`}
           </p>
           <div className="flex shrink-0 gap-2">
             {isSaved ? (

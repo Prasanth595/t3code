@@ -611,8 +611,9 @@ export default function ChatView(props: ChatViewProps) {
     if (!inserted) {
       toastManager.add({
         type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
+        title: "Editorul nu e gata",
+        description:
+          "Încearcă să citezi selecția după ce se rezolvă conexiunea sau întrebarea în așteptare.",
       });
     }
     return inserted;
@@ -812,7 +813,7 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : {
           threadId: parentSubagentThreadRef.threadId,
-          title: parentSubagentThread?.title ?? "Parent thread",
+          title: parentSubagentThread?.title ?? "Conversația părinte",
         };
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
@@ -1417,7 +1418,7 @@ export default function ChatView(props: ChatViewProps) {
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
     if (!connection) {
-      toastManager.add({ type: "error", title: "The environment is not connected." });
+      toastManager.add({ type: "error", title: "Mediul nu e conectat." });
       return;
     }
 
@@ -1435,8 +1436,8 @@ export default function ChatView(props: ChatViewProps) {
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not download " + attachment.name,
-        description: error instanceof Error ? error.message : "The attachment is unavailable.",
+        title: "Nu s-a putut descărca " + attachment.name,
+        description: error instanceof Error ? error.message : "Atașamentul nu e disponibil.",
       });
     }
   };
@@ -1761,7 +1762,7 @@ export default function ChatView(props: ChatViewProps) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThread.id,
-        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+        error instanceof Error ? error.message : "Runda curentă nu a putut fi întreruptă.",
       );
     }
   };
@@ -1782,8 +1783,8 @@ export default function ChatView(props: ChatViewProps) {
     if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
       toastManager.add({
         type: "error",
-        title: "Unable to add to chat",
-        description: "The composer is busy; try again once it is ready.",
+        title: "Nu a putut fi adăugat în chat",
+        description: "Editorul e ocupat; încearcă din nou când e gata.",
       });
       return;
     }
@@ -1792,7 +1793,7 @@ export default function ChatView(props: ChatViewProps) {
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
   const sendAppMessage = async (text: string) => {
     if (!isServerThread || activeThreadId === null) {
-      throw new Error("Messages from apps need a started thread.");
+      throw new Error("Mesajele din aplicații necesită o conversație pornită.");
     }
     const result = await startThreadTurn({
       environmentId,
@@ -1806,7 +1807,7 @@ export default function ChatView(props: ChatViewProps) {
     });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      throw error instanceof Error ? error : new Error("Could not send the app's message.");
+      throw error instanceof Error ? error : new Error("Mesajul aplicației nu a putut fi trimis.");
     }
   };
   const sendAppMessageStable = useStableCallback(sendAppMessage);
@@ -2331,7 +2332,7 @@ export default function ChatView(props: ChatViewProps) {
           stackedThreadToast({
             type: "error",
             title: target.failureTitle,
-            description: error instanceof Error ? error.message : "An error occurred.",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       },
@@ -2478,12 +2479,12 @@ export default function ChatView(props: ChatViewProps) {
   const compactDisabled = compactThreadUnavailable;
   const compactDisabledReason = compactDisabled
     ? !canOperateThread
-      ? "This connection cannot change threads."
+      ? "Această conexiune nu poate modifica conversații."
       : !activeProject
-        ? "Choose a project before compacting"
+        ? "Alege un proiect înainte de compactare"
         : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+          ? "Compactarea nu e disponibilă pentru acest furnizor"
+          : "Compactarea nu e disponibilă acum"
     : null;
   const handleRestoreThreadBranch = () => {
     if (!canWriteSourceControl) return;
@@ -2710,7 +2711,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const onCompactContext = () => {
     if (compactDisabled) return;
-    void sendStandaloneCommand("/compact", "Failed to compact context.");
+    void sendStandaloneCommand("/compact", "Contextul nu a putut fi compactat.");
   };
 
   const {
@@ -3494,17 +3495,17 @@ export default function ChatView(props: ChatViewProps) {
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
                                 !canOperateThread
-                                  ? "This connection cannot change threads."
+                                  ? "Această conexiune nu poate modifica conversații."
                                   : isEnvironmentChanging
-                                    ? "Preparing machine"
+                                    ? "Se pregătește calculatorul"
                                     : isRevertingCheckpoint
-                                      ? "Rewinding conversation"
+                                      ? "Se revine în conversație"
                                       : feedbackUploading
-                                        ? "Sending feedback"
+                                        ? "Se trimite feedback-ul"
                                         : threadDetailLoading
-                                          ? "Messages loading"
+                                          ? "Se încarcă mesajele"
                                           : worktreeSetupBlocksSend
-                                            ? "Preparing worktree"
+                                            ? "Se pregătește worktree-ul"
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}

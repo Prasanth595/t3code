@@ -77,7 +77,7 @@ export function ScrollComposeButton(props: {
                     fontWeight: "500",
                   }}
                 >
-                  New thread
+                  Conversație nouă
                 </Text>
               </ExtendedFloatingActionButton.Text>
             </ExtendedFloatingActionButton>
@@ -88,7 +88,7 @@ export function ScrollComposeButton(props: {
       <Pressable
         onPress={props.onPress}
         accessibilityRole="button"
-        accessibilityLabel="New thread"
+        accessibilityLabel="Conversație nouă"
         android_ripple={{ foreground: true }}
         style={{
           position: "absolute",

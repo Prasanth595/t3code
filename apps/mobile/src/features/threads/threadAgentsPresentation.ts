@@ -39,19 +39,19 @@ function rowStatusLabel(status: OrchestrationV2Subagent["status"]): string {
   switch (status) {
     case "pending":
     case "running":
-      return "Working";
+      return "Lucrează";
     case "waiting":
-      return "Waiting";
+      return "Așteaptă";
     case "idle":
-      return "Idle";
+      return "Inactiv";
     case "completed":
-      return "Completed";
+      return "Terminat";
     case "failed":
-      return "Failed";
+      return "Eșuat";
     case "cancelled":
-      return "Cancelled";
+      return "Anulat";
     case "interrupted":
-      return "Interrupted";
+      return "Întrerupt";
   }
 }
 

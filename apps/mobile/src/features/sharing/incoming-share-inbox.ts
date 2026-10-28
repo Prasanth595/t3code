@@ -102,9 +102,7 @@ export class IncomingShareInbox {
       if (!hasIncomingShareContent(draft)) {
         await this.cleanup(built.cleanup);
         this.clearNativePayloads();
-        throw new Error(
-          draft.warnings[0] ?? "The shared content is not supported by the composer.",
-        );
+        throw new Error(draft.warnings[0] ?? "Conținutul partajat nu e suportat.");
       }
 
       // Persist before clearing the native handoff so termination always leaves a recoverable copy.
@@ -138,14 +136,14 @@ export class IncomingShareInbox {
       const persisted = await this.dependencies.loadDrafts();
       const target = persisted.find((draft) => draft.id === shareId);
       if (!target) {
-        throw new Error("The shared content is no longer available.");
+        throw new Error("Conținutul partajat nu mai e disponibil.");
       }
       if (target.destination) {
         if (
           target.destination.environmentId !== destination.environmentId ||
           target.destination.projectId !== destination.projectId
         ) {
-          throw new Error("The shared content is already reserved for another project draft.");
+          throw new Error("Conținutul partajat e deja rezervat pentru ciorna altui proiect.");
         }
         return sortAndDedupeIncomingShares(persisted);
       }
@@ -175,7 +173,7 @@ export class IncomingShareInbox {
         target.destination.environmentId !== expectedDestination.environmentId ||
         target.destination.projectId !== expectedDestination.projectId
       ) {
-        throw new Error("The shared content reservation changed before it could be released.");
+        throw new Error("Rezervarea conținutului partajat s-a schimbat înainte de a fi eliberată.");
       }
 
       const { destination: _destination, ...unreserved } = target;

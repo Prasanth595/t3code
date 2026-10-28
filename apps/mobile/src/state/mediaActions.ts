@@ -75,7 +75,8 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       }
       const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
       if (request.signal.aborted || !canReadHostMedia(hostEnvironmentId)) return;
-      if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
+      if (uri === null)
+        throw new Error("Fișierul nu a putut fi încărcat. Reconectează-te și încearcă din nou.");
       const input = {
         attachment: { name: source.name, mimeType: source.mimeType },
         signal: request.signal,
@@ -87,8 +88,8 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
+            "Fișierul nu a putut fi partajat",
+            error instanceof Error ? error.message : "Încearcă din nou.",
           );
         }
       })
@@ -110,7 +111,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-full-path" as const,
-                  title: "Copy full path",
+                  title: "Copiază calea completă",
                   run: () => copyTextWithHaptic(formatFilePathForClipboard(reference.path)),
                 },
               ]
@@ -119,7 +120,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-relative-path" as const,
-                  title: "Copy relative path",
+                  title: "Copiază calea relativă",
                   run: () =>
                     copyTextWithHaptic(formatFilePathForClipboard(relativePath, reference.path)),
                 },
@@ -129,7 +130,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-url" as const,
-                  title: "Copy URL",
+                  title: "Copiază adresa",
                   run: () => copyTextWithHaptic(reference.url),
                 },
               ]
@@ -138,7 +139,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "open-file" as const,
-                  title: "Open in file viewer",
+                  title: "Deschide în vizualizator",
                   disabled: !canReadMedia,
                   run: () => {
                     if (!canReadHostMedia(hostEnvironmentId)) return;
@@ -154,7 +155,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             : []),
           {
             id: "save" as const,
-            title: sharing ? "Opening share sheet…" : "Save or share",
+            title: sharing ? "Se deschide partajarea…" : "Salvează sau partajează",
             run: share,
             disabled: sharing || !canReadMedia,
           },

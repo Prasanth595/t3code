@@ -23,13 +23,13 @@ const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
 }> = [
   {
     behavior: "send",
-    label: "Send message",
-    description: "Return sends the message. Shift-Return inserts a new line.",
+    label: "Trimite mesajul",
+    description: "Enter trimite mesajul. Shift-Enter adaugă un rând nou.",
   },
   {
     behavior: "newline",
-    label: "Insert new line",
-    description: "Return inserts a new line. Command-Return sends the message.",
+    label: "Rând nou",
+    description: "Enter adaugă un rând nou. Command-Enter trimite mesajul.",
   },
 ];
 
@@ -48,7 +48,7 @@ export function SettingsKeyboardRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Keyboard" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader title="Tastatură" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView
@@ -58,7 +58,7 @@ export function SettingsKeyboardRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Return key">
+        <SettingsSection title="Tasta Enter">
           {ENTER_BEHAVIOR_OPTIONS.map((option, index) => (
             <SettingsChoiceRow
               key={option.behavior}
@@ -72,7 +72,7 @@ export function SettingsKeyboardRouteScreen() {
           ))}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Applies to the composer when a hardware keyboard is connected.
+          Se aplică la scriere când e conectată o tastatură fizică.
         </Text>
       </ScrollView>
     </View>

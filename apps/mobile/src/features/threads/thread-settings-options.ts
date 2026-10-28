@@ -7,23 +7,23 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "approval-required",
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
+    label: "Supravegheat",
+    description: "Întreabă înainte de comenzi și modificări de fișiere.",
   },
   {
     mode: "auto-accept-edits",
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
+    label: "Acceptă automat editările",
+    description: "Aprobă automat editările, întreabă înainte de alte acțiuni.",
   },
   {
     mode: "auto",
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    label: "Automat",
+    description: "Furnizorii compatibili aprobă acțiunile de rutină; ceilalți tot întreabă.",
   },
   {
     mode: "full-access",
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
+    label: "Acces complet",
+    description: "Permite comenzi și editări fără confirmare.",
   },
 ];
 

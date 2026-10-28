@@ -186,13 +186,13 @@ export function getRenderablePatch(
     return {
       kind: "raw",
       text: normalizedPatch,
-      reason: "Unsupported diff format. Showing raw patch.",
+      reason: "Format de diff nesuportat. Se arată patch-ul brut.",
     };
   } catch {
     return {
       kind: "raw",
       text: normalizedPatch,
-      reason: "Failed to parse patch. Showing raw patch.",
+      reason: "Patch-ul nu a putut fi analizat. Se arată patch-ul brut.",
     };
   }
 }

@@ -28,9 +28,9 @@ function ResolvedWorkspaceFileImagePreview(props: {
       <MediaActionsMenu media={mediaActions} style={{ flex: 1 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
+          accessibilityLabel={`Deschide pe tot ecranul ${props.accessibilityLabel}`}
           accessibilityHint={
-            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            mediaActions.actions.length > 0 ? "Ține apăsat pentru acțiuni" : undefined
           }
           disabled={loadError !== null}
           className="flex-1 p-4 active:bg-subtle-strong"
@@ -52,7 +52,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
               resizeMode="contain"
               onLoadStart={() => setLoadError(null)}
               onError={(event) => {
-                setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+                setLoadError(event.nativeEvent.error || "Imaginea nu a putut fi afișată.");
               }}
             />
           </PresentationSource>
@@ -63,7 +63,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
           pointerEvents="none"
           className="absolute inset-0 items-center justify-center bg-card px-6"
         >
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState title="Imagine indisponibilă" detail={loadError} />
         </View>
       ) : null}
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
@@ -77,7 +77,7 @@ export function WorkspaceFileImagePreview(props: {
   readonly actionsSource?: MediaActionsSource;
 }) {
   if (props.uri === null) {
-    return <FilePreviewLoading message="Preparing image preview..." background="card" />;
+    return <FilePreviewLoading message="Se pregătește imaginea..." background="card" />;
   }
 
   return (

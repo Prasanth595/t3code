@@ -82,7 +82,7 @@ export function SettingsProjectOverviewRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Project overview" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="Prezentare proiect" trailing={<AndroidSettingsEnvironmentFilter />}>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
@@ -92,8 +92,8 @@ export function SettingsProjectOverviewRouteScreen() {
         >
           {members.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
-              This project has no checkout on the selected connected environments. Change the filter
-              above.
+              Acest proiect nu are niciun checkout în mediile conectate selectate. Schimbă filtrul
+              de mai sus.
             </Text>
           ) : (
             <ProjectOverviewContent
@@ -156,8 +156,8 @@ function ProjectOverviewContent(props: {
       (entry) => entry.environmentId === denied.environmentId,
     );
     Dialog.alert(
-      "Failed to remove project",
-      `This connection cannot change projects in ${environment?.label ?? "this environment"}.`,
+      "Proiectul nu a putut fi eliminat",
+      `Această conexiune nu poate modifica proiecte în ${environment?.label ?? "acest mediu"}.`,
     );
     return false;
   };
@@ -179,9 +179,9 @@ function ProjectOverviewContent(props: {
       unloadedThreadCount: readUnloadedThreadCount(members, threads),
     });
     Dialog.confirm({
-      title: plan.targetKind === "checkout" ? "Remove checkout" : "Remove project",
+      title: plan.targetKind === "checkout" ? "Elimină checkout-ul" : "Elimină proiectul",
       message: plan.confirmationMessage,
-      confirmText: plan.targetKind === "checkout" ? "Remove checkout" : "Remove project",
+      confirmText: plan.targetKind === "checkout" ? "Elimină checkout-ul" : "Elimină proiectul",
       destructive: true,
       onCancel: finishRemoval,
       onConfirm: () => {
@@ -198,8 +198,8 @@ function ProjectOverviewContent(props: {
               if (!isAtomCommandInterrupted(result)) {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
-                  `Failed to remove "${member.title}"`,
-                  error instanceof Error ? error.message : "An error occurred.",
+                  `„${member.title}” nu a putut fi eliminat`,
+                  error instanceof Error ? error.message : "A apărut o eroare.",
                 );
               }
               return;
@@ -265,12 +265,12 @@ function ProjectOverviewContent(props: {
         </View>
       </View>
 
-      <SettingsSection title="Project">
+      <SettingsSection title="Proiect">
         <View className="gap-3 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">Nume</Text>
           <View className="flex-row items-center gap-3">
             <AppTextInput
-              accessibilityLabel="Project name"
+              accessibilityLabel="Numele proiectului"
               className="min-h-11 min-w-0 flex-1 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
               value={draftName ?? displayName}
               onChangeText={setDraftName}
@@ -280,8 +280,8 @@ function ProjectOverviewContent(props: {
             />
             {canSave ? (
               <Button
-                label="Save"
-                accessibilityHint="Save project name"
+                label="Salvează"
+                accessibilityHint="Salvează numele proiectului"
                 tone="secondary"
                 onPress={saveName}
               />
@@ -290,7 +290,7 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Checkouts">
+      <SettingsSection title="Checkout-uri">
         {props.members.map((member, index) => {
           const environment = props.environments.find(
             (entry) => entry.environmentId === member.environmentId,
@@ -307,7 +307,7 @@ function ProjectOverviewContent(props: {
                     : "text-lg text-foreground"
                 }
               >
-                {environment?.label ?? "Environment"}
+                {environment?.label ?? "Mediu"}
               </Text>
               {environment?.displayUrl ? (
                 <Text className="text-sm leading-normal text-foreground-muted">
@@ -328,22 +328,22 @@ function ProjectOverviewContent(props: {
           );
         })}
       </SettingsSection>
-      <SettingsSection title="Danger">
+      <SettingsSection title="Zonă periculoasă">
         <SettingsActionRow
           icon="trash"
           label={
             props.hasOtherMembers
-              ? "Remove checkout"
+              ? "Elimină checkout-ul"
               : props.members.length > 1
-                ? "Remove this project everywhere"
-                : "Remove project"
+                ? "Elimină proiectul peste tot"
+                : "Elimină proiectul"
           }
           description={
             props.hasOtherMembers
-              ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+              ? "Șterge checkout-urile calculatorului selectat și conversațiile lor. Celelalte calculatoare și fișierele de pe disc nu sunt atinse."
               : props.members.length > 1
-                ? `Deletes all ${props.members.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                ? `Șterge toate cele ${props.members.length} checkout-uri și conversațiile lor de pe toate calculatoarele. Fișierele de pe disc nu sunt atinse.`
+                : "Șterge proiectul și conversațiile lui. Fișierele de pe disc nu sunt atinse."
           }
           tone="danger"
           disabled={!canRemoveGroup || isRemoving}
@@ -364,12 +364,12 @@ function RemoveCheckoutAction(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Remove checkout ${props.member.workspaceRoot}`}
+      accessibilityLabel={`Elimină checkout-ul ${props.member.workspaceRoot}`}
       disabled={props.disabled || !canRemove}
       onPress={props.onPress}
       className="self-start rounded-full border border-border bg-card px-3 py-1.5 disabled:opacity-40"
     >
-      <Text className="font-t3-medium text-xs text-danger-foreground">Remove checkout</Text>
+      <Text className="font-t3-medium text-xs text-danger-foreground">Elimină checkout-ul</Text>
     </Pressable>
   );
 }

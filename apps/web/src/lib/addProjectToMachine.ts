@@ -42,7 +42,7 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : "A apărut o eroare.";
 }
 
 /**
@@ -114,7 +114,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
       if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: "Too large to copy." };
+      if (result.value.truncated) return { relativePath, error: "Prea mare pentru copiere." };
       return { relativePath, contents: result.value.contents };
     }),
   );
@@ -181,7 +181,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: `${failed.length === 1 ? "Un fișier nu a putut fi copiat" : `${failed.length} fișiere nu au putut fi copiate`} pe ${input.target.label}`,
             failures: failed,
           },
     );

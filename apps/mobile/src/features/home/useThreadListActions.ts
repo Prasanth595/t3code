@@ -83,11 +83,11 @@ function environmentSupportsTitleRegeneration(
 type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle";
 
 const ACTION_VERBS: Record<ThreadListAction, string> = {
-  archive: "archived",
-  unarchive: "unarchived",
-  delete: "deleted",
-  settle: "settled",
-  unsettle: "un-settled",
+  archive: "arhivată",
+  unarchive: "dezarhivată",
+  delete: "ștearsă",
+  settle: "finalizată",
+  unsettle: "redeschisă",
 };
 
 function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unknown>): string {
@@ -95,7 +95,7 @@ function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unkno
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return `The thread could not be ${ACTION_VERBS[action]}.`;
+  return `Conversația nu a putut fi ${ACTION_VERBS[action]}.`;
 }
 
 function selectionHaptic(): void {
@@ -103,16 +103,16 @@ function selectionHaptic(): void {
 }
 
 function actionFailureTitle(action: ThreadListAction): string {
-  if (action === "archive") return "Could not archive thread";
-  if (action === "unarchive") return "Could not unarchive thread";
-  if (action === "settle") return "Could not settle thread";
-  if (action === "unsettle") return "Could not un-settle thread";
-  return "Could not delete thread";
+  if (action === "archive") return "Conversația nu a putut fi arhivată";
+  if (action === "unarchive") return "Conversația nu a putut fi dezarhivată";
+  if (action === "settle") return "Conversația nu a putut fi finalizată";
+  if (action === "unsettle") return "Conversația nu a putut fi redeschisă";
+  return "Conversația nu a putut fi ștearsă";
 }
 
 function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: string): boolean {
   if (readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return true;
-  Dialog.alert(title, "This connection cannot change threads.");
+  Dialog.alert(title, "Această conexiune nu poate modifica conversații.");
   return false;
 }
 
@@ -146,14 +146,14 @@ function useThreadActionExecutor(
       ) {
         Dialog.alert(
           actionFailureTitle(action),
-          "This environment's server does not support settling yet. Update the server to use Settle.",
+          "Serverul acestui mediu nu suportă încă finalizarea. Actualizează serverul ca să folosești Finalizează.",
         );
         return false;
       }
       if (action === "archive" && !threadCanArchive(thread.runtime)) {
         Dialog.alert(
           actionFailureTitle(action),
-          "This thread is working. Interrupt it first, then try again.",
+          "Conversația lucrează încă. Întrerupe-o mai întâi, apoi încearcă din nou.",
         );
         return false;
       }
@@ -209,12 +209,12 @@ function confirmThreadDeletion(
   thread: EnvironmentThreadShell,
 ) {
   if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
-  const title = "Delete thread?";
-  const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+  const title = "Ștergi conversația?";
+  const message = `“${thread.title}” va fi ștearsă definitiv, inclusiv istoricul terminalului.`;
   Dialog.confirm({
     title,
     message,
-    confirmText: "Delete",
+    confirmText: "Șterge",
     destructive: true,
     onConfirm: () => {
       void executeAction("delete", thread);
@@ -259,7 +259,7 @@ export function useThreadListActions(): {
   const archiveThread = (thread: EnvironmentThreadShell) => executeAction("archive", thread);
   const offerUndo = (
     thread: EnvironmentThreadShell,
-    action: "Settled" | "Snoozed" | "Unpinned",
+    action: "finalizată" | "amânată" | "defixată",
     claim: ReturnType<typeof ThreadUndo.begin>,
     plan: ThreadUndo.ThreadUndoPlan,
   ) =>
@@ -280,7 +280,9 @@ export function useThreadListActions(): {
                   return pinThread(thread, step.orderKey);
                 case "snooze": {
                   const failureTitle =
-                    action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
+                    action === "defixată"
+                      ? "Defixarea nu a putut fi anulată"
+                      : "Finalizarea nu a putut fi anulată";
                   if (!checkThreadOperationPermission(thread, failureTitle)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
@@ -289,8 +291,8 @@ export function useThreadListActions(): {
                   if (result._tag === "Failure") {
                     const error = Cause.squash(result.cause);
                     Dialog.alert(
-                      "Could not restore snooze",
-                      error instanceof Error ? error.message : "The thread could not be snoozed.",
+                      "Amânarea nu a putut fi restabilită",
+                      error instanceof Error ? error.message : "Conversația nu a putut fi amânată.",
                     );
                     return false;
                   }
@@ -302,8 +304,8 @@ export function useThreadListActions(): {
           );
         } catch (error) {
           Dialog.alert(
-            "Could not undo thread action",
-            error instanceof Error ? error.message : "Try again.",
+            "Acțiunea nu a putut fi anulată",
+            error instanceof Error ? error.message : "Încearcă din nou.",
           );
         }
       },
@@ -318,13 +320,13 @@ export function useThreadListActions(): {
       claim = ThreadUndo.begin("settle", key);
     });
     if (claim) {
-      if (succeeded) offerUndo(thread, "Settled", claim, plan);
+      if (succeeded) offerUndo(thread, "finalizată", claim, plan);
       else claim.finish();
     }
     return succeeded;
   };
   const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-    if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Conversația nu a putut fi amânată")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
       return false;
@@ -333,19 +335,19 @@ export function useThreadListActions(): {
     const succeeded = await (async () => {
       if (!environmentSupportsSnooze(thread.environmentId)) {
         Dialog.alert(
-          "Could not snooze thread",
-          "This environment's server does not support snoozing yet. Update the server to use Snooze.",
+          "Conversația nu a putut fi amânată",
+          "Serverul acestui mediu nu suportă încă amânarea. Actualizează serverul ca să folosești Amână.",
         );
         return false;
       }
       if (!canSnooze(thread, { now: new Date().toISOString() })) {
         Dialog.alert(
-          "Could not snooze thread",
+          "Conversația nu a putut fi amânată",
           thread.hasPendingApprovals ||
             thread.hasPendingUserInput ||
             thread.pendingSubagentRequest != null
-            ? "This thread is waiting on you. Respond to the pending request before snoozing it."
-            : "This thread is still starting a turn. Try again once it's running.",
+            ? "Conversația te așteaptă. Răspunde la cererea în așteptare înainte s-o amâni."
+            : "Conversația încă pornește. Încearcă din nou după ce rulează.",
         );
         return false;
       }
@@ -368,21 +370,22 @@ export function useThreadListActions(): {
         claim.finish();
         const error = Cause.squash(result.cause);
         Dialog.alert(
-          "Could not snooze thread",
+          "Conversația nu a putut fi amânată",
           error instanceof Error && error.message.trim().length > 0
             ? error.message
-            : "The thread could not be snoozed.",
+            : "Conversația nu a putut fi amânată.",
         );
         return false;
       }
-      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
+      offerUndo(thread, "amânată", claim, ThreadUndo.planThreadUndo("snooze"));
       return true;
     })();
     snoozeInFlightThreadKeys.current.delete(key);
     return succeeded;
   };
   const unsnoozeThread = async (thread: EnvironmentThreadShell) => {
-    if (!checkThreadOperationPermission(thread, "Could not wake thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Conversația nu a putut fi reactivată"))
+      return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
       return false;
@@ -391,8 +394,8 @@ export function useThreadListActions(): {
     const succeeded = await (async () => {
       if (!environmentSupportsSnooze(thread.environmentId)) {
         Dialog.alert(
-          "Could not wake thread",
-          "This environment's server does not support snoozing yet. Update the server to wake this thread.",
+          "Conversația nu a putut fi reactivată",
+          "Serverul acestui mediu nu suportă încă amânarea. Actualizează serverul ca să reactivezi conversația.",
         );
         return false;
       }
@@ -411,10 +414,10 @@ export function useThreadListActions(): {
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
         Dialog.alert(
-          "Could not wake thread",
+          "Conversația nu a putut fi reactivată",
           error instanceof Error && error.message.trim().length > 0
             ? error.message
-            : "The thread could not be woken.",
+            : "Conversația nu a putut fi reactivată.",
         );
         return false;
       }
@@ -426,11 +429,11 @@ export function useThreadListActions(): {
   const unsettleThread = async (thread: EnvironmentThreadShell) =>
     (await executeAction("unsettle", thread)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
-    if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Conversația nu a putut fi fixată")) return false;
     if (!environmentSupportsPinning(thread.environmentId)) {
       Dialog.alert(
-        "Could not pin thread",
-        "This environment's server does not support pinning yet. Update the server to use Pin.",
+        "Conversația nu a putut fi fixată",
+        "Serverul acestui mediu nu suportă încă fixarea. Actualizează serverul ca să folosești Fixează.",
       );
       return false;
     }
@@ -464,21 +467,21 @@ export function useThreadListActions(): {
     if (result._tag === "Failure") {
       const error = Cause.squash(result.cause);
       Dialog.alert(
-        "Could not pin thread",
+        "Conversația nu a putut fi fixată",
         error instanceof Error && error.message.trim().length > 0
           ? error.message
-          : "The thread could not be pinned.",
+          : "Conversația nu a putut fi fixată.",
       );
       return false;
     }
     return true;
   };
   const unpinThread = async (thread: EnvironmentThreadShell) => {
-    if (!checkThreadOperationPermission(thread, "Could not unpin thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Conversația nu a putut fi defixată")) return false;
     if (!environmentSupportsPinning(thread.environmentId)) {
       Dialog.alert(
-        "Could not unpin thread",
-        "This environment's server does not support pinning yet. Update the server to use Pin.",
+        "Conversația nu a putut fi defixată",
+        "Serverul acestui mediu nu suportă încă fixarea. Actualizează serverul ca să folosești Fixează.",
       );
       return false;
     }
@@ -498,21 +501,21 @@ export function useThreadListActions(): {
       claim.finish();
       const error = Cause.squash(result.cause);
       Dialog.alert(
-        "Could not unpin thread",
+        "Conversația nu a putut fi defixată",
         error instanceof Error && error.message.trim().length > 0
           ? error.message
-          : "The thread could not be unpinned.",
+          : "Conversația nu a putut fi defixată.",
       );
       return false;
     }
-    offerUndo(thread, "Unpinned", claim, plan);
+    offerUndo(thread, "defixată", claim, plan);
     return true;
   };
   const setThreadAutoSettle = async (thread: EnvironmentThreadShell, enabled: boolean) => {
     if (!environmentSupportsAutoSettleOptOut(thread.environmentId)) {
       Dialog.alert(
-        "Could not update auto-settle",
-        "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.",
+        "Finalizarea automată nu a putut fi schimbată",
+        "Serverul acestui mediu nu suportă încă oprirea finalizării automate per conversație. Actualizează serverul ca s-o folosești.",
       );
       return false;
     }
@@ -524,25 +527,25 @@ export function useThreadListActions(): {
     if (result._tag === "Failure") {
       const error = Cause.squash(result.cause);
       Dialog.alert(
-        "Could not update auto-settle",
+        "Finalizarea automată nu a putut fi schimbată",
         error instanceof Error && error.message.trim().length > 0
           ? error.message
-          : "The auto-settle setting could not be changed.",
+          : "Setarea de finalizare automată nu a putut fi schimbată.",
       );
       return false;
     }
     return true;
   };
   const regenerateThreadTitle = async (thread: EnvironmentThreadShell) => {
-    if (!checkThreadOperationPermission(thread, "Could not regenerate title")) return false;
+    if (!checkThreadOperationPermission(thread, "Titlul nu a putut fi regenerat")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (thread.titleRegeneration != null || titleRegenerationInFlightThreadKeys.current.has(key)) {
       return false;
     }
     if (!environmentSupportsTitleRegeneration(thread.environmentId)) {
       Dialog.alert(
-        "Could not regenerate title",
-        "This environment's server does not support title regeneration yet. Update the server to regenerate thread titles.",
+        "Titlul nu a putut fi regenerat",
+        "Serverul acestui mediu nu suportă încă regenerarea titlurilor. Actualizează serverul ca să regenerezi titlurile.",
       );
       return false;
     }
@@ -557,10 +560,10 @@ export function useThreadListActions(): {
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
         Dialog.alert(
-          "Could not regenerate title",
+          "Titlul nu a putut fi regenerat",
           error instanceof Error && error.message.trim().length > 0
             ? error.message
-            : "The thread title could not be regenerated.",
+            : "Titlul conversației nu a putut fi regenerat.",
         );
         return false;
       }
@@ -573,7 +576,7 @@ export function useThreadListActions(): {
     const commit = (title: string) => {
       const resolution = resolveThreadTitleRename({ title, originalTitle: thread.title });
       if (resolution.action === "reject-empty") {
-        Dialog.alert("Could not rename thread", "Thread title cannot be empty.");
+        Dialog.alert("Conversația nu a putut fi redenumită", "Titlul nu poate fi gol.");
         return;
       }
       if (resolution.action === "noop") return;
@@ -585,18 +588,18 @@ export function useThreadListActions(): {
         if (result._tag === "Success") return;
         const error = Cause.squash(result.cause);
         Dialog.alert(
-          "Could not rename thread",
+          "Conversația nu a putut fi redenumită",
           error instanceof Error && error.message.trim().length > 0
             ? error.message
-            : "The thread could not be renamed.",
+            : "Conversația nu a putut fi redenumită.",
         );
       });
     };
 
     Dialog.prompt({
-      title: "Rename thread",
+      title: "Redenumește conversația",
       initialValue: thread.title,
-      confirmText: "Rename",
+      confirmText: "Redenumește",
       onConfirm: commit,
     });
   };
@@ -609,7 +612,7 @@ export function useThreadListActions(): {
     reportFailure: false,
   });
   const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
-    if (!checkThreadOperationPermission(thread, "Could not move thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Conversația nu a putut fi mutată")) return false;
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
     const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
     const current = shells.find(
@@ -639,8 +642,8 @@ export function useThreadListActions(): {
     };
     if (!supportsReorder(thread.environmentId)) {
       Dialog.alert(
-        "Could not move thread",
-        "This environment's server does not support reordering these threads. Update the server to arrange them.",
+        "Conversația nu a putut fi mutată",
+        "Serverul acestui mediu nu suportă reordonarea acestor conversații. Actualizează serverul ca să le aranjezi.",
       );
       return false;
     }
@@ -686,7 +689,8 @@ export function useThreadListActions(): {
     );
     for (const assignment of assignments) {
       const target = shellByKey.get(assignment.id);
-      if (target && !checkThreadOperationPermission(target, "Could not move thread")) return false;
+      if (target && !checkThreadOperationPermission(target, "Conversația nu a putut fi mutată"))
+        return false;
     }
     selectionHaptic();
     appAtomRegistry.set(threadDropBusyAtom, true);
@@ -717,7 +721,7 @@ export function useThreadListActions(): {
             input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
           });
           if (result._tag === "Failure") {
-            Dialog.alert("Could not pin thread", String(Cause.squash(result.cause)));
+            Dialog.alert("Conversația nu a putut fi fixată", String(Cause.squash(result.cause)));
             return false;
           }
         } else {
@@ -737,7 +741,8 @@ export function useThreadListActions(): {
         if (pending !== null && !pending.isPending()) return false;
         const target = shellByKey.get(assignment.id);
         if (target === undefined) continue;
-        if (!checkThreadOperationPermission(target, "Could not move thread")) return false;
+        if (!checkThreadOperationPermission(target, "Conversația nu a putut fi mutată"))
+          return false;
         ThreadUndo.invalidate("pin", scopedThreadKey(target.environmentId, target.id));
         const result = await reorder({
           environmentId: target.environmentId,
@@ -746,10 +751,10 @@ export function useThreadListActions(): {
         if (result._tag === "Failure") {
           const error = Cause.squash(result.cause);
           Dialog.alert(
-            "Could not move thread",
+            "Conversația nu a putut fi mutată",
             error instanceof Error && error.message.trim().length > 0
               ? error.message
-              : "The thread could not be moved.",
+              : "Conversația nu a putut fi mutată.",
           );
           return false;
         }

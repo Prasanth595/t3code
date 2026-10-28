@@ -15,10 +15,10 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   server: "Server",
   cloud: "Cloud VM",
   linux: "Linux/WSL",
-  desktop: "Desktop",
+  desktop: "Calculator",
   laptop: "Laptop",
   "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
+  "mac-studio": "Stație de lucru",
 };
 
 export function EnvironmentMachineSymbol(props: {

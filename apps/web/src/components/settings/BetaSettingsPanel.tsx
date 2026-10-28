@@ -25,7 +25,7 @@ export function BetaSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          description="Strânge conversațiile care lucrează sau monitorizează într-o secțiune În lucru. Revin sus când au nevoie de tine."
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -45,7 +45,7 @@ export function BetaSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
-              aria-label="Working section"
+              aria-label="Secțiunea În lucru"
             />
           }
         />
@@ -65,10 +65,10 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description="Partajează o conversație cu un invitat care o urmărește live în browser și trimite mesaje pe care le aprobi. Autentifică-te ca să folosești link-uri de invitat."
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-          Sign in
+          Autentifică-te
         </Button>
       }
     />
@@ -98,7 +98,7 @@ function GuestLinksRow() {
           settingKeys={["guestSharingEnabled"]}
           checked={settings.guestSharingEnabled}
           onCheckedChange={(checked) => updateSettings({ guestSharingEnabled: Boolean(checked) })}
-          aria-label="Guest links"
+          aria-label="Link-uri pentru invitați"
         />
       }
     />

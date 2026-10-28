@@ -193,7 +193,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button size="icon-micro" variant="ghost-muted" aria-label="Detalii politică fundal">
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -381,7 +381,7 @@ export function SettingsRow({
     source === "project" || source === "mixed" ? (
       <SettingResetButton
         label={typeof title === "string" ? title : "override"}
-        tooltip="Reset to inherited value"
+        tooltip="Resetează la valoarea moștenită"
         onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
       />
     ) : null
@@ -421,11 +421,11 @@ export function SettingsRow({
                   : (primaryEnvironment?.label ?? "the primary environment")
               }.`
             : context
-              ? "Reconnect the selected environment to change this setting."
+              ? "Reconectează mediul selectat ca să schimbi setarea."
               : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
         )
       : environmentWide && control
-        ? inertControl("Environment-wide setting. Select an environment to change it.")
+        ? inertControl("Setare pentru tot mediul. Alege un mediu ca s-o schimbi.")
         : control;
   const customized =
     context !== null &&
@@ -439,16 +439,16 @@ export function SettingsRow({
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed
-    ? { state: "mixed", summary: "Mixed across selected environments" }
+    ? { state: "mixed", summary: "Diferă între mediile selectate" }
     : source === "project"
-      ? { state: "overridden", summary: "Overridden for this project" }
+      ? { state: "overridden", summary: "Suprascris pentru acest proiect" }
       : source === "t3.json"
-        ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
+        ? { state: "inherited", summary: "Moștenit din t3.json al repository-ului" }
         : source === "environment" && scopedKeys.length > 0
-          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+          ? { state: "inherited", summary: `Moștenit din ${inheritedFrom}` }
           : customized
-            ? { state: "environment", summary: "Set on the environment" }
-            : { state: "default", summary: "Built-in default" };
+            ? { state: "environment", summary: "Setat pe mediu" }
+            : { state: "default", summary: "Valoare implicită" };
   const renderedInheritance =
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
@@ -529,7 +529,7 @@ export function SettingsRow({
 
 export function SettingResetButton({
   label,
-  tooltip = "Reset to default",
+  tooltip = "Resetează la valoarea implicită",
   disabled = false,
   onClick,
 }: {
@@ -545,7 +545,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={`Resetează ${label} la valoarea implicită`}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();

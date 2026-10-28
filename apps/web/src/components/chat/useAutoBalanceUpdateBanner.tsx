@@ -84,7 +84,11 @@ export function useAutoBalanceUpdateBanner(
   );
   const count = running || failed || machines.length;
   const status = running ? "running" : failed ? "failed" : "idle";
-  const prefix = running ? "Updating" : failed ? "Could not update" : "Update available for";
+  const prefix = running
+    ? "Se actualizează"
+    : failed
+      ? "Nu s-a putut actualiza"
+      : "Actualizare disponibilă pentru";
   const title = `${prefix} ${count} ${count === 1 ? "machine" : "machines"}`;
   return {
     id: `auto-balance-server-updates-${dismissedNotices.size}`,
@@ -96,7 +100,7 @@ export function useAutoBalanceUpdateBanner(
         <PopoverTrigger
           render={<InlineButton />}
           className="max-w-full"
-          aria-label={`${title}. View machines`}
+          aria-label={`${title}. Vezi calculatoarele`}
         >
           <span className="min-w-0 truncate">{title}</span>
         </PopoverTrigger>
@@ -115,8 +119,8 @@ export function useAutoBalanceUpdateBanner(
                 ) : (
                   <div className="text-muted-foreground">
                     {machine.connected
-                      ? `Ready to update to ${machine.targetVersion}`
-                      : "Reconnect this machine to update"}
+                      ? `Gata de actualizare la ${machine.targetVersion}`
+                      : "Reconectează calculatorul ca să-l actualizezi"}
                   </div>
                 )}
               </div>
@@ -126,7 +130,9 @@ export function useAutoBalanceUpdateBanner(
       </Popover>
     ),
     description:
-      manual > 0 ? `${manual} ${manual === 1 ? "needs" : "need"} a manual update` : undefined,
+      manual > 0
+        ? `${manual} ${manual === 1 ? "necesită" : "necesită"} actualizare manuală`
+        : undefined,
     actions:
       running === 0 && targets.length > 0 ? (
         <ServerUpdatesAction
@@ -134,14 +140,14 @@ export function useAutoBalanceUpdateBanner(
           variant="ghost"
           label={
             failed > 0
-              ? "Retry"
+              ? "Reîncearcă"
               : targets.length === machines.length
-                ? "Update all"
-                : `Update ${targets.length} ${targets.length === 1 ? "machine" : "machines"}`
+                ? "Actualizează tot"
+                : `Actualizează ${targets.length} ${targets.length === 1 ? "calculator" : "calculatoare"}`
           }
         />
       ) : undefined,
-    dismissLabel: "Dismiss update notice",
+    dismissLabel: "Închide notificarea de actualizare",
     ...(running
       ? {}
       : {

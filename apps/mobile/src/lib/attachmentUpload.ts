@@ -52,10 +52,10 @@ export function validateDraftFileAttachments(input: {
 }): string | null {
   const files = input.attachments.filter((attachment) => attachment.type === "file");
   if (files.length === 0) return null;
-  if (input.serverConfig === null) return "Server attachment support is still loading.";
+  if (input.serverConfig === null) return "Suportul pentru atașamente încă se încarcă.";
   const capabilities = input.serverConfig.environment.capabilities;
   if (capabilities.attachmentUploads !== true || capabilities.fileAttachments === undefined) {
-    return "This server does not support file attachments.";
+    return "Acest server nu suportă atașarea fișierelor.";
   }
   const maxBytes = clampFileAttachmentUploadBytes(capabilities.fileAttachments.maxUploadBytes);
   const oversized = files.find((attachment) => attachment.sizeBytes > maxBytes);
@@ -94,7 +94,7 @@ export async function releasePendingAttachmentUploads(
 ): Promise<void> {
   const deleteOnce = async (attachmentId: string): Promise<boolean> => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      throw new Error("This connection cannot delete pending attachments.");
+      throw new Error("Această conexiune nu poate șterge atașamentele în așteptare.");
     }
     const result = await runAtomCommand(
       appAtomRegistry,
@@ -116,7 +116,7 @@ export async function releasePendingAttachmentUploads(
   }
   if (failedAttachmentIds.length > 0) {
     throw new Error(
-      `Could not delete ${failedAttachmentIds.length} pending attachment upload(s): ${failedAttachmentIds.join(", ")}.`,
+      `Nu am putut șterge ${failedAttachmentIds.length} încărcări în așteptare: ${failedAttachmentIds.join(", ")}.`,
     );
   }
 }
@@ -156,7 +156,7 @@ function supportedImageWireMimeType(
   const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
     (type) => type === attachment.mimeType.toLowerCase() || type === inferred,
   );
-  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
+  if (!mimeType) throw new Error(`Tip de imagine nesuportat pentru „${attachment.name}”.`);
   return mimeType;
 }
 
@@ -207,7 +207,7 @@ async function composerImageAttachmentDataUrl(
     return attachment.dataUrl;
   }
   if (!isFileBackedComposerAttachment(attachment)) {
-    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+    throw new Error(`„${attachment.name}” nu mai e disponibil. Atașează imaginea din nou.`);
   }
   const release = retainComposerAttachmentFileForPreview(attachment);
   try {
@@ -230,14 +230,14 @@ async function uploadFileBytes(
   onProgress?: (progress: number) => void,
 ): Promise<void> {
   const { File, Paths, UploadType } = await import("expo-file-system");
-  if (signal.aborted) throw new Error("Upload cancelled.");
+  if (signal.aborted) throw new Error("Încărcare anulată.");
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-    throw new Error("This connection cannot upload attachments.");
+    throw new Error("Această conexiune nu poate încărca atașamente.");
   }
   const fileUri = attachment.fileUri;
   const inlineDataUrl = attachment.type === "image" ? attachment.dataUrl : undefined;
   if (fileUri === undefined && inlineDataUrl === undefined) {
-    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+    throw new Error(`„${attachment.name}” nu mai e disponibil. Atașează imaginea din nou.`);
   }
   const file =
     fileUri === undefined
@@ -264,7 +264,7 @@ async function uploadFileBytes(
         : {}),
     });
     if (result.status < 200 || result.status >= 300) {
-      throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
+      throw new Error(`Încărcarea „${attachment.name}” a eșuat (${result.status}).`);
     }
   } finally {
     if (fileUri === undefined && file.exists) file.delete();
@@ -311,7 +311,7 @@ export async function prepareTurnAttachments(input: {
 
   const requireUploadAccess = () => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      throw new Error("This connection cannot upload attachments.");
+      throw new Error("Această conexiune nu poate încărca atașamente.");
     }
   };
   requireUploadAccess();
@@ -320,7 +320,7 @@ export async function prepareTurnAttachments(input: {
     environmentSession.preparedConnectionValueAtom(environmentId),
   );
   if (Option.isNone(connection)) {
-    throw new Error("The environment is not connected.");
+    throw new Error("Mediul nu e conectat.");
   }
 
   const uploadedAttachments: UploadedMobileAttachment[] = [];
@@ -331,7 +331,7 @@ export async function prepareTurnAttachments(input: {
   input.signal?.addEventListener("abort", abort, { once: true });
   try {
     for (const attachment of input.attachments) {
-      if (controller.signal.aborted) throw new Error("Upload cancelled.");
+      if (controller.signal.aborted) throw new Error("Încărcare anulată.");
       requireUploadAccess();
       if (attachment.type === "image" && !input.supportsImageUploads) {
         uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
@@ -397,12 +397,12 @@ export async function prepareTurnAttachments(input: {
       if (result.status !== "uploaded") {
         throw result.status === "failed" && result.error !== undefined
           ? result.error
-          : new Error(`Upload failed for '${attachment.name}'.`);
+          : new Error(`Încărcarea „${attachment.name}” a eșuat.`);
       }
       uploadedAttachments.push(uploadedReference(attachment, result.attachmentId));
     }
 
-    if (controller.signal.aborted) throw new Error("Upload cancelled.");
+    if (controller.signal.aborted) throw new Error("Încărcare anulată.");
 
     const draftAttachments = withUploadedMobileAttachmentReferences({
       environmentId,

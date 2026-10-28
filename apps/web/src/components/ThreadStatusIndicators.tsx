@@ -69,7 +69,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: "Proces de terminal în curs";
   colorClass: string;
   pulse: boolean;
 }
@@ -188,7 +188,7 @@ function resolveThreadPullRequestBadgePresentation({
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
+  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, stare în așteptare`;
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -708,7 +708,7 @@ export function terminalStatusFromRunningIds(
     return null;
   }
   return {
-    label: "Terminal process running",
+    label: "Proces de terminal în curs",
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
@@ -738,8 +738,8 @@ export function ThreadTerminalStatusButton({
   const status = terminalStatusFromRunningIds(terminalIds);
   const label =
     terminalIds.length === 1
-      ? "1 terminal process running. Open terminal"
-      : `${terminalIds.length} terminal processes running. Open terminal`;
+      ? "Un proces de terminal rulează. Deschide terminalul"
+      : `${terminalIds.length} procese de terminal rulează. Deschide terminalul`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -950,7 +950,7 @@ export function ThreadRowLeadingStatus({
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
+          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, stare în așteptare`}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -967,7 +967,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "La distanță") : null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
@@ -1001,7 +1001,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           <TooltipTrigger
             render={
               <span
-                aria-label={threadEnvironmentLabel ?? "Remote"}
+                aria-label={threadEnvironmentLabel ?? "La distanță"}
                 className="inline-flex items-center justify-center"
               />
             }

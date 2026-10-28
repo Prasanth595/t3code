@@ -227,14 +227,14 @@ function TraceIdCell({ traceId }: { traceId: string }) {
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
+              aria-label={copied ? "ID-ul de urmărire a fost copiat" : "Copiază ID-ul de urmărire"}
               onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </Button>
           }
         />
-        <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
+        <TooltipPopup side="top">{copied ? "Copiat" : "Copiază ID-ul complet"}</TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -249,9 +249,9 @@ function formatProcessName(command: string): string {
 }
 
 function formatProcessType(process: ServerProcessDiagnosticsEntry): string {
-  if (process.depth > 0) return "Subprocess";
+  if (process.depth > 0) return "Subproces";
   if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command)) return "Agent";
-  return "Process";
+  return "Proces";
 }
 
 function ProcessNameCell({
@@ -275,7 +275,7 @@ function ProcessNameCell({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
+          aria-label={isExpanded ? `Restrânge ${name}` : `Extinde ${name}`}
           onClick={() => onToggle(process.pid)}
         >
           <MorphIcon className="size-3.5" icon={isExpanded ? ChevronDown : ChevronRight} />
@@ -380,7 +380,7 @@ function ProcessDiagnosticsTable({
             {visibleProcesses.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
-                  {emptyLabel ?? "No live descendant processes found."}
+                  {emptyLabel ?? "Niciun proces copil activ găsit."}
                 </td>
               </tr>
             ) : null}
@@ -462,7 +462,7 @@ function ResourceHistoryProcessNameCell({
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
       style={{ paddingLeft: `${Math.min(visualDepth, 6) * 10}px` }}
-      aria-label={`${process.isServerRoot ? "Root" : "Child"} process ${name}`}
+      aria-label={`Proces ${process.isServerRoot ? "rădăcină" : "copil"} ${name}`}
     >
       <span className="size-5 shrink-0" aria-hidden="true" />
       <span
@@ -507,7 +507,7 @@ function ProcessResourceHistoryChart({
                   <div className="flex h-full min-w-1 flex-1 items-end">
                     <div
                       className="relative h-full w-full"
-                      aria-label={`Average CPU ${bucket.avgCpuPercent.toFixed(1)}%, peak CPU ${bucket.maxCpuPercent.toFixed(1)}%`}
+                      aria-label={`CPU mediu ${bucket.avgCpuPercent.toFixed(1)}%, CPU maxim ${bucket.maxCpuPercent.toFixed(1)}%`}
                     >
                       <div
                         className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
@@ -541,7 +541,7 @@ function ResourceHistoryWindowSelector({
 }) {
   return (
     <ToggleGroup
-      aria-label="Process history period"
+      aria-label="Perioada istoricului"
       variant="segmented"
       value={[String(selectedWindowMs)]}
       onValueChange={(next) => {
@@ -803,7 +803,7 @@ export function DiagnosticsSettingsPanel() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : "Unable to open logs folder.",
+          error instanceof Error ? error.message : "Dosarul de jurnale nu a putut fi deschis.",
         );
       }
     })();
@@ -844,15 +844,15 @@ export function DiagnosticsSettingsPanel() {
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
-          `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+          `Trimiți SIGKILL procesului ${pid}? Procesul nu îl poate trata.`,
           { variant: "destructive" },
         );
       } catch (error) {
         clearSignaling();
         toastManager.add({
           type: "error",
-          title: "Could not confirm signal",
-          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          title: "Semnalul nu a putut fi confirmat",
+          description: error instanceof Error ? error.message : `${signal} nu a putut fi trimis.`,
         });
         return;
       }
@@ -888,8 +888,8 @@ export function DiagnosticsSettingsPanel() {
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: `Could not send ${signal}`,
-          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          title: `${signal} nu a putut fi trimis`,
+          description: error instanceof Error ? error.message : `${signal} nu a putut fi trimis.`,
         });
       }
       return;
@@ -900,16 +900,16 @@ export function DiagnosticsSettingsPanel() {
       if (isStaleProcessSignalMessage(message)) {
         toastManager.add({
           type: "info",
-          title: "Process already exited",
-          description: "The process is not a child of the T3 Server. It might already have exited.",
+          title: "Procesul s-a închis deja",
+          description: "Procesul nu e copil al serverului. Poate s-a închis deja.",
         });
         return;
       }
 
       toastManager.add({
         type: "error",
-        title: `Could not send ${signal}`,
-        description: message ?? `Failed to send ${signal}.`,
+        title: `${signal} nu a putut fi trimis`,
+        description: message ?? `${signal} nu a putut fi trimis.`,
       });
       return;
     }
@@ -928,9 +928,9 @@ export function DiagnosticsSettingsPanel() {
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
           {environmentId === null
-            ? "Connect an environment to see diagnostics."
+            ? "Conectează un mediu ca să vezi diagnosticarea."
             : diagnosticsAccess.isPending
-              ? "Checking diagnostics access…"
+              ? "Se verifică accesul la diagnosticare…"
               : diagnosticsAccess.error}
         </p>
       </SettingsPageContainer>
@@ -942,13 +942,13 @@ export function DiagnosticsSettingsPanel() {
       <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
-        title="Live Processes"
+        title="Procese active"
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={processData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isProcessPending}
-              label="Refresh process diagnostics"
+              label="Reîmprospătează procesele"
               onClick={refreshProcesses}
             />
           </div>
@@ -956,21 +956,21 @@ export function DiagnosticsSettingsPanel() {
       >
         <StatsGrid>
           <StatBlock
-            label="Child Processes"
+            label="Procese copil"
             value={processData ? formatCount(processData.processCount) : "..."}
           />
           <StatBlock
             label="CPU"
             value={processData ? `${processData.totalCpuPercent.toFixed(1)}%` : "..."}
-            tooltip="Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip="CPU total al proceselor copil active ale serverului curent. Aplicația desktop și alte procese părinte nu sunt incluse."
           />
           <StatBlock
-            label="Memory"
+            label="Memorie"
             value={processData ? formatBytes(processData.totalRssBytes) : "..."}
-            tooltip="Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip="Memoria totală a proceselor copil active ale serverului curent. Aplicația desktop și alte procese părinte nu sunt incluse."
           />
           <StatBlock
-            label="Server PID"
+            label="PID server"
             value={processData ? String(processData.serverPid) : "..."}
           />
         </StatsGrid>

@@ -165,8 +165,8 @@ describe("provider update launch notification logic", () => {
     expect(view).toMatchObject({
       key: "loading:pi:running",
       tone: "loading",
-      title: "Updating Pi",
-      description: "Pi update in progress.",
+      title: "Se actualizează Pi",
+      description: "Actualizare în curs: Pi.",
     });
   });
 
@@ -204,7 +204,7 @@ describe("provider update launch notification logic", () => {
     expect(view).toMatchObject({
       key: "succeeded:pi:2026-04-23T10:01:00.000Z:Provider updated.",
       tone: "success",
-      title: "Pi updated: v1.1.0",
+      title: "Pi a fost actualizat: v1.1.0",
     });
   });
 
@@ -261,7 +261,7 @@ describe("provider update launch notification logic", () => {
     expect(successView).toMatchObject({
       key: "succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated.",
       tone: "success",
-      title: "codex updated: v1.2.0",
+      title: "codex a fost actualizat: v1.2.0",
     });
 
     const failureView = getProviderUpdateSidebarPillView(providers, {
@@ -271,7 +271,7 @@ describe("provider update launch notification logic", () => {
     expect(failureView).toMatchObject({
       key: "failed:pi:2026-04-23T10:00:00.000Z:Update command exited with code 1.",
       tone: "error",
-      title: "Pi v1.1.0 update failed",
+      title: "Pi v1.1.0 nu a putut fi actualizat",
     });
   });
 });
@@ -350,7 +350,7 @@ describe("getProviderUpdateRunToastView", () => {
 
     expect(view).toEqual({
       type: "error",
-      title: "2 of 3 provider updates failed",
+      title: "2 din 3 actualizări de furnizori au eșuat",
       description: "Mac Studio · Pi: npm exited with code 1.\nLaptop · codex: WebSocket closed",
     });
   });

@@ -235,7 +235,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   return (
     <nav
-      aria-label="Settings sections"
+      aria-label="Secțiuni setări"
       className={cn(
         "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
         compactSearchOpen &&
@@ -266,8 +266,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 onBlur={() => {
                   if (!isSearching) setCompactSearchOpen(false);
                 }}
-                placeholder="Search"
-                aria-label="Search settings"
+                placeholder="Caută"
+                aria-label="Caută în setări"
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={isSearching && hasResults}
@@ -285,7 +285,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear settings search"
+                  aria-label="Șterge căutarea"
                   onClick={() => {
                     clearSearch();
                     searchInputRef.current?.focus();
@@ -302,14 +302,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No settings found
+                Nicio setare găsită
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? "Rezultatele căutării" : undefined}
               >
                 {results.map((item, index) => (
                   <SidebarMenuItem key={item.id} role="presentation">
@@ -342,7 +342,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 {compactSearchOpen ? null : (
                   <SidebarMenuItem className="md:hidden">
                     <SidebarMenuButton
-                      aria-label="Search settings"
+                      aria-label="Caută în setări"
                       onClick={() => setCompactSearchOpen(true)}
                     >
                       <SearchIcon />

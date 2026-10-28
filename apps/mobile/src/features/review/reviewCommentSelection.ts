@@ -127,7 +127,7 @@ export function formatReviewSelectedRangeLabel(target: ReviewCommentTarget): str
     return `${consistentMarker}${firstNumber}`;
   }
 
-  return `${consistentMarker}${firstNumber} to ${consistentMarker}${lastNumber}`;
+  return `${consistentMarker}${firstNumber} până la ${consistentMarker}${lastNumber}`;
 }
 
 function getDiffHunkRange(

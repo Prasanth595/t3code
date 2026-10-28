@@ -223,7 +223,7 @@ async function performAppUpdateCheck(
   setState("checking");
   const check = await settlePromise(() => client.checkForUpdateAsync());
   if (check._tag === "Failure") {
-    reportUpdateFailure(check, "Could not check for updates.", options.onFailure);
+    reportUpdateFailure(check, "Nu am putut verifica actualizările.", options.onFailure);
     setState("idle");
     return;
   }
@@ -236,7 +236,7 @@ async function performAppUpdateCheck(
   setState("downloading");
   const fetched = await settlePromise(() => client.fetchUpdateAsync());
   if (fetched._tag === "Failure") {
-    reportUpdateFailure(fetched, "Could not download the update.", options.onFailure);
+    reportUpdateFailure(fetched, "Actualizarea nu a putut fi descărcată.", options.onFailure);
     setState("idle");
     return;
   }
@@ -289,7 +289,11 @@ async function installAppUpdate(
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
-    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", options.onFailure);
+    reportUpdateFailure(
+      reloaded,
+      "Descărcată, dar aplicația nu a putut reporni.",
+      options.onFailure,
+    );
     setState("idle");
     deferral.installInProgress = false;
     return "restart-failed";
@@ -366,7 +370,7 @@ async function applyDeferredAppUpdateInstall(
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
-    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
+    reportUpdateFailure(reloaded, "Descărcată, dar aplicația nu a putut reporni.", undefined);
     deferral.installInProgress = false;
     deferral.pendingInstall = false;
   }
@@ -376,11 +380,11 @@ async function defaultConfirmInstallNow(): Promise<boolean> {
   const Dialog = await import("../../components/ui/Dialog");
   return new Promise<boolean>((resolve) => {
     Dialog.alert(
-      "Update ready",
-      "A new version has been downloaded and installs automatically the next time you leave the app. Install it now instead?",
+      "Actualizare pregătită",
+      "O versiune nouă a fost descărcată și se instalează automat data viitoare când ieși din aplicație. O instalezi acum?",
       [
-        { onPress: () => resolve(false), style: "cancel", text: "Later" },
-        { onPress: () => resolve(true), text: "Install Now" },
+        { onPress: () => resolve(false), style: "cancel", text: "Mai târziu" },
+        { onPress: () => resolve(true), text: "Instalează acum" },
       ],
       { cancelable: true, onDismiss: () => resolve(false) },
     );

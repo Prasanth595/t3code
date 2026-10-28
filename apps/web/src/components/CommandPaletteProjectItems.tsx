@@ -20,7 +20,7 @@ export interface CommandPaletteProjectLocation {
 
 const UNKNOWN_PROJECT_LOCATION: CommandPaletteProjectLocation = {
   kind: "remote",
-  label: "Remote",
+  label: "La distanță",
   machine: "server",
 };
 

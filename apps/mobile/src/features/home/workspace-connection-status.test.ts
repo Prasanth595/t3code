@@ -74,7 +74,7 @@ describe("workspace connection status", () => {
     });
 
     expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "Syncing threads...",
+      label: "Se sincronizează conversațiile...",
       showsProgress: true,
     });
   });

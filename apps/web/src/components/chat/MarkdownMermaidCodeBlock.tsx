@@ -28,7 +28,7 @@ export function MarkdownMermaidCodeBlock({
   const revealSource = () => setShowCode(true);
   const sourceRevealRef = findRevealRef(revealSource);
   const showDiagram = !showCode && !isStreaming && code.trim().length > 0;
-  const toggleLabel = showCode ? "Show diagram" : "Show code";
+  const toggleLabel = showCode ? "Arată diagrama" : "Arată codul";
   return (
     <MarkdownCodeBlock
       code={code}

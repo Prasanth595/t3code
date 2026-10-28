@@ -169,9 +169,9 @@ const RESPONSIVE_SEED_SIZE = { width: 1280, height: 800 } as const;
 const NO_GROUPING: Intl.NumberFormatOptions = { useGrouping: false };
 
 const APPEARANCE_LABELS: Readonly<Record<PreviewAppearancePreference, string>> = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
+  system: "Sistem",
+  light: "Luminos",
+  dark: "Întunecat",
 };
 
 const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
@@ -285,9 +285,9 @@ const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
 /** Inline options lack an items map; bare SelectValue would display the stored fill token. */
 const viewportSelectLabel = (viewport: PreviewViewportSetting): string => {
   const value = viewportSelectValue(viewport);
-  if (value === FILL_VALUE) return "Fill panel";
-  if (value === RESPONSIVE_VALUE) return "Responsive";
-  return PREVIEW_VIEWPORT_PRESETS.find((preset) => preset.id === value)?.label ?? "Responsive";
+  if (value === FILL_VALUE) return "Umple panoul";
+  if (value === RESPONSIVE_VALUE) return "Adaptiv";
+  return PREVIEW_VIEWPORT_PRESETS.find((preset) => preset.id === value)?.label ?? "Adaptiv";
 };
 
 const isValidDimension = (value: number) =>
@@ -352,7 +352,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
-      description="Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar."
+      description="Mărimea filei pentru tine și agenți. Umple se potrivește panoului; celelalte mărimi arată bara dispozitivului."
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
@@ -371,13 +371,13 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
             <SelectTrigger
               size="sm"
               className="w-full min-w-0 sm:w-44"
-              aria-label="Default browser viewport"
+              aria-label="Dimensiune implicită browser"
             >
               <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value={FILL_VALUE}>Fill panel</SelectItem>
-              <SelectItem value={RESPONSIVE_VALUE}>Responsive</SelectItem>
+              <SelectItem value={FILL_VALUE}>Umple panoul</SelectItem>
+              <SelectItem value={RESPONSIVE_VALUE}>Adaptiv</SelectItem>
               <SelectGroup>
                 <SelectGroupLabel>Standard</SelectGroupLabel>
                 {PREVIEW_VIEWPORT_PRESETS.map((preset) => (
@@ -407,7 +407,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("width", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label="Default viewport width" />
+                  <NumberFieldInput aria-label="Lățime implicită" />
                 </NumberFieldGroup>
               </NumberField>
               <span className="text-xs text-muted-foreground">×</span>
@@ -422,7 +422,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("height", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label="Default viewport height" />
+                  <NumberFieldInput aria-label="Înălțime implicită" />
                 </NumberFieldGroup>
               </NumberField>
               <Tooltip>
@@ -443,7 +443,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                     </Button>
                   }
                 />
-                <TooltipPopup side="top">Rotate</TooltipPopup>
+                <TooltipPopup side="top">Rotește</TooltipPopup>
               </Tooltip>
             </div>
           ) : null}
@@ -460,7 +460,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-zoom")}
-      description="Page zoom applied to new browser tabs."
+      description="Zoom-ul aplicat filelor noi de browser."
       resetAction={
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
           <SettingResetButton
@@ -503,7 +503,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   return (
     <SettingsRow
       {...searchableSetting("browser-default-appearance")}
-      description="The color scheme pages are told to prefer. System follows your OS setting."
+      description="Schema de culori preferată transmisă paginilor. Sistem urmează setarea sistemului de operare."
       resetAction={
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
           <SettingResetButton
@@ -522,11 +522,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
             }
           }}
         >
-          <SelectTrigger
-            size="sm"
-            className="w-full sm:w-40"
-            aria-label="Default browser appearance"
-          >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Aspect implicit browser">
             <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -550,12 +546,12 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
     <>
       <SettingsRow
         {...searchableSetting("browser-recording-key-presses")}
-        description="Show pressed keys and shortcuts in new recordings. Password fields are excluded."
+        description="Arată tastele și scurtăturile apăsate în înregistrările noi. Câmpurile de parolă sunt excluse."
         control={
           <Switch
             disabled={disabled}
             checked={showKeys}
-            aria-label="Show key presses in recordings"
+            aria-label="Arată tastele apăsate în înregistrări"
             onCheckedChange={(checked) =>
               updateSettings({ browserRecordingShowKeyPresses: Boolean(checked) })
             }
@@ -564,12 +560,12 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
       />
       <SettingsRow
         {...searchableSetting("browser-recording-mouse-presses")}
-        description="Highlight mouse presses and held buttons in new recordings."
+        description="Evidențiază clicurile și butoanele ținute apăsat în înregistrările noi."
         control={
           <Switch
             disabled={disabled}
             checked={showMouse}
-            aria-label="Show mouse presses in recordings"
+            aria-label="Arată clicurile în înregistrări"
             onCheckedChange={(checked) =>
               updateSettings({ browserRecordingShowMousePresses: Boolean(checked) })
             }
@@ -587,7 +583,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
   return (
     <SettingsRow
       {...searchableSetting("browser-recording-frame-rate")}
-      description="Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother."
+      description="Rata maximă de înregistrare. 30 fps economisește CPU și spațiu; 60 fps e mai fluid."
       resetAction={
         !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
           <SettingResetButton
@@ -612,7 +608,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
           <SelectTrigger
             size="sm"
             className="w-full sm:w-40"
-            aria-label="Browser recording frame rate"
+            aria-label="Cadre pe secundă la înregistrare"
           >
             <SelectValue>{frameRate} fps</SelectValue>
           </SelectTrigger>
@@ -630,7 +626,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
 }
 
 const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
-  system: "Your default browser",
+  system: "Browserul tău implicit",
   app: "Mira",
 };
 
@@ -641,7 +637,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description="Unde se deschid link-urile din chat și terminal. Ține ⌘ sau Ctrl la clic ca să deschizi oricum link-ul în browserul implicit."
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
@@ -683,7 +679,7 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
   brave: "Brave Search",
   kagi: "Kagi",
   ecosia: "Ecosia",
-  custom: "Custom",
+  custom: "Personalizat",
 };
 
 function BrowserSearchEngineSetting() {
@@ -695,7 +691,7 @@ function BrowserSearchEngineSetting() {
     <>
       <SettingsRow
         {...searchableSetting("browser-search-engine")}
-        description="What the address bar searches when you type something that isn't a URL."
+        description="Ce caută bara de adrese când scrii ceva care nu e o adresă."
         resetAction={
           engine !== DEFAULT_BROWSER_SEARCH_ENGINE || customUrl !== "" ? (
             <SettingResetButton
@@ -734,19 +730,19 @@ function BrowserSearchEngineSetting() {
       />
       {engine === "custom" ? (
         <SettingsRow
-          title="Custom search URL"
-          description="Use %s where the search terms go."
+          title="Adresă de căutare personalizată"
+          description="Folosește %s unde intră termenii căutați."
           status={
             isValidSearchUrlTemplate(customUrl)
               ? undefined
-              : "Enter an http or https URL containing %s. Searches use DuckDuckGo until then."
+              : "Introdu o adresă http sau https care conține %s. Până atunci se folosește DuckDuckGo."
           }
           control={
             <DraftInput
               nativeInput
               size="sm"
               className="w-full sm:w-64"
-              aria-label="Custom search URL"
+              aria-label="Adresă de căutare personalizată"
               placeholder="https://example.com/search?q=%s"
               autoCapitalize="none"
               spellCheck={false}
@@ -768,11 +764,11 @@ function PullRequestLinksOpenInAppSetting() {
   return (
     <SettingsRow
       {...searchableSetting("pull-request-links-open-in-app")}
-      description="Clicking a pull request link opens it in Mira. Turn off to open pull request links like any other link, on your git host."
+      description="Un clic pe link-ul unui pull request îl deschide în Mira. Dezactivează ca să-l deschizi ca pe orice link, la furnizorul git."
       resetAction={
         openInApp ? null : (
           <SettingResetButton
-            label="open pull requests in Mira"
+            label="deschide pull request-urile în Mira"
             onClick={() => updateSettings({ pullRequestLinksOpenInApp: true })}
           />
         )
@@ -783,7 +779,7 @@ function PullRequestLinksOpenInAppSetting() {
           onCheckedChange={(checked) =>
             updateSettings({ pullRequestLinksOpenInApp: Boolean(checked) })
           }
-          aria-label="Open pull requests in Mira"
+          aria-label="Deschide pull request-urile în Mira"
         />
       }
     />
@@ -797,7 +793,7 @@ function DeviceIntegrationSettings() {
   const environmentId = connected ? selected.environmentId : null;
 
   return (
-    <SettingsSection id="devices" title="Devices">
+    <SettingsSection id="devices" title="Dispozitive">
       <DeviceIntegrationControls
         key={`${environmentId}:${JSON.stringify(search)}`}
         environmentId={environmentId}
@@ -854,10 +850,10 @@ function DeviceIntegrationControls({
     const results = await Promise.allSettled(
       environments.map(async (environment) => {
         if (environment.connection.phase !== "connected" || !environment.serverConfig) {
-          throw new Error("Environment disconnected");
+          throw new Error("Mediu deconectat");
         }
         if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
-          throw new Error("This connection cannot change device settings.");
+          throw new Error("Această conexiune nu poate schimba setările dispozitivelor.");
         }
         return configure({
           environmentId: environment.environmentId,
@@ -873,8 +869,8 @@ function DeviceIntegrationControls({
     if (failed.length > 0) {
       toastManager.add({
         type: "error",
-        title: "Device settings not saved on all environments",
-        description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+        title: "Setările dispozitivelor nu au fost salvate în toate mediile",
+        description: `Nu s-a putut actualiza ${failed.map((environment) => environment.label).join(", ")}.`,
       });
     }
   };
@@ -905,7 +901,9 @@ function DeviceIntegrationControls({
                   .finally(() => setPending(null));
               }}
             >
-              {pending === `update-${tool}` ? "Updating…" : `Update to v${version.requiredVersion}`}
+              {pending === `update-${tool}`
+                ? "Se actualizează…"
+                : `Actualizează la v${version.requiredVersion}`}
             </Button>
           ) : null}
           {state.supportsToolInspection ? (
@@ -921,7 +919,7 @@ function DeviceIntegrationControls({
                 );
               }}
             >
-              {pending === "check" ? "Checking…" : "Check versions"}
+              {pending === "check" ? "Se verifică…" : "Verifică versiunile"}
             </Button>
           ) : null}
         </div>
@@ -960,7 +958,7 @@ function DeviceIntegrationControls({
                 busy ||
                 pending !== null
               }
-              aria-label="Device hub"
+              aria-label="Hub dispozitive"
               onCheckedChange={(checked) =>
                 void update("hub", {
                   enabled: Boolean(checked),
@@ -977,7 +975,7 @@ function DeviceIntegrationControls({
             {...searchableSetting("device-platform-support")}
             description={
               connectedEnvironments.length > 1
-                ? `Status for ${connectedEnvironments.find((environment) => environment.environmentId === environmentId)?.label}. Select an environment to inspect its simulator support.`
+                ? `Stare pentru ${connectedEnvironments.find((environment) => environment.environmentId === environmentId)?.label}. Alege un mediu ca să-i verifici suportul pentru simulator.`
                 : undefined
             }
             status={
@@ -1012,7 +1010,7 @@ function DeviceIntegrationControls({
                   void list({ environmentId, input: {} }).finally(() => setPending(null));
                 }}
               >
-                {pending === "check" ? "Checking…" : "Refresh"}
+                {pending === "check" ? "Se verifică…" : "Reîmprospătează"}
               </Button>
             }
           />
@@ -1040,7 +1038,7 @@ function DeviceIntegrationControls({
                 (!projectScope && (!loaded || !anyHubEnabled || busy)) ||
                 pending !== null
               }
-              aria-label="Agent device access"
+              aria-label="Acces agent la dispozitive"
               onCheckedChange={(checked) =>
                 projectScope
                   ? updateSettings({ enableAgentDeviceAccess: Boolean(checked) })
@@ -1075,8 +1073,8 @@ function AgentBrowserAccessSetting() {
       {...searchableSetting("agent-browser-access")}
       description={
         isProjectScope
-          ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
-          : "Allow agents to use the shared browser. Projects can override it."
+          ? "Permite agenților din acest proiect să folosească browserul partajat. Se aplică la următoarea pornire a sesiunii."
+          : "Permite agenților să folosească browserul partajat. Proiectele pot suprascrie."
       }
       resetAction={
         settings.enableAgentBrowserAccess !== DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess ? (
@@ -1093,7 +1091,7 @@ function AgentBrowserAccessSetting() {
       control={
         <ScopedSwitch
           settingKeys={["enableAgentBrowserAccess"]}
-          aria-label="Agent browser access"
+          aria-label="Acces agent la browser"
           checked={settings.enableAgentBrowserAccess}
           onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}
         />
@@ -1109,7 +1107,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   return (
     <SettingsRow
       {...searchableSetting("browser-auto-show-floating-preview")}
-      description="Show the floating preview when an agent opens a browser or device unless the agent says otherwise."
+      description="Arată previzualizarea plutitoare când un agent deschide un browser sau dispozitiv, dacă agentul nu spune altfel."
       resetAction={
         !disabled && autoShow !== DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW ? (
           <SettingResetButton
@@ -1129,7 +1127,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
           onCheckedChange={(checked) =>
             updateSettings({ browserAutoShowFloatingPreview: Boolean(checked) })
           }
-          aria-label="Auto-show floating preview"
+          aria-label="Arată automat previzualizarea plutitoare"
         />
       }
     />
@@ -1215,8 +1213,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     if (!removalAvailable) {
       toastManager.add({
         type: "error",
-        title: `Could not clear ${name}'s data`,
-        description: "You're not connected to a server yet.",
+        title: `Datele profilului ${name} nu au putut fi șterse`,
+        description: "Nu ești conectat încă la un server.",
       });
       return;
     }
@@ -1227,17 +1225,23 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       serverProfileData,
     )
       .then(() => {
-        toastManager.add({ type: "success", title: `Cleared ${name}'s cookies and cache` });
+        toastManager.add({
+          type: "success",
+          title: `Cookie-urile și cache-ul profilului ${name} au fost șterse`,
+        });
       })
       .catch(() => {
-        toastManager.add({ type: "error", title: `Could not clear ${name}'s data` });
+        toastManager.add({
+          type: "error",
+          title: `Datele profilului ${name} nu au putut fi șterse`,
+        });
       });
   };
 
   const removeProfile = async (id: string) => {
     if (!settingsHydrated || importInFlightRef.current) return;
     if (!removalAvailable) {
-      setProfileRemovalError("Connect to an environment before removing this profile.");
+      setProfileRemovalError("Conectează-te la un mediu înainte să elimini profilul.");
       return;
     }
     setProfileRemovalError(null);
@@ -1250,7 +1254,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         serverProfileData,
       );
     } catch {
-      setProfileRemovalError("Profile data could not be deleted. Try again.");
+      setProfileRemovalError("Datele profilului nu au putut fi șterse. Încearcă din nou.");
       setProfileRemovalInFlight(false);
       return;
     }
@@ -1322,7 +1326,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-profiles")}
-      description="Profiles separate cookies and logins. Incognito data is cleared when the app closes."
+      description="Profilurile separă cookie-urile și autentificările. Datele incognito se șterg când se închide aplicația."
       control={
         <Menu onOpenChange={(open) => open && loadSources()}>
           <MenuTrigger
@@ -1335,25 +1339,23 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             }
           >
             <PlusIcon />
-            Add profile
+            Adaugă profil
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem
               disabled={!settingsHydrated || atProfileLimit}
-              onClick={() => createProfile("New profile")}
+              onClick={() => createProfile("Profil nou")}
             >
-              Blank profile
+              Profil gol
             </MenuItem>
-            {atProfileLimit ? (
-              <MenuItem disabled>You&rsquo;ve reached the profile limit</MenuItem>
-            ) : null}
+            {atProfileLimit ? <MenuItem disabled>Ai atins limita de profiluri</MenuItem> : null}
             <MenuSeparator />
             <MenuGroup>
-              <MenuGroupLabel>Import from</MenuGroupLabel>
+              <MenuGroupLabel>Importă din</MenuGroupLabel>
               {sources === null ? (
-                <MenuItem disabled>Looking for browsers…</MenuItem>
+                <MenuItem disabled>Se caută browsere…</MenuItem>
               ) : importableSources.length === 0 ? (
-                <MenuItem disabled>No supported browsers found</MenuItem>
+                <MenuItem disabled>Niciun browser compatibil găsit</MenuItem>
               ) : (
                 <>
                   {importableSources.map((source) => (
@@ -1377,7 +1379,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     </MenuItem>
                   ))}
                   {primaryEnvironment == null ? (
-                    <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
+                    <MenuItem disabled>Conectează-te la un mediu ca să imporți cookie-uri</MenuItem>
                   ) : null}
                 </>
               )}
@@ -1413,7 +1415,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     nativeInput
                     size="sm"
                     className="w-full max-w-56"
-                    aria-label={`Rename ${profile.name}`}
+                    aria-label={`Redenumește ${profile.name}`}
                     disabled={profileWritesDisabled || importInFlight}
                     maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
                     value={profile.name}
@@ -1422,7 +1424,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 )}
                 {isDefault ? (
                   <span className={cn("flex", profileWritesDisabled && "opacity-64")}>
-                    <Badge>Default</Badge>
+                    <Badge>Implicit</Badge>
                   </span>
                 ) : null}
               </span>
@@ -1448,7 +1450,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                       }
                     }}
                   >
-                    Set as default
+                    Setează ca implicit
                   </MenuItem>
                   <MenuItem
                     disabled={!settingsHydrated || !removalAvailable}
@@ -1458,7 +1460,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                       } else clearProfileData(profile.id, profile.name);
                     }}
                   >
-                    Clear cookies and cache
+                    Șterge cookie-urile și cache-ul
                   </MenuItem>
                   {builtIn ? null : (
                     <MenuItem
@@ -1468,7 +1470,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         if (settingsHydrated) setProfilePendingRemoval(profile);
                       }}
                     >
-                      Remove profile and data
+                      Elimină profilul și datele
                     </MenuItem>
                   )}
                   {!removalAvailable ? (
@@ -1476,8 +1478,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                       <MenuSeparator />
                       <MenuItem disabled>
                         {environmentsReady
-                          ? "Connect to an environment to clear profile data"
-                          : "Checking environments…"}
+                          ? "Conectează-te la un mediu ca să ștergi datele profilului"
+                          : "Se verifică mediile…"}
                       </MenuItem>
                     </>
                   ) : null}
@@ -1510,7 +1512,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             ) : null}
             {!removalAvailable ? (
               <p className="text-sm text-muted-foreground">
-                Connect to an environment to remove this profile and its data.
+                Conectează-te la un mediu ca să elimini profilul și datele lui.
               </p>
             ) : null}
           </AlertDialogHeader>
@@ -1530,7 +1532,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 }
               }}
             >
-              {profileRemovalInFlight ? "Removing…" : "Remove profile"}
+              {profileRemovalInFlight ? "Se elimină…" : "Elimină profilul"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -1547,11 +1549,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               Clear “{profilePendingClear?.name}”’s cookies and cache?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              You are signed out of its sites. Server browser tabs open in this profile close now.
+              Vei fi deconectat de pe site-urile lui. Filele de browser ale serverului deschise în
+              acest profil se închid acum.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>Anulează</AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -1560,7 +1563,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 setProfilePendingClear(null);
               }}
             >
-              Clear data
+              Șterge datele
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -1586,8 +1589,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               .catch(() => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not open System Settings",
-                  description: "Open Privacy & Security → Full Disk Access manually.",
+                  title: "Setările sistemului nu au putut fi deschise",
+                  description:
+                    "Deschide manual Confidențialitate și securitate → Acces complet la disc.",
                 });
               });
           }}
@@ -1618,7 +1622,7 @@ export function IntegrationsSettingsPanel() {
       <SettingsSection id="browser" title="Browser">
         <AgentBrowserAccessSetting />
         {previewDefaultsDisabled ? (
-          <SettingsUnavailableGroup message="Only available in the desktop app.">
+          <SettingsUnavailableGroup message="Disponibil doar în aplicația desktop.">
             {previewDefaults}
           </SettingsUnavailableGroup>
         ) : (

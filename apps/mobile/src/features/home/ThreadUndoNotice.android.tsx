@@ -109,8 +109,8 @@ function SwipeableUndoNotice(props: {
             accessible
             accessibilityRole="alert"
             accessibilityLiveRegion="assertive"
-            accessibilityLabel={`${notice.action} thread`}
-            accessibilityActions={[{ name: "dismiss", label: "Dismiss message" }]}
+            accessibilityLabel={`Conversație ${notice.action}`}
+            accessibilityActions={[{ name: "dismiss", label: "Închide mesajul" }]}
             onAccessibilityAction={({ nativeEvent }) => {
               if (nativeEvent.actionName === "dismiss") dismiss();
             }}
@@ -118,8 +118,8 @@ function SwipeableUndoNotice(props: {
             style={StyleSheet.absoluteFill}
           />
           <Toast
-            message={`${notice.action} thread`}
-            action={{ label: "Undo", onPress: () => void notice.undo() }}
+            message={`Conversație ${notice.action}`}
+            action={{ label: "Anulează", onPress: () => void notice.undo() }}
           />
         </Animated.View>
       </GestureDetector>

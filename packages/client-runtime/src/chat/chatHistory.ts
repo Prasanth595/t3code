@@ -75,7 +75,7 @@ const encodeStored = Schema.encodeSync(StoredHistoryJson);
 
 export const chatTitle = (text: string) => {
   const line = text.trim().split("\n")[0]?.trim() ?? "";
-  if (line === "") return "New chat";
+  if (line === "") return "Chat nou";
   return line.length > MAX_TITLE_LENGTH ? `${line.slice(0, MAX_TITLE_LENGTH - 1)}…` : line;
 };
 
@@ -321,7 +321,7 @@ export class ChatHistory {
       .catch((): ChatReplyResult => ({
         ok: false,
         code: "network",
-        message: "Could not reach Mira. Check your internet connection.",
+        message: "Nu am putut contacta Mira. Verifică conexiunea la internet.",
       }));
     this.stopReply = null;
     const stopped = stopReply.signal.aborted;
@@ -348,7 +348,7 @@ export class ChatHistory {
       this.publish({
         streaming: null,
         error: result.ok
-          ? { chatId: chat.id, code: "upstream_unavailable", message: "Mira did not answer." }
+          ? { chatId: chat.id, code: "upstream_unavailable", message: "Mira nu a răspuns." }
           : { chatId: chat.id, code: result.code, message: result.message },
       });
     }

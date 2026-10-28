@@ -87,10 +87,10 @@ export function childThreadInputsTitle(
   children: ReadonlyArray<Pick<EnvironmentThreadShell, "hasPendingApprovals">>,
 ): string {
   const approvals = children.filter((child) => child.hasPendingApprovals).length;
-  const need = approvals === 0 ? "input" : approvals === children.length ? "approval" : "you";
+  const need = approvals === 0 ? "răspuns" : approvals === children.length ? "aprobare" : "tine";
   return children.length === 1
-    ? `Subagent needs ${need}`
-    : `${children.length} subagents need ${need}`;
+    ? `Un subagent are nevoie de ${need}`
+    : `${children.length} subagenți au nevoie de ${need}`;
 }
 
 const sameWireThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);

@@ -116,7 +116,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open browser",
+            title: "Browserul nu a putut fi deschis",
             description: error.message,
           }),
         );
@@ -238,8 +238,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
+          title: "Calea nu a putut fi copiată",
+          description: "Clipboard-ul nu e disponibil.",
         }),
       );
       return;
@@ -253,7 +253,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       () => {
         toastManager.add({
           type: "success",
-          title: "Path copied",
+          title: "Cale copiată",
           description: clipboardPath,
         });
       },
@@ -261,8 +261,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy path",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Calea nu a putut fi copiată",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       },

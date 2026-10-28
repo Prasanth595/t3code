@@ -253,7 +253,7 @@ export function deriveWorkflowGroups(
       if (member.phaseIndex === null) continue;
       phaseTitles.set(
         member.phaseIndex,
-        member.phaseTitle ?? phaseTitles.get(member.phaseIndex) ?? `Phase ${member.phaseIndex + 1}`,
+        member.phaseTitle ?? phaseTitles.get(member.phaseIndex) ?? `Faza ${member.phaseIndex + 1}`,
       );
     }
     for (const phase of workflow.phases) phaseTitles.set(phase.index, phase.title);

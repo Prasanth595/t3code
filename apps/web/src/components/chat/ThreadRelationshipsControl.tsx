@@ -102,7 +102,7 @@ function ThreadLineageRowList(props: {
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
-        aria-label="Related threads"
+        aria-label="Conversații înrudite"
         className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
@@ -170,11 +170,11 @@ function ThreadLineageGroup(props: {
 }
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
-  if (edge.kind === "transfer") return "Context transfer";
+  if (edge.kind === "transfer") return "Transfer de context";
   if (edge.kind === "subagent") {
-    return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
+    return edge.sourceThreadId === currentThreadId ? "Subagent" : "Agent părinte";
   }
-  return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
+  return edge.sourceThreadId === currentThreadId ? "Ramificare" : "Conversație părinte";
 }
 
 function relationshipThreadTitle(input: {
@@ -325,7 +325,7 @@ export function ThreadRelationshipsPanel(props: {
   const groups = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: active, expanded: true },
-    { id: "previous", label: "Previous agents", rows: previous, expanded: false },
+    { id: "previous", label: "Agenți anteriori", rows: previous, expanded: false },
   ];
   const runningCount =
     (projection?.subagents.filter(
@@ -380,7 +380,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop subagent" });
+      toastManager.add({ type: "error", title: "Subagentul nu a putut fi oprit" });
     }
   };
 
@@ -392,7 +392,7 @@ export function ThreadRelationshipsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-lineage-heading"
-      title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+      title={runningCount > 0 ? `Descendență · ${runningCount} rulează` : "Descendență"}
       // A lone "Previous agents" row names itself; the heading returns for status or actions.
       showHeading={runningCount > 0 || canDetach || related.length > 0 || active.length > 0}
       data-thread-relationships-panel
@@ -405,7 +405,7 @@ export function ThreadRelationshipsPanel(props: {
                   size="icon-xs"
                   variant="ghost"
                   part="icon"
-                  aria-label="More thread actions"
+                  aria-label="Mai multe acțiuni"
                   disabled={busyAction !== null}
                 />
               }
@@ -415,7 +415,7 @@ export function ThreadRelationshipsPanel(props: {
             <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
               <MenuItem onClick={() => void detach()}>
                 <UnplugIcon className="size-3.5" />
-                Disconnect agent session
+                Deconectează sesiunea agentului
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -475,8 +475,8 @@ export function ThreadRelationshipsPanel(props: {
                   : "";
               const project = projects.find((project) => project.id === node?.thread?.projectId);
               const relationshipHint = node?.missing
-                ? "This related thread is unavailable"
-                : `Open ${relationship.toLowerCase()} in this chat`;
+                ? "Această conversație înrudită nu e disponibilă"
+                : `Deschide ${relationship.toLowerCase()} în această conversație`;
               const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent
@@ -606,8 +606,8 @@ export function ThreadRelationshipsPanel(props: {
                               part="secondary"
                               aria-label={
                                 parentTitle
-                                  ? `Merge back to ${parentTitle}`
-                                  : "Merge back to source conversation"
+                                  ? `Îmbină înapoi în ${parentTitle}`
+                                  : "Îmbină înapoi în conversația sursă"
                               }
                               disabled={!canMerge || busyAction !== null}
                               onClick={() => void merge()}
@@ -622,10 +622,10 @@ export function ThreadRelationshipsPanel(props: {
                         />
                         <TooltipPopup side="left">
                           {latestMergeBackRun === null
-                            ? "Complete a run in this fork before merging it back"
+                            ? "Termină o rulare în această ramificare înainte s-o îmbini înapoi"
                             : parentTitle
-                              ? `Merge this conversation back into ${parentTitle}`
-                              : "Merge this conversation back into its source"}
+                              ? `Îmbină conversația înapoi în ${parentTitle}`
+                              : "Îmbină conversația înapoi în sursă"}
                         </TooltipPopup>
                       </Tooltip>
                       <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
@@ -645,7 +645,7 @@ export function ThreadRelationshipsPanel(props: {
                               variant="ghost"
                               part="icon"
                               tone="destructive"
-                              aria-label={`Stop subagent ${threadTitle}`}
+                              aria-label={`Oprește subagentul ${threadTitle}`}
                               disabled={stoppingId !== null}
                               onClick={() => void stopSubagent(threadId, agent)}
                             />
@@ -657,7 +657,7 @@ export function ThreadRelationshipsPanel(props: {
                             <SquareIcon aria-hidden className="size-3 fill-current" />
                           )}
                         </TooltipTrigger>
-                        <TooltipPopup side="left">Stop subagent</TooltipPopup>
+                        <TooltipPopup side="left">Oprește subagentul</TooltipPopup>
                       </Tooltip>
                     </div>
                   ) : null}

@@ -67,29 +67,29 @@ export function presentConnectionState(
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":
-      return "Available";
+      return "Disponibil";
     case "offline":
       return "Offline";
     case "connecting":
-      return "Connecting...";
+      return "Se conectează...";
     case "reconnecting":
       return connection.error
-        ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
-        : "Reconnecting...";
+        ? `Conectarea a eșuat. Se reconectează... Motiv: ${connection.error}`
+        : "Se reconectează...";
     case "connected":
-      return "Connected";
+      return "Conectat";
     case "unsupported":
-      return "Client not supported";
+      return "Client nesuportat";
     case "error":
       return connection.error
-        ? `Connection failed. Reason: ${connection.error}`
-        : "Connection failed";
+        ? `Conectarea a eșuat. Motiv: ${connection.error}`
+        : "Conectarea a eșuat";
   }
 }
 
 export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
   if (connection.phase === "reconnecting" && connection.error) {
-    return "Failed to connect. Reconnecting...";
+    return "Conectarea a eșuat. Se reconectează...";
   }
   return connectionStatusText({ ...connection, error: null });
 }

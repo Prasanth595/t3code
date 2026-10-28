@@ -37,7 +37,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={props.accessibilityLabel ?? "Mira, Threads"}
+      accessibilityLabel={props.accessibilityLabel ?? "Mira, Conversații"}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -97,7 +97,7 @@ export function getCompactBrandHeaderOptions(
   return {
     headerTitle: renderCompactBrandTitle,
     headerTitleStyle: fallbackTitleStyle,
-    title: "Threads",
+    title: "Conversații",
     unstable_headerLeftItems: undefined,
   };
 }

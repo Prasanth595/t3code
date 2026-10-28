@@ -32,7 +32,7 @@ function PdfDocumentPreview(props: {
           <Text className="flex-1 font-t3-semibold text-foreground" numberOfLines={1}>
             {props.source.name ?? "PDF"}
           </Text>
-          <ControlPill label="Close" variant="pill" onPress={props.onRequestClose} />
+          <ControlPill label="Închide" variant="pill" onPress={props.onRequestClose} />
         </View>
         <PdfPreview uri={props.source.uri} />
       </View>
@@ -51,8 +51,8 @@ function DocumentPreview(props: {
     if (props.onOpenError) props.onOpenError(error);
     else
       Dialog.alert(
-        "Could not open document",
-        "A compatible viewer must be installed. Check your connection and try again.",
+        "Documentul nu a putut fi deschis",
+        "Trebuie instalată o aplicație care poate deschide fișierul. Verifică conexiunea și încearcă din nou.",
       );
   });
   useEffect(() => {
@@ -86,7 +86,7 @@ function DocumentPreview(props: {
             {name ?? "Document"}
           </Text>
           <View className="items-end">
-            <Button label="Cancel" tone="text" onPress={props.onRequestClose} />
+            <Button label="Anulează" tone="text" onPress={props.onRequestClose} />
           </View>
         </View>
       </View>

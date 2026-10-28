@@ -21,7 +21,7 @@ function requireAttachmentWriteAccess<W extends { readonly environmentId: Enviro
         return AsyncResult.failure(
           Cause.fail(
             new EnvironmentAuthorizationError({
-              message: "This connection cannot change attachments.",
+              message: "Această conexiune nu poate modifica atașamentele.",
               requiredScope: AuthOrchestrationOperateScope,
             }),
           ),

@@ -84,7 +84,7 @@ export type AssetUrlState =
     };
 
 export const MISSING_FILE_ACCESS_MESSAGE =
-  "This connection cannot read host files. Pair again with a new link to view it.";
+  "Această conexiune nu poate citi fișierele. Asociază din nou cu un link nou ca să le vezi.";
 
 export function blockedAssetUrlState(
   resource: AssetResource | null,

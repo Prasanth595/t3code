@@ -8,7 +8,7 @@ import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 
 export const T3_CONNECT_ACCOUNT_PAGES = [
   {
-    label: "Mobile clients",
+    label: "Dispozitive mobile",
     url: "mobile-clients",
     icon: <SmartphoneIcon className="size-4" />,
     content: <MobileClientsUserProfilePage />,

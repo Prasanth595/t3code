@@ -101,7 +101,9 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       pressed.current = next;
       setOverlay(next);
       const cause = squashAtomCommandFailure(response);
-      setError(cause instanceof Error ? cause.message : "Could not update viewed files.");
+      setError(
+        cause instanceof Error ? cause.message : "Fișierele văzute nu au putut fi actualizate.",
+      );
     }
     if (response._tag === "Success" && versions.current.get(path) === version)
       awaitingRead.current.set(path, reads.current);

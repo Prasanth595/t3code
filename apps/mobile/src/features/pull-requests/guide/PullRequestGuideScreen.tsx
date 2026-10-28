@@ -41,11 +41,11 @@ export type GuideStopParams = PullRequestParams & {
 };
 
 const attentionLabels = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
+  tradeoff: "Un compromis de cântărit",
+  contract: "Un contract de verificat",
+  product: "O decizie de produs",
+  risk: "Un risc de evaluat",
+  accessibility: "O decizie de accesibilitate",
 };
 
 export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
@@ -55,7 +55,7 @@ export function PullRequestGuideContent({ params }: { readonly params: PullReque
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text>Ghidurile de revizuire sunt dezactivate pe acest server.</Text>
       ) : (
         <>
           <GuideNotice state={state} />
@@ -127,20 +127,20 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
     <View className="flex-1 bg-screen">
       <NativeStackScreenOptions
         options={{
-          title: `Stop ${route.params.position + 1}`,
-          headerTitle: `Stop ${route.params.position + 1} of ${guide?.stops.length ?? "…"}`,
+          title: `Oprirea ${route.params.position + 1}`,
+          headerTitle: `Oprirea ${route.params.position + 1} din ${guide?.stops.length ?? "…"}`,
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title={`Stop ${route.params.position + 1}`}
+          title={`Oprirea ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={
             <Menu
               actions={[
                 {
                   id: "word-wrap",
-                  title: "Word wrap",
+                  title: "Încadrare text",
                   image: "text.alignleft",
                   state: appearance.codeWordBreak ? "on" : "off",
                 },
@@ -148,20 +148,20 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               onPressAction={() => setCodeWordBreak(!appearance.codeWordBreak)}
             >
               <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Guide options" />
+                <IconButton icon="ellipsis" accessibilityLabel="Opțiuni ghid" />
               </View>
             </Menu>
           }
         />
       ) : null}
       <Toolbar placement="right">
-        <Toolbar.Menu title="Guide options" accessibilityLabel="Guide options" icon="ellipsis">
+        <Toolbar.Menu title="Opțiuni ghid" accessibilityLabel="Opțiuni ghid" icon="ellipsis">
           <Toolbar.MenuAction
             icon="text.alignleft"
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <Toolbar.Label>Word wrap</Toolbar.Label>
+            <Toolbar.Label>Încadrare text</Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
@@ -172,11 +172,11 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         >
           <View className="w-full max-w-[760px] self-center gap-5">
             {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
+              <Text>Ghidurile de revizuire sunt dezactivate pe acest server.</Text>
             ) : changedGuide ? (
-              <Text>This guide was rewritten. Go back to start the new tour.</Text>
+              <Text>Ghidul a fost rescris. Întoarce-te ca să începi turul nou.</Text>
             ) : !stop ? (
-              <Text>{state.error ?? "Loading stop…"}</Text>
+              <Text>{state.error ?? "Se încarcă oprirea…"}</Text>
             ) : (
               <>
                 <GuideNotice state={state} />
@@ -195,7 +195,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stale ? (
                   <Text className="text-sm text-foreground-muted">
-                    Excerpts are hidden until the guide is rewritten for the current head.
+                    Fragmentele sunt ascunse până când ghidul e rescris pentru versiunea curentă.
                   </Text>
                 ) : (
                   stop.excerpts.map((excerpt) => (
@@ -268,10 +268,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   accessibilityRole="button"
                   accessibilityLabel={
                     guide && position < guide.stops.length - 1
-                      ? "Next stop"
+                      ? "Oprirea următoare"
                       : canReview
-                        ? "Finish review"
-                        : "Finish tour"
+                        ? "Termină revizuirea"
+                        : "Termină turul"
                   }
                   className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
                   onPress={() =>
@@ -293,15 +293,15 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="min-w-0 flex-1 gap-1">
                     <Text className="text-xs text-foreground-muted">
                       {guide && position < guide.stops.length - 1
-                        ? `Next · ${position + 2} of ${guide.stops.length}`
-                        : "End of guide"}
+                        ? `Următoarea · ${position + 2} din ${guide.stops.length}`
+                        : "Sfârșitul ghidului"}
                     </Text>
                     <Text className="text-base font-t3-semibold">
                       {guide && position < guide.stops.length - 1
                         ? guide.stops[position + 1]?.title
                         : canReview
-                          ? "Finish review"
-                          : "Finish tour"}
+                          ? "Termină revizuirea"
+                          : "Termină turul"}
                     </Text>
                   </View>
                   <View className="h-11 w-11 items-center justify-center rounded-full bg-foreground">

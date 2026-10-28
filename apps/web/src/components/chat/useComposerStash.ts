@@ -186,8 +186,8 @@ export function useComposerStash(input: {
     if (filesToVerify.some((file) => file.environmentId !== environmentId)) {
       toastManager.add({
         type: "error",
-        title: "Stashed files belong to another environment",
-        description: "Restore this prompt in the environment that received its files.",
+        title: "Fișierele puse deoparte aparțin altui mediu",
+        description: "Restaurează promptul în mediul care a primit fișierele.",
       });
       return;
     }
@@ -223,9 +223,9 @@ export function useComposerStash(input: {
     if (!durable) {
       toastManager.add({
         type: "warning",
-        title: "Restored prompt may reappear in the stash",
+        title: "Promptul restaurat poate reapărea",
         description:
-          "Browser storage rejected the update, so this entry could still be there after a reload.",
+          "Stocarea browserului a respins actualizarea, așa că intrarea poate fi încă acolo după reîncărcare.",
         data: { hideCopyButton: true },
       });
     }
@@ -404,33 +404,33 @@ export function useComposerStash(input: {
     const missingImageReasons: string[] = [];
     if (entry.droppedImageNames.length > 0) {
       missingImageReasons.push(
-        `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+        `${entry.droppedImageNames.join(", ")} au depășit limita de mărime când a fost salvat promptul.`,
       );
     }
     if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
       missingImageReasons.push(
-        `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
+        `${entry.unreadableImageNames.join(", ")} nu au putut fi citite când a fost salvat promptul.`,
       );
     }
     if (unrestoredImageNames.length > 0) {
       missingImageReasons.push(
-        `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-attachment limit.`,
+        `${unrestoredImageNames.join(", ")} nu au putut fi restaurate: editorul a atins limita de ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente.`,
       );
     }
     if (unrestoredFileNames.length > 0) {
       missingImageReasons.push(
-        `${unrestoredFileNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-attachment limit.`,
+        `${unrestoredFileNames.join(", ")} nu au putut fi restaurate: editorul a atins limita de ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente.`,
       );
     }
     if (expiredFileNames.length > 0) {
       missingImageReasons.push(
-        `${expiredFileNames.join(", ")}: stashed files are kept for 24 hours and this upload expired. Attach the file again.`,
+        `${expiredFileNames.join(", ")}: fișierele puse deoparte se păstrează 24 de ore și acest fișier a expirat. Atașează-l din nou.`,
       );
     }
     if (missingImageReasons.length > 0) {
       toastManager.add({
         type: "warning",
-        title: "Some attachments were not restored",
+        title: "Unele atașamente nu au fost restaurate",
         description: missingImageReasons.join(" "),
       });
     }
@@ -460,9 +460,9 @@ export function useComposerStash(input: {
     if (!durable) {
       toastManager.add({
         type: "warning",
-        title: "Stash entry may come back",
+        title: "Intrarea poate reapărea",
         description:
-          "Browser storage rejected the delete, so this prompt could reappear after a reload.",
+          "Stocarea browserului a respins ștergerea, așa că promptul poate reapărea după reîncărcare.",
         data: { hideCopyButton: true },
       });
     }
@@ -475,8 +475,8 @@ export function useComposerStash(input: {
     if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
       toastManager.add({
         type: "info",
-        title: "Still bringing attached context into this message.",
-        description: "Stash again once its chip resolves.",
+        title: "Se adaugă încă contextul atașat la mesaj.",
+        description: "Pune deoparte din nou după ce elementul e gata.",
       });
       return;
     }
@@ -510,7 +510,7 @@ export function useComposerStash(input: {
       if (composerFileNeedsReattach(file)) {
         toastManager.add({
           type: "error",
-          title: "Attach dropped files again or remove them before stashing",
+          title: "Atașează din nou fișierele sau elimină-le înainte să pui deoparte",
         });
         return;
       }
@@ -518,7 +518,7 @@ export function useComposerStash(input: {
       if (upload?.status !== "ready" || upload.environmentId !== environmentId) {
         toastManager.add({
           type: "error",
-          title: "Wait for file uploads before stashing this prompt",
+          title: "Așteaptă încărcarea fișierelor înainte să pui promptul deoparte",
         });
         return;
       }
@@ -567,9 +567,9 @@ export function useComposerStash(input: {
       if (!written) {
         toastManager.add({
           type: "error",
-          title: "Could not stash this prompt",
+          title: "Promptul nu a putut fi pus deoparte",
           description:
-            "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
+            "Stocarea browserului a respins scrierea, așa că editorul a rămas neschimbat. Eliberează date ale site-ului și încearcă din nou.",
           data: { hideCopyButton: true },
         });
         return;
@@ -577,9 +577,9 @@ export function useComposerStash(input: {
       if (!durable) {
         toastManager.add({
           type: "warning",
-          title: "Stashed prompt will not survive a reload",
+          title: "Promptul pus deoparte nu va rezista la reîncărcare",
           description:
-            "Browser storage is unavailable, so this stash is kept in memory only for this session.",
+            "Stocarea browserului nu e disponibilă, așa că promptul e păstrat doar în memorie pentru această sesiune.",
           data: { hideCopyButton: true },
         });
       }
@@ -613,8 +613,8 @@ export function useComposerStash(input: {
         }
         toastManager.add({
           type: "warning",
-          title: "Oldest stashed prompt discarded",
-          description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
+          title: "Cel mai vechi prompt pus deoparte a fost eliminat",
+          description: `Se pot pune deoparte ${MAX_STASH_ENTRIES} prompturi; cel mai vechi a fost eliminat ca să facă loc.`,
           data: { hideCopyButton: true },
         });
       }
@@ -655,17 +655,17 @@ export function useComposerStash(input: {
         if (!imagesDurable && durable && images.length > 0) {
           toastManager.add({
             type: "warning",
-            title: "Stashed images were not saved",
+            title: "Imaginile puse deoparte nu au fost salvate",
             description:
-              "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
+              "Promptul a fost pus deoparte, dar stocarea browserului i-a respins imaginile. Vor lipsi dacă reîncarci.",
             data: { hideCopyButton: true },
           });
         }
       } else if (kept.length > 0) {
         toastManager.add({
           type: "warning",
-          title: "Stashed images did not attach",
-          description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
+          title: "Imaginile puse deoparte nu au fost atașate",
+          description: `Promptul a fost restaurat sau șters înainte să se salveze ${kept.length === 1 ? "imaginea" : `cele ${kept.length} imagini`}. Atașează din nou dacă mai ai nevoie.`,
           data: { hideCopyButton: true },
         });
       }

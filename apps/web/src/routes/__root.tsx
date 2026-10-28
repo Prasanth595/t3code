@@ -143,7 +143,7 @@ function RootRouteNotFoundView() {
           This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
           start a thread.
         </p>
-        <Button render={<Link to="/" replace />}>Go home</Button>
+        <Button render={<Link to="/" replace />}>Mergi acasă</Button>
       </div>
     </main>
   );
@@ -321,16 +321,16 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
     <StandalonePage tone="error">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Something went wrong."
+        title="Ceva n-a mers."
         description={message}
       />
 
       <div className="mt-5 flex flex-wrap gap-2">
         <Button size="sm" onClick={() => void router.invalidate()}>
-          Try again
+          Încearcă din nou
         </Button>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-          Reload app
+          Reîncarcă aplicația
         </Button>
         <CopyErrorButton report={report} />
       </div>
@@ -351,7 +351,7 @@ function CopyErrorButton({ report }: { report: string }) {
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
       <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
-      {isCopied ? "Copied" : "Copy error"}
+      {isCopied ? "Copiat" : "Copiază eroarea"}
     </Button>
   );
 }
@@ -365,7 +365,7 @@ function errorMessage(error: unknown): string {
     return error;
   }
 
-  return "An unexpected router error occurred.";
+  return "A apărut o eroare neașteptată de navigare.";
 }
 
 function errorDetails(error: unknown): string {
@@ -380,7 +380,7 @@ function errorDetails(error: unknown): string {
   try {
     return JSON.stringify(error, null, 2);
   } catch {
-    return "No additional error details are available.";
+    return "Nu există alte detalii despre eroare.";
   }
 }
 
@@ -486,8 +486,8 @@ function EventRouter({
     if (decision._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Keybindings updated",
-        description: "Keybindings configuration reloaded successfully.",
+        title: "Scurtăturile au fost actualizate",
+        description: "Configurația scurtăturilor a fost reîncărcată.",
       });
       return;
     }
@@ -495,7 +495,7 @@ function EventRouter({
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: "Invalid keybindings configuration",
+        title: "Configurație de scurtături invalidă",
         description: (
           <KeybindingsConfigWarning
             message={decision.message}

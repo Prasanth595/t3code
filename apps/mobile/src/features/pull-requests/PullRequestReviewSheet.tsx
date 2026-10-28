@@ -45,7 +45,7 @@ function useActionSubmission(params: PullRequestParams) {
       setError(
         cause instanceof Error
           ? cause.message
-          : "The provider could not complete this action. Try again.",
+          : "Furnizorul nu a putut finaliza acțiunea. Încearcă din nou.",
       );
     }
   };
@@ -53,11 +53,11 @@ function useActionSubmission(params: PullRequestParams) {
 }
 
 const VERDICTS = [
-  { value: "comment", title: "Comment" },
-  { value: "approve", title: "Approve" },
+  { value: "comment", title: "Comentează" },
+  { value: "approve", title: "Aprobă" },
   {
     value: "request-changes",
-    title: "Request changes",
+    title: "Cere modificări",
   },
 ] as const;
 
@@ -106,7 +106,7 @@ export function PullRequestReviewSheet({
   const perform = () =>
     submission.submit(async () => {
       if (!canSubmit)
-        throw new Error("Add your feedback and check your permissions before submitting.");
+        throw new Error("Adaugă feedback-ul și verifică permisiunile înainte de trimitere.");
       const submitted = store.draft;
       const response =
         reviewing && verdict
@@ -132,21 +132,21 @@ export function PullRequestReviewSheet({
     });
   return (
     <SheetContent
-      title={reviewing ? "Submit review" : "Add comment"}
-      subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · reviewing ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
+      title={reviewing ? "Trimite revizuirea" : "Adaugă comentariu"}
+      subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · revizuiești ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
       busy={submission.busy}
       footer={
         <Button
           label={
             submission.busy
-              ? "Submitting…"
+              ? "Se trimite…"
               : reviewing
                 ? verdict?.value === "approve"
-                  ? "Approve"
+                  ? "Aprobă"
                   : verdict?.value === "request-changes"
-                    ? "Request changes"
-                    : "Submit review"
-                : "Post comment"
+                    ? "Cere modificări"
+                    : "Trimite revizuirea"
+                : "Publică comentariul"
           }
           fullWidth
           tone={Platform.OS === "android" ? "primary" : "contrast"}
@@ -167,17 +167,17 @@ export function PullRequestReviewSheet({
         />
       ) : null}
       <Text className="px-4 text-xs text-foreground-muted">
-        {reviewing ? "Summary" : "Comment"}
+        {reviewing ? "Rezumat" : "Comentariu"}
       </Text>
       <TextInput
         multiline
-        accessibilityLabel={reviewing ? "Review summary" : "Comment"}
+        accessibilityLabel={reviewing ? "Rezumatul revizuirii" : "Comentariu"}
         placeholder={
           reviewing
             ? summaryRequired
-              ? "Summary required to request changes…"
-              : "Summarize your review…"
-            : "Write a comment…"
+              ? "E nevoie de un rezumat ca să ceri modificări…"
+              : "Rezumă revizuirea…"
+            : "Scrie un comentariu…"
         }
         placeholderTextColorClassName="accent-foreground-muted"
         editable={store.ready && !submission.busy}
@@ -227,8 +227,8 @@ export function PullRequestReviewSheet({
               </Text>
               <Text className="text-2xs text-foreground-muted">
                 {draft.headSha !== result.data?.headSha
-                  ? "Branch changed · Tap to choose a new line"
-                  : "Tap to edit"}
+                  ? "Branch-ul s-a schimbat · Atinge ca să alegi o linie nouă"
+                  : "Atinge pentru a edita"}
               </Text>
             </Pressable>
           ))}
@@ -236,7 +236,8 @@ export function PullRequestReviewSheet({
       ) : null}
       {reviewing && stale ? (
         <Text className="text-sm text-danger-foreground">
-          The branch changed since you wrote a comment. Choose its current line before submitting.
+          Branch-ul s-a schimbat de când ai scris comentariul. Alege linia curentă înainte de
+          trimitere.
         </Text>
       ) : null}
       {reviewing && !canSubmitComments ? (

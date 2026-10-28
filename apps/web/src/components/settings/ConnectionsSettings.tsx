@@ -371,13 +371,14 @@ export function ConnectionsSettings() {
       setPendingDesktopServerExposureMode(null);
       setIsUpdatingDesktopServerExposure(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update network exposure.";
+      const message =
+        error instanceof Error ? error.message : "Expunerea în rețea nu a putut fi actualizată.";
       setPendingDesktopServerExposureMode(null);
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update network access",
+          title: "Accesul în rețea nu a putut fi actualizat",
           description: message,
         }),
       );
@@ -412,12 +413,12 @@ export function ConnectionsSettings() {
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
       const message =
-        error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
+        error instanceof Error ? error.message : "Tailscale HTTPS nu a putut fi configurat.";
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not set up Tailscale HTTPS",
+          title: "Tailscale HTTPS nu a putut fi configurat",
           description: message,
         }),
       );
@@ -451,12 +452,13 @@ export function ConnectionsSettings() {
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to disable Tailscale HTTPS.";
+      const message =
+        error instanceof Error ? error.message : "Tailscale HTTPS nu a putut fi dezactivat.";
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not disable Tailscale HTTPS",
+          title: "Tailscale HTTPS nu a putut fi dezactivat",
           description: message,
         }),
       );
@@ -481,12 +483,13 @@ export function ConnectionsSettings() {
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
+      const message =
+        error instanceof Error ? error.message : "Link-ul de asociere nu a putut fi revocat.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke pairing link",
+          title: "Link-ul de asociere nu a putut fi revocat",
           description: message,
         }),
       );
@@ -509,12 +512,13 @@ export function ConnectionsSettings() {
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to revoke client access.";
+      const message =
+        error instanceof Error ? error.message : "Accesul clientului nu a putut fi revocat.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke client access",
+          title: "Accesul clientului nu a putut fi revocat",
           description: message,
         }),
       );
@@ -534,18 +538,23 @@ export function ConnectionsSettings() {
       const revokedCount = await revokeOtherServerClientSessions();
       toastManager.add({
         type: "success",
-        title: revokedCount === 1 ? "Revoked 1 other client" : `Revoked ${revokedCount} clients`,
-        description: "Other paired clients will need a new pairing link before reconnecting.",
+        title:
+          revokedCount === 1
+            ? "A fost revocat un client"
+            : `Au fost revocați ${revokedCount} clienți`,
+        description:
+          "Ceilalți clienți asociați vor avea nevoie de un link nou înainte să se reconecteze.",
       });
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to revoke other clients.";
+      const message =
+        error instanceof Error ? error.message : "Ceilalți clienți nu au putut fi revocați.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke other clients",
+          title: "Ceilalți clienți nu au putut fi revocați",
           description: message,
         }),
       );
@@ -561,12 +570,12 @@ export function ConnectionsSettings() {
       const message =
         error instanceof Error
           ? error.message
-          : `Failed to switch the backend ${enabled ? "on" : "off"}.`;
+          : `Serverul nu a putut fi ${enabled ? "pornit" : "oprit"}.`;
       setSavedBackendError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not switch backend ${enabled ? "on" : "off"}`,
+          title: `Serverul nu a putut fi ${enabled ? "pornit" : "oprit"}`,
           description: message,
         }),
       );
@@ -581,12 +590,12 @@ export function ConnectionsSettings() {
     setRemovingSavedEnvironmentId(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      const message = error instanceof Error ? error.message : "Failed to remove backend.";
+      const message = error instanceof Error ? error.message : "Serverul nu a putut fi eliminat.";
       setSavedBackendError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not remove backend",
+          title: "Serverul nu a putut fi eliminat",
           description: message,
         }),
       );
@@ -641,7 +650,7 @@ export function ConnectionsSettings() {
       onCheckedChange={(checked) => {
         setPendingDesktopServerExposureMode(checked ? "network-accessible" : "local-only");
       }}
-      aria-label="Enable network access"
+      aria-label="Activează accesul în rețea"
     />
   );
   const renderEndpointRows = (presentation: AccessSectionPresentation) =>
@@ -677,12 +686,13 @@ export function ConnectionsSettings() {
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
+      const message =
+        error instanceof Error ? error.message : "Serverul WSL nu a putut fi actualizat.";
       setDesktopWslMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not change WSL backend",
+          title: "Serverul WSL nu a putut fi schimbat",
           description: message,
         }),
       );
@@ -781,7 +791,7 @@ export function ConnectionsSettings() {
         return (
           <SettingsRow
             {...searchableSetting("wsl-backend")}
-            description="Couldn't load the WSL backend state."
+            description="Starea serverului WSL nu a putut fi încărcată."
             status={<span className="block text-destructive">{desktopWslError}</span>}
             control={
               <Button
@@ -790,7 +800,7 @@ export function ConnectionsSettings() {
                 onClick={loadWslState}
                 disabled={isLoadingWslState}
               >
-                {isLoadingWslState ? "Retrying…" : "Retry"}
+                {isLoadingWslState ? "Se reîncearcă…" : "Reîncearcă"}
               </Button>
             }
           />
@@ -805,7 +815,7 @@ export function ConnectionsSettings() {
       return (
         <SettingsRow
           {...searchableSetting("wsl-backend")}
-          description="WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference."
+          description="WSL nu e disponibil, așa că rulează Windows. Dezactivează WSL ca să ștergi această preferință."
           status={
             desktopWslError ? (
               <span className="block text-destructive">{desktopWslError}</span>
@@ -818,7 +828,7 @@ export function ConnectionsSettings() {
               disabled={isUpdatingWslBackend}
               onClick={() => handleSelectWslMode(BACKEND_VALUE_WSL_OFF)}
             >
-              Switch to Windows
+              Treci pe Windows
             </Button>
           }
         />
@@ -831,15 +841,15 @@ export function ConnectionsSettings() {
       : (desktopWslState.distro ?? defaultDistroName ?? BACKEND_VALUE_DEFAULT_WSL);
     const selectLabel =
       selectValue === BACKEND_VALUE_WSL_OFF
-        ? "Off"
+        ? "Oprit"
         : selectValue === BACKEND_VALUE_DEFAULT_WSL
-          ? "Default distro"
+          ? "Distribuția implicită"
           : selectValue;
     return (
       <>
         <SettingsRow
           {...searchableSetting("wsl-backend")}
-          description="Run the selected WSL distro alongside Windows. Projects remain on their current filesystem."
+          description="Rulează distribuția WSL aleasă alături de Windows. Proiectele rămân pe sistemul de fișiere curent."
           status={
             desktopWslError ? (
               <span className="block text-destructive">{desktopWslError}</span>
@@ -860,7 +870,7 @@ export function ConnectionsSettings() {
               <SelectTrigger
                 size="sm"
                 className="w-full sm:w-56"
-                aria-label="WSL backend"
+                aria-label="Server WSL"
                 disabled={isUpdatingWslBackend}
               >
                 <SelectValue>{selectLabel}</SelectValue>
@@ -871,7 +881,7 @@ export function ConnectionsSettings() {
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
                   <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    Default distro
+                    Distribuția implicită
                   </SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
@@ -887,15 +897,15 @@ export function ConnectionsSettings() {
         />
         {desktopWslState.enabled ? (
           <SettingsRow
-            title="WSL only"
-            description="Run only the WSL backend. Mira restarts when this changes."
+            title="Doar WSL"
+            description="Rulează doar serverul WSL. Mira repornește când se schimbă."
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
                 checked={desktopWslState.wslOnly}
                 disabled={isUpdatingWslBackend}
                 onCheckedChange={(checked) => handleToggleWslOnly(checked)}
-                aria-label="Run WSL only"
+                aria-label="Rulează doar WSL"
               />
             }
           />
@@ -911,7 +921,7 @@ export function ConnectionsSettings() {
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : "Folosește Tailscale Serve ca să expui serverul printr-o adresă HTTPS MagicDNS."
           : missingTailscaleEndpointDescription(desktopServerExposureState)
       }
       control={
@@ -926,7 +936,7 @@ export function ConnectionsSettings() {
               }
               handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
             }}
-            aria-label="Enable Tailscale HTTPS"
+            aria-label="Activează Tailscale HTTPS"
           />
         ) : null
       }
@@ -968,16 +978,16 @@ export function ConnectionsSettings() {
             onToggleExpanded={() => setIsAdvertisedEndpointListExpanded((expanded) => !expanded)}
             fallback={
               desktopServerExposureState?.endpointUrl
-                ? `Reachable at ${desktopServerExposureState.endpointUrl}`
+                ? `Accesibil la ${desktopServerExposureState.endpointUrl}`
                 : desktopServerExposureState?.advertisedHost
-                  ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
-                  : "Exposed on all interfaces."
+                  ? `Expus pe toate interfețele. Link-urile de asociere folosesc ${desktopServerExposureState.advertisedHost}.`
+                  : "Expus pe toate interfețele."
             }
           />
         ) : desktopServerExposureState ? (
-          "Limited to this machine."
+          "Limitat la acest calculator."
         ) : (
-          "Loading…"
+          "Se încarcă…"
         )
       }
       status={
@@ -993,12 +1003,12 @@ export function ConnectionsSettings() {
       title={searchableSetting("network-access").title}
       description={
         desktopBridge
-          ? "This connection cannot view or change network exposure."
+          ? "Această conexiune nu poate vedea sau schimba expunerea în rețea."
           : currentAuthPolicy === "remote-reachable"
-            ? "Remote access is already configured. Change network exposure where the server starts."
+            ? "Accesul la distanță e deja configurat. Schimbă expunerea acolo unde pornește serverul."
             : currentAuthPolicy === "loopback-browser"
-              ? "Only this machine can connect. Restart with a non-loopback host for remote pairing."
-              : "Network exposure information is unavailable."
+              ? "Doar acest calculator se poate conecta. Repornește cu o gazdă non-loopback pentru asociere la distanță."
+              : "Informațiile despre expunerea în rețea nu sunt disponibile."
       }
       control={
         !desktopBridge &&
@@ -1010,14 +1020,14 @@ export function ConnectionsSettings() {
                   <Switch
                     checked={isLocalBackendNetworkAccessible}
                     disabled
-                    aria-label="Enable network access"
+                    aria-label="Activează accesul în rețea"
                   />
                 </span>
               }
             />
             <TooltipPopup side="top">
-              Network exposure changes restart the backend and must be controlled where the server
-              process is launched.
+              Schimbările de expunere în rețea repornesc serverul și trebuie făcute acolo unde e
+              pornit procesul serverului.
             </TooltipPopup>
           </Tooltip>
         ) : undefined
@@ -1033,7 +1043,7 @@ export function ConnectionsSettings() {
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
-              primaryEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
+              primaryEnvironment?.label ?? (desktopBridge ? "Acest calculator" : "Mediul principal")
             }
             icon={
               <EnvironmentMachineIcon
@@ -1055,7 +1065,7 @@ export function ConnectionsSettings() {
                         type="button"
                         variant="ghost-muted"
                         size="icon-xs"
-                        aria-label="More actions for this machine"
+                        aria-label="Mai multe acțiuni pentru acest calculator"
                       />
                     }
                   >
@@ -1074,7 +1084,7 @@ export function ConnectionsSettings() {
             <LocalEnvironmentSetting />
             {canManageLocalBackend ? (
               <SettingsRow
-                title="Version"
+                title="Versiune"
                 description={
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
@@ -1084,7 +1094,7 @@ export function ConnectionsSettings() {
                       primaryEnvironment?.displayUrl ?? null,
                     ]
                       .filter((value): value is string => value !== null)
-                      .join(" · ") || "Loading…"
+                      .join(" · ") || "Se încarcă…"
                   )
                 }
                 control={
@@ -1095,7 +1105,7 @@ export function ConnectionsSettings() {
                       size="sm"
                       environmentId={primaryEnvironmentId}
                       serverLabel={
-                        primaryEnvironment ? `${primaryEnvironment.label} server` : "server"
+                        primaryEnvironment ? `serverul ${primaryEnvironment.label}` : "serverul"
                       }
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
                       installation={
@@ -1108,8 +1118,8 @@ export function ConnectionsSettings() {
                       targetVersion={primaryVersionMismatch.clientVersion}
                       label={
                         primaryServerUpdateState.status === "failed"
-                          ? "Retry update"
-                          : `Update to ${primaryVersionMismatch.clientVersion}`
+                          ? "Reîncearcă actualizarea"
+                          : `Actualizează la ${primaryVersionMismatch.clientVersion}`
                       }
                     />
                   ) : primaryServerUpdateState.status === "idle" && primaryServerConfig ? (
@@ -1156,7 +1166,7 @@ export function ConnectionsSettings() {
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
               id="authorized-clients"
-              title="Authorized clients"
+              title="Clienți autorizați"
               summary={summarizeAuthorizedClients(
                 desktopClientSessions,
                 visibleDesktopPairingLinks,
@@ -1189,7 +1199,8 @@ export function ConnectionsSettings() {
                   renderAuthorizedClients("current")
                 ) : (
                   <p className="px-4 py-3 text-xs text-muted-foreground">
-                    This connection can create access links but cannot view authorized clients.
+                    Această conexiune poate crea link-uri de acces, dar nu poate vedea clienții
+                    autorizați.
                   </p>
                 )}
               </ScrollArea>
@@ -1206,13 +1217,13 @@ export function ConnectionsSettings() {
               <AlertDialogHeader>
                 <AlertDialogTitle>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Enable network access?"
-                    : "Disable network access?"}
+                    ? "Activezi accesul în rețea?"
+                    : "Dezactivezi accesul în rețea?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Let your other devices connect to Mira over the network. Pair devices to give them access. Mira will restart."
-                    : "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. Mira will restart."}
+                    ? "Permite celorlalte dispozitive să se conecteze la Mira prin rețea. Asociază dispozitivele ca să le dai acces. Mira va reporni."
+                    : "Dispozitivele conectate prin rețeaua locală se vor deconecta. Tunelurile existente, ca T3 Connect sau Tailscale HTTPS, continuă să funcționeze. Mira va reporni."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1234,10 +1245,10 @@ export function ConnectionsSettings() {
                   {isUpdatingDesktopServerExposure && <Spinner size="sm" />}
                   <span className="[text-box:trim-both_cap_alphabetic]">
                     {isUpdatingDesktopServerExposure
-                      ? "Restarting…"
+                      ? "Se repornește…"
                       : pendingDesktopServerExposureMode === "network-accessible"
-                        ? "Restart and enable"
-                        : "Restart and disable"}
+                        ? "Repornește și activează"
+                        : "Repornește și dezactivează"}
                   </span>
                 </Button>
               </AlertDialogFooter>
@@ -1255,28 +1266,28 @@ export function ConnectionsSettings() {
                 <AlertDialogTitle>
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
-                      ? "Turn off WSL and switch back to Windows?"
-                      : "Disable WSL backend?"
+                      ? "Oprești WSL și revii la Windows?"
+                      : "Dezactivezi serverul WSL?"
                     : pendingWslChange?.kind === "distro"
-                      ? "Switch WSL distro?"
+                      ? "Schimbi distribuția WSL?"
                       : pendingWslChange?.kind === "enable"
-                        ? "Start the WSL backend"
+                        ? "Pornește serverul WSL"
                         : pendingWslChange?.nextValue
-                          ? "Run only the WSL backend?"
-                          : "Re-enable the Windows backend?"}
+                          ? "Rulezi doar serverul WSL?"
+                          : "Reactivezi serverul Windows?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
-                      ? "Mira will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
-                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in Mira until you re-enable WSL."
+                      ? "Mira va reporni pe serverul Windows. Conversațiile și proiectele din WSL rămân în siguranță în distribuție și redevin disponibile când reactivezi WSL."
+                      : "Serverul WSL se va opri. Conversațiile și proiectele din WSL rămân în siguranță, dar nu vor fi disponibile în Mira până reactivezi WSL."
                     : pendingWslChange?.kind === "distro"
-                      ? "Mira will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                      ? "Mira va reporni serverul WSL pe noua distribuție. Sesiunile care rulează pe distribuția curentă vor fi întrerupte."
                       : pendingWslChange?.kind === "enable"
-                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
+                        ? "Rulezi serverul WSL alături de cel Windows sau oprești serverul Windows și folosești doar WSL? Poți schimba mai târziu din Setări."
                         : pendingWslChange?.nextValue
-                          ? "Mira will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                          : "Mira will restart and bring the Windows backend back up alongside WSL."}
+                          ? "Mira va reporni și va porni doar serverul WSL. Proiectele din Windows nu vor fi accesibile până dezactivezi asta."
+                          : "Mira va reporni și va reporni serverul Windows alături de WSL."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1299,7 +1310,7 @@ export function ConnectionsSettings() {
                           Applying…
                         </>
                       ) : (
-                        "Use only WSL"
+                        "Folosește doar WSL"
                       )}
                     </Button>
                     <Button
@@ -1313,7 +1324,7 @@ export function ConnectionsSettings() {
                           Applying…
                         </>
                       ) : (
-                        "Run both backends"
+                        "Rulează ambele servere"
                       )}
                     </Button>
                   </>
@@ -1335,16 +1346,16 @@ export function ConnectionsSettings() {
                       </>
                     ) : pendingWslChange?.kind === "disable" ? (
                       pendingWslChange.wasWslOnly ? (
-                        "Switch to Windows"
+                        "Treci pe Windows"
                       ) : (
-                        "Disable WSL"
+                        "Dezactivează WSL"
                       )
                     ) : pendingWslChange?.kind === "distro" ? (
-                      "Switch distro"
+                      "Schimbă distribuția"
                     ) : pendingWslChange?.nextValue ? (
-                      "Restart and enable"
+                      "Repornește și activează"
                     ) : (
-                      "Restart and disable"
+                      "Repornește și dezactivează"
                     )}
                   </Button>
                 )}
@@ -1360,9 +1371,9 @@ export function ConnectionsSettings() {
           >
             <AlertDialogPopup>
               <AlertDialogHeader>
-                <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
+                <AlertDialogTitle>Dezactivezi Tailscale HTTPS?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Mira will restart the local backend without Tailscale Serve.
+                  Mira va reporni serverul local fără Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1383,7 +1394,7 @@ export function ConnectionsSettings() {
                       Restarting…
                     </>
                   ) : (
-                    "Restart and disable"
+                    "Repornește și dezactivează"
                   )}
                 </Button>
               </AlertDialogFooter>
@@ -1398,10 +1409,10 @@ export function ConnectionsSettings() {
           >
             <DialogPopup className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
+                <DialogTitle>Configurezi Tailscale HTTPS?</DialogTitle>
                 <DialogDescription>
-                  Mira will restart the local backend with Tailscale Serve enabled and ask Tailscale
-                  to proxy HTTPS traffic to this backend.
+                  Mira va reporni serverul local cu Tailscale Serve activat și va cere Tailscale să
+                  redirecționeze traficul HTTPS către acest server.
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel>
@@ -1428,7 +1439,7 @@ export function ConnectionsSettings() {
                     <TooltipTrigger
                       render={
                         <p className="mt-1 truncate text-sm text-foreground">
-                          {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                          {pendingTailscaleServeBaseUrl ?? "Adresă MagicDNS în așteptare"}
                         </p>
                       }
                     />
@@ -1455,7 +1466,7 @@ export function ConnectionsSettings() {
                       Restarting…
                     </>
                   ) : (
-                    "Enable"
+                    "Activează"
                   )}
                 </Button>
               </DialogFooter>
@@ -1465,8 +1476,8 @@ export function ConnectionsSettings() {
       ) : (
         <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
-            title="No environment selected"
-            description="Connect an environment to view its settings and access."
+            title="Niciun mediu selectat"
+            description="Conectează un mediu ca să-i vezi setările și accesul."
           />
           <LocalEnvironmentSetting />
           {canReadRelay || canManageRelay ? (
@@ -1482,7 +1493,7 @@ export function ConnectionsSettings() {
       {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}
-        title="Environments"
+        title="Medii"
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (

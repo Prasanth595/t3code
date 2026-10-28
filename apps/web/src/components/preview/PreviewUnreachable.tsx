@@ -38,7 +38,7 @@ export function PreviewFileNotShown({
         <div className="mt-auto flex items-center gap-2 pt-8">
           <div className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onOpen}>
-            Open in browser
+            Deschide în browser
           </Button>
           {downloadUrl ? (
             <Button type="button" size="sm" render={<a href={downloadUrl} download={fileName} />}>
@@ -72,12 +72,12 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
           <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4 text-sm">
             <p className="mb-2 font-medium text-foreground">Try:</p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>Checking your connection</li>
-              <li>Confirming the dev server is running</li>
+              <li>Verifică conexiunea</li>
+              <li>Verifică dacă serverul de dezvoltare rulează</li>
               {move ? (
                 <li>Opening it in the environment&rsquo;s browser, which reaches its network</li>
               ) : null}
-              <li>Checking the proxy and the firewall</li>
+              <li>Verifică proxy-ul și firewall-ul</li>
             </ul>
           </div>
         ) : null}
@@ -93,7 +93,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
             size="sm"
             onClick={() => setShowDetails((value) => !value)}
           >
-            {showDetails ? "Hide details" : "Details"}
+            {showDetails ? "Ascunde detaliile" : "Detalii"}
           </Button>
           <div className="flex-1" />
           {move ? (

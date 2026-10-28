@@ -26,20 +26,20 @@ export function mobileClientPlatformLabel(device: RelayClientDeviceRecord): stri
 
 export function mobileClientNotificationDetail(device: RelayClientDeviceRecord): string {
   if (!device.notifications.enabled) {
-    return "Push notifications are disabled on this device.";
+    return "Notificările push sunt dezactivate pe acest dispozitiv.";
   }
 
   const enabledPreferences = NOTIFICATION_PREFERENCES.flatMap(([preference, label]) =>
     device.notifications[preference] ? [label] : [],
   );
   return enabledPreferences.length > 0
-    ? `Alerts enabled for ${enabledPreferences.join(", ")}.`
-    : "Push notifications are enabled, but no alert types are selected.";
+    ? `Alerte activate pentru ${enabledPreferences.join(", ")}.`
+    : "Notificările push sunt activate, dar niciun tip de alertă nu e selectat.";
 }
 
 export function mobileClientUpdatedAtLabel(updatedAt: string): string {
   const date = new Date(updatedAt);
   return Number.isNaN(date.getTime())
-    ? "Update time unavailable"
-    : `Updated ${mobileClientUpdatedAtFormatter.format(date)}`;
+    ? "Ora actualizării nu e disponibilă"
+    : `Actualizat ${mobileClientUpdatedAtFormatter.format(date)}`;
 }

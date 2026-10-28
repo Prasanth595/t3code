@@ -13,7 +13,7 @@ export function ComposerErrorNotice(props: {
         iconTone="danger"
         floating
         onDismiss={props.onDismiss}
-        dismissLabel="Dismiss error"
+        dismissLabel="Închide eroarea"
       />
     </View>
   );

@@ -134,11 +134,11 @@ export function fileAttachmentCapabilityBlockReason(
     return null;
   }
   if (!input.attachmentUploadsCapabilityKnown) {
-    return "Waiting for the server before file attachments can send";
+    return "Se așteaptă serverul înainte de trimiterea fișierelor";
   }
   const maxFileAttachmentBytes = fileAttachmentStagingLimit(input);
   if (maxFileAttachmentBytes === null) {
-    return "This server does not accept file attachments right now. Remove the files to send.";
+    return "Serverul nu acceptă fișiere atașate acum. Elimină fișierele ca să trimiți.";
   }
   const oversizedFile = input.files.find((file) => file.sizeBytes > maxFileAttachmentBytes);
   if (oversizedFile) {

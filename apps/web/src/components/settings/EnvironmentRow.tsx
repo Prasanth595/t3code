@@ -34,7 +34,7 @@ export function environmentTransportLabel(
           );
     return active === undefined
       ? connectionRouteLabel(routes[0]!)
-      : `via ${connectionRouteLabel(active)}`;
+      : `prin ${connectionRouteLabel(active)}`;
   }
   if (environment.relayManaged) return "T3 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
@@ -45,7 +45,7 @@ export function environmentTransportLabel(
   ) {
     return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
   }
-  return environment.displayUrl ?? "Remote link";
+  return environment.displayUrl ?? "Link la distanță";
 }
 
 export function EnvironmentRow({

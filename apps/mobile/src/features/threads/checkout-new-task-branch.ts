@@ -31,7 +31,9 @@ export async function checkoutNewTaskBranch<E>(input: {
 }): Promise<AtomCommandResult<VcsRef, E | Error>> {
   if (!input.project) {
     return AsyncResult.failure(
-      Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
+      Cause.fail(
+        new Error("Proiectul selectat nu e disponibil. Reconectează-te și încearcă din nou."),
+      ),
     );
   }
   if (input.workspaceMode === "worktree" || input.branch.current) {
@@ -66,7 +68,7 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+              "Serverul nu a raportat dacă proiectul e la rădăcina repository-ului, așa că acest worktree nu poate fi refolosit în siguranță. Actualizează serverul sau alege alt branch.",
             ),
           ),
         );
@@ -75,7 +77,7 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+              "Acest proiect e un subdirector al repository-ului. Alege alt branch sau adaugă rădăcina repository-ului ca proiect ca să refolosești acest worktree.",
             ),
           ),
         );

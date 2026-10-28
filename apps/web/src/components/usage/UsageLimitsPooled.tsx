@@ -64,7 +64,7 @@ function AccountChip({ email }: { readonly email: string }) {
   return (
     <span
       role="img"
-      aria-label={`Account ${accountInitials(email)}`}
+      aria-label={`Cont ${accountInitials(email)}`}
       className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
       style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
     >
@@ -168,9 +168,9 @@ function SegmentPopover({
         {account.email ? (
           <RedactedSensitiveText
             value={account.email}
-            ariaLabel="Toggle account email visibility"
-            revealTooltip="Click to reveal email"
-            hideTooltip="Click to hide email"
+            ariaLabel="Arată sau ascunde emailul"
+            revealTooltip="Apasă ca să arăți emailul"
+            hideTooltip="Apasă ca să ascunzi emailul"
             className="w-fit"
           />
         ) : null}
@@ -178,20 +178,20 @@ function SegmentPopover({
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
         {where ? (
-          <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
+          <Row label={account.environments.length > 0 ? "Autentificat" : "Prin"}>{where}</Row>
         ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        <Row label="Left">{remaining}%</Row>
+        <Row label="Rămas">{remaining}%</Row>
         {window.resetsAt ? (
-          <Row label="Resets">
+          <Row label="Se resetează">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
             {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
           </Row>
         ) : null}
-        {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
+        {timeLeft !== null ? <Row label="Ritm egal">{timeLeft}% rămas până acum</Row> : null}
         {reset && reset.restoresPercent > 0 ? (
-          <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
+          <Row label="Restabilește">+{reset.restoresPercent}% din total</Row>
         ) : null}
       </div>
       {credits && redeem ? (
@@ -205,7 +205,7 @@ function SegmentPopover({
               className="ms-auto"
               onClick={onRedeem}
             >
-              {redeem.busy ? "Using…" : "Use reset"}
+              {redeem.busy ? "Se folosește…" : "Resetează"}
             </Button>
           </span>
         </div>
@@ -314,7 +314,7 @@ function RedeemableSegment({
       {redeem.busy || redeem.status ? (
         <span role="status" className="col-span-full text-xs text-muted-foreground">
           <AccountName account={props.account} className="font-medium text-foreground" />{" "}
-          {redeem.busy ? "Using reset credit…" : redeem.status}
+          {redeem.busy ? "Se folosește creditul…" : redeem.status}
         </span>
       ) : null}
     </>
@@ -551,7 +551,7 @@ function PoolWindowCard({
             {pool.remainingPercent}%
           </span>
           <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>left</span>
+            <span>rămas</span>
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
@@ -618,7 +618,7 @@ export function UsageLimitsPooled({
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No provider on the selected environments reports subscription limits.
+          Niciun furnizor din mediile selectate nu raportează limite de abonament.
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
@@ -652,7 +652,7 @@ export function UsageLimitsPooled({
               <h2 className="text-sm font-medium">{link.label}</h2>
               {link.url === CHATGPT_USAGE_URL ? (
                 <p className="text-xs text-muted-foreground">
-                  View usage in ChatGPT with your connected account.
+                  Vezi utilizarea în ChatGPT cu contul conectat.
                 </p>
               ) : link.message ? (
                 <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
@@ -664,7 +664,7 @@ export function UsageLimitsPooled({
             size="xs"
             onClick={() => void ensureLocalApi().shell.openExternal(link.url)}
           >
-            Manage usage
+            Gestionează utilizarea
             <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
           </Button>
         </section>

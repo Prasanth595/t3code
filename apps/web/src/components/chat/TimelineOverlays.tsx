@@ -13,7 +13,7 @@ export function WorkspaceFileDropOverlay() {
         className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
       >
         <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-        Drop files to attach
+        Lasă fișierele aici ca să le atașezi
       </div>
     </div>
   );
@@ -30,7 +30,7 @@ export function ScrollToEndButton(props: {
       style={{ bottom: props.bottom }}
     >
       <Button
-        aria-label="Scroll to end"
+        aria-label="Derulează la final"
         onPointerDown={(event) => event.preventDefault()}
         onClick={props.onScrollToEnd}
         className="pointer-events-auto"
@@ -38,7 +38,7 @@ export function ScrollToEndButton(props: {
         variant="glass"
       >
         <ChevronDownIcon className="size-3.5" />
-        Scroll to end
+        Derulează la final
       </Button>
     </div>
   );

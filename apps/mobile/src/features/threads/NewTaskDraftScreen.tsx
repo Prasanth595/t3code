@@ -215,7 +215,7 @@ export function NewTaskDraftScreen(props: {
     const result = await action();
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      Dialog.alert(title, error instanceof Error ? error.message : "An error occurred.");
+      Dialog.alert(title, error instanceof Error ? error.message : "A apărut o eroare.");
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -233,8 +233,8 @@ export function NewTaskDraftScreen(props: {
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
       Dialog.alert(
-        "Failed to remove project",
-        error instanceof Error ? error.message : "An error occurred.",
+        "Proiectul nu a putut fi eliminat",
+        error instanceof Error ? error.message : "A apărut o eroare.",
       );
       return;
     }
@@ -567,8 +567,8 @@ export function NewTaskDraftScreen(props: {
       if (isIncomingShareUnavailable && alertedUnavailableIncomingShareIdRef.current !== shareId) {
         alertedUnavailableIncomingShareIdRef.current = shareId;
         Dialog.alert(
-          "Shared content unavailable",
-          "The shared content is no longer in the inbox. You can continue editing this task draft.",
+          "Conținutul partajat nu e disponibil",
+          "Conținutul partajat nu mai e disponibil. Poți continua să editezi ciorna sarcinii.",
         );
       }
       return;
@@ -646,11 +646,11 @@ export function NewTaskDraftScreen(props: {
       const warnings = [...incomingShare.warnings, ...selectedAttachments.warnings];
       if (skippedAttachmentCount > 0) {
         warnings.push(
-          `${skippedAttachmentCount} shared file${skippedAttachmentCount === 1 ? " was" : "s were"} skipped because this draft reached the attachment limit.`,
+          `${skippedAttachmentCount === 1 ? "Un fișier partajat a fost omis" : `${skippedAttachmentCount} fișiere partajate au fost omise`} pentru că ciorna a atins limita de atașamente.`,
         );
       }
       if (warnings.length > 0) {
-        Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+        Dialog.alert("O parte din conținutul partajat a fost omisă", warnings.join("\n"));
       }
       shareImportDraftBackupRef.current.delete(importKey);
     })()
@@ -659,11 +659,11 @@ export function NewTaskDraftScreen(props: {
           return;
         }
         Dialog.alert(
-          "Could not import shared content",
-          error instanceof Error ? error.message : "The shared content could not be saved.",
+          "Conținutul partajat nu a putut fi importat",
+          error instanceof Error ? error.message : "Conținutul partajat nu a putut fi salvat.",
           [
             {
-              text: "Cancel import",
+              text: "Anulează importul",
               style: "cancel",
               onPress: () => {
                 const cancelImport = async (): Promise<void> => {
@@ -699,13 +699,13 @@ export function NewTaskDraftScreen(props: {
                       return;
                     }
                     Dialog.alert(
-                      "Could not cancel import",
+                      "Importul nu a putut fi anulat",
                       cancelError instanceof Error
                         ? cancelError.message
-                        : "The shared content could not be restored safely.",
+                        : "Conținutul partajat nu a putut fi restaurat în siguranță.",
                       [
                         {
-                          text: "Retry import",
+                          text: "Reîncearcă importul",
                           onPress: () => {
                             cancellingShareImportKeyRef.current = null;
                             setIsCancellingShareImport(false);
@@ -713,7 +713,7 @@ export function NewTaskDraftScreen(props: {
                           },
                         },
                         {
-                          text: "Retry cancel",
+                          text: "Reîncearcă anularea",
                           onPress: () => void cancelImport(),
                         },
                       ],
@@ -725,7 +725,7 @@ export function NewTaskDraftScreen(props: {
               },
             },
             {
-              text: "Retry",
+              text: "Reîncearcă",
               onPress: () => setShareImportAttempt((attempt) => attempt + 1),
             },
           ],
@@ -762,7 +762,7 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentLabel =
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+    )?.environmentLabel ?? "Mediu";
   const availableCurrentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
@@ -866,15 +866,15 @@ export function NewTaskDraftScreen(props: {
     // Recovery may retain over-cap attachments; block send before uploading a turn the server would reject.
     if (draft.attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        "Prea multe atașamente",
+        `Elimină atașamente până rămân cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return null;
     }
 
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
-      Dialog.alert("Too much context", contextBlockReason);
+      Dialog.alert("Prea mult context", contextBlockReason);
       return null;
     }
     const strandedThread = threadContextsOutsideEnvironment({
@@ -888,8 +888,8 @@ export function NewTaskDraftScreen(props: {
           (environment) => environment.environmentId === strandedThread.environmentId,
         )?.environmentLabel ?? "its machine";
       Dialog.alert(
-        "Attached thread unavailable",
-        `"${strandedThread.title}" is on another machine. Switch back to ${owner} or remove it from the draft.`,
+        "Conversația atașată nu e disponibilă",
+        `„${strandedThread.title}” e pe alt calculator. Revino la ${owner} sau elimin-o din ciornă.`,
       );
       return null;
     }
@@ -917,8 +917,10 @@ export function NewTaskDraftScreen(props: {
     if (AsyncResult.isFailure(queued)) {
       const error = squashAtomCommandFailure(queued);
       Dialog.alert(
-        "Could not queue task",
-        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+        "Sarcina nu a putut fi pusă în coadă",
+        error instanceof Error
+          ? error.message
+          : "Sarcina nu a putut fi salvată în coada de trimitere.",
       );
       return null;
     }
@@ -951,13 +953,13 @@ export function NewTaskDraftScreen(props: {
   const setupBlockReason =
     isIncomingShareReady && !isImportingShare
       ? cloneBlocksStart
-        ? "Wait for the project clone to finish."
+        ? "Așteaptă să se termine clonarea proiectului."
         : flow.submitting
-          ? "Starting the thread…"
+          ? "Se pornește conversația…"
           : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
-            ? "Choose a base branch before creating a worktree."
+            ? "Alege un branch de bază înainte să creezi un worktree."
             : null
-      : "Wait for shared content to finish importing.";
+      : "Așteaptă să se termine importul conținutului partajat.";
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
       return;
@@ -987,16 +989,16 @@ export function NewTaskDraftScreen(props: {
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-        What should we work on?
+        La ce lucrăm?
       </Text>
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
-          accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
+          accessibilityHint="Deschide selectorul de proiecte"
+          accessibilityLabel="Fără proiect"
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="No project"
+          label="Fără proiect"
           onPress={chooseProject}
         />
         {environmentControl}
@@ -1006,12 +1008,12 @@ export function NewTaskDraftScreen(props: {
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
+          Ce construim
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
+          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">în </Text>
           <Pressable
-            accessibilityHint="Opens the project picker"
+            accessibilityHint="Deschide selectorul de proiecte"
             accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
@@ -1072,7 +1074,7 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint={`Trece la ${flow.workspaceMode === "local" ? "un worktree nou" : "checkout-ul curent"}`}
         accessibilityLabel={workspaceLabel}
         disabled={isComposerInteractionLocked || !flow.isGitRepo}
         renderIcon={(size) => (
@@ -1090,11 +1092,11 @@ export function NewTaskDraftScreen(props: {
 
       <View className="min-w-0 shrink">
         <ComposerInlineControl
-          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Branch de bază" : "Branch"}: ${selectedBranchLabel}`}
           chevronDirection="right"
           disabled={isComposerInteractionLocked || !flow.isGitRepo}
           icon="arrow.triangle.branch"
-          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+          label={showBranchLoading ? "Se încarcă branch-urile…" : selectedBranchLabel}
           maxWidth="100%"
           onPress={() => openContextPicker("NewTaskBranch")}
         />
@@ -1106,7 +1108,7 @@ export function NewTaskDraftScreen(props: {
     return (
       <ThreadScreenFallback>
         <AppBar
-          title="New thread"
+          title="Conversație nouă"
           sidebar={false}
           onBack={goBack}
           options={{
@@ -1119,13 +1121,14 @@ export function NewTaskDraftScreen(props: {
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
-            Your draft is saved on this device. Connect to an environment to choose its first model.
+            Ciorna e salvată pe acest dispozitiv. Conectează-te la un mediu ca să alegi primul
+            model.
           </Text>
           <ComposerEditor
             draftKey={flow.draftKey}
             value={flow.prompt}
             onChangeText={flow.setPrompt}
-            placeholder="Ask the repo agent, or run a command…"
+            placeholder="Întreabă agentul sau rulează o comandă…"
             multiline
             style={{ minHeight: 64 }}
           />
@@ -1160,7 +1163,7 @@ export function NewTaskDraftScreen(props: {
                   <ProjectCloneBanner
                     clone={projectClone}
                     onCancel={() =>
-                      void runCloneAction("Failed to cancel clone", () =>
+                      void runCloneAction("Clonarea nu a putut fi anulată", () =>
                         cancelProjectClone({
                           environmentId: selectedProject.environmentId,
                           input: { projectId: selectedProject.id },
@@ -1168,7 +1171,7 @@ export function NewTaskDraftScreen(props: {
                       )
                     }
                     onRetry={() =>
-                      void runCloneAction("Failed to retry clone", () =>
+                      void runCloneAction("Clonarea nu a putut fi reluată", () =>
                         retryProjectClone({
                           environmentId: selectedProject.environmentId,
                           input: { projectId: selectedProject.id },

@@ -46,7 +46,7 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
 
 function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
   if (run.phase === "countdown" && run.restartAt !== null) {
-    return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
+    return `repornește în ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
   }
   if (run.phase === "installing") return "restarting";
   if (local?.status === "downloading") {
@@ -77,7 +77,7 @@ export function SidebarUpdateCapsule({
   const settled = !hasActiveMachine && run.localVersion === null;
 
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later" ? "Mai târziu" : view.action === "retry" ? "Reîncearcă" : "Închide";
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
     else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
@@ -128,16 +128,16 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>Această aplicație</span>
               <span className="text-muted-foreground tabular-nums">
                 {localStatusLabel(run, local, now)}
               </span>
             </div>
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>Această aplicație</span>
               <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
+                Repornește pentru actualizare
               </Button>
             </div>
           ) : null}

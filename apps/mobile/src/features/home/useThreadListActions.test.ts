@@ -285,8 +285,8 @@ describe("pinned thread operation permissions", () => {
 
 describe("thread action undo", () => {
   it.each([
-    ["settleThread", "settle", "Settled", "unsettle"],
-    ["snoozeThread", "snooze", "Snoozed", "unsnooze"],
+    ["settleThread", "settle", "finalizată", "unsettle"],
+    ["snoozeThread", "snooze", "amânată", "unsnooze"],
   ] as const)(
     "%s keeps the successful request's undo when a duplicate is rejected",
     async (handler, action, notice, inverse) => {
@@ -310,7 +310,7 @@ describe("thread action undo", () => {
       true,
       true,
     ]);
-    expect(readThreadUndoNotice()?.action).toBe("Unpinned");
+    expect(readThreadUndoNotice()?.action).toBe("defixată");
     await readThreadUndoNotice()!.undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["unpin", "unpin", "pin"]);
   });
@@ -333,7 +333,7 @@ describe("thread action undo", () => {
     });
     expect(await useThreadListActions().settleThread(thread)).toBe(true);
     const undo = readThreadUndoNotice()!.undo;
-    expect(readThreadUndoNotice()?.action).toBe("Settled");
+    expect(readThreadUndoNotice()?.action).toBe("finalizată");
     await undo();
     await undo();
     expect(state.requests.map(({ action }) => action)).toEqual([
@@ -354,7 +354,7 @@ describe("thread action undo", () => {
   it("wakes a snoozed thread through the undo action", async () => {
     const thread = makeThread();
     await useThreadListActions().snoozeThread(thread, "2099-01-01T09:00:00.000Z");
-    expect(readThreadUndoNotice()?.action).toBe("Snoozed");
+    expect(readThreadUndoNotice()?.action).toBe("amânată");
     await readThreadUndoNotice()!.undo();
     expect(state.requests.at(-1)).toMatchObject({
       action: "unsnooze",
@@ -372,7 +372,7 @@ describe("thread action undo", () => {
         snoozedUntil,
       });
       await useThreadListActions().unpinThread(thread);
-      expect(readThreadUndoNotice()?.action).toBe("Unpinned");
+      expect(readThreadUndoNotice()?.action).toBe("defixată");
       await readThreadUndoNotice()!.undo();
       // 2099 is the unexpired case; 2000 has long passed.
       const restoresSnooze = snoozedUntil === "2099-01-01T09:00:00.000Z";
@@ -431,7 +431,7 @@ describe("thread action undo", () => {
     state.failedAction = "unsettle";
     await readThreadUndoNotice()!.undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle"]);
-    expect(state.alerts.at(-1)?.title).toBe("Could not un-settle thread");
+    expect(state.alerts.at(-1)?.title).toBe("Conversația nu a putut fi redeschisă");
   });
 
   it("rechecks the destination permission before undoing", async () => {
@@ -475,6 +475,6 @@ describe("thread archive guard", () => {
     expect(await useThreadListActions().archiveThread(thread)).toBe(false);
     expect(state.requests).toEqual([]);
     expect(state.archivedRefreshes).toEqual([]);
-    expect(state.alerts.at(-1)?.title).toBe("Could not archive thread");
+    expect(state.alerts.at(-1)?.title).toBe("Conversația nu a putut fi arhivată");
   });
 });

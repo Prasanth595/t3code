@@ -12,17 +12,17 @@ export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i
 export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
   switch (error.failure) {
     case "path_not_file":
-      return "The path is a directory or special file, not a regular file.";
+      return "Calea e un dosar sau un fișier special, nu un fișier obișnuit.";
     case "binary_file":
-      return "The file is binary and cannot be displayed as text.";
+      return "Fișierul e binar și nu poate fi afișat ca text.";
     case "workspace_path_outside_root":
-      return "The requested path is outside the workspace.";
+      return "Calea cerută e în afara spațiului de lucru.";
     case "resolved_path_outside_root":
-      return "The path resolves to a location outside the workspace.";
+      return "Calea duce la o locație din afara spațiului de lucru.";
     case "operation_failed":
       return error.operation === "realpath-workspace-root"
-        ? "The workspace folder could not be accessed."
-        : "The file could not be accessed or read. It may be missing or inaccessible.";
+        ? "Dosarul spațiului de lucru nu a putut fi accesat."
+        : "Fișierul nu a putut fi accesat sau citit. Poate lipsește sau e inaccesibil.";
     default:
       return error.message;
   }

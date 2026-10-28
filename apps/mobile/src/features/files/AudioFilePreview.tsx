@@ -38,12 +38,12 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
         <Button
           label="−15s"
           tone="text"
-          accessibilityLabel="Back 15 seconds"
+          accessibilityLabel="Înapoi 15 secunde"
           disabled={!status.isLoaded}
           onPress={() => seek(Math.max(0, status.currentTime - 15))}
         />
         <Button
-          label={!status.isLoaded ? "Loading…" : status.playing ? "Pause" : "Play"}
+          label={!status.isLoaded ? "Se încarcă…" : status.playing ? "Pauză" : "Redă"}
           tone="secondary"
           disabled={!status.isLoaded}
           onPress={() => {
@@ -55,7 +55,7 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
         <Button
           label="+15s"
           tone="text"
-          accessibilityLabel="Forward 15 seconds"
+          accessibilityLabel="Înainte 15 secunde"
           disabled={!status.isLoaded}
           onPress={() => seek(Math.min(status.duration, status.currentTime + 15))}
         />
@@ -63,10 +63,11 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
       {status.error || seekError ? (
         <View className="items-center gap-3">
           <Text className="text-center text-foreground">
-            This audio could not be played. Try again or save it to open in another app.
+            Fișierul audio nu a putut fi redat. Încearcă din nou sau salvează-l ca să-l deschizi în
+            altă aplicație.
           </Text>
           <View className="items-center">
-            <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+            <Button label="Încearcă din nou" tone="secondary" onPress={props.onRetry} />
           </View>
         </View>
       ) : null}

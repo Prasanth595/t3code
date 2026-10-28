@@ -15,7 +15,7 @@ export function subagentGroupSummary(
     ({ status }) => status === "pending" || status === "running" || status === "waiting",
   );
   return {
-    label: `${active ? "Kicked off" : "Ran"} ${members.length} ${members.length === 1 ? "subagent" : "subagents"}`,
+    label: `${active ? "A pornit" : "A rulat"} ${members.length} ${members.length === 1 ? "subagent" : "subagenți"}`,
     active,
     failed: members.some(({ status }) => status === "failed"),
   };
@@ -73,7 +73,7 @@ export function resolveSubagentMetadata(input: {
     ? catalogModel.shortName || catalogModel.name
     : model
       ? formatModelSlugName(model)
-      : "Not reported";
+      : "Neraportat";
   const qualifier = catalogModel?.subProvider?.trim();
   const modelLabel = qualifier
     ? reportedLabel
@@ -92,7 +92,7 @@ export function resolveSubagentMetadata(input: {
     ...(input.parentThread &&
     input.childProject &&
     input.childProject.id !== input.parentThread.projectId
-      ? [{ label: "Project", value: input.childProject.title }]
+      ? [{ label: "Proiect", value: input.childProject.title }]
       : []),
     ...(parentWorkspace && childWorkspace && parentWorkspace !== childWorkspace
       ? [
@@ -101,7 +101,7 @@ export function resolveSubagentMetadata(input: {
               ? "Branch"
               : input.childThread?.worktreePath
                 ? "Worktree"
-                : "Workspace",
+                : "Spațiu de lucru",
             value: input.childThread?.branch ?? fileBasename(childWorkspace),
           },
         ]

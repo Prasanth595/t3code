@@ -38,11 +38,11 @@ import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
 const BREAKDOWN_LABELS = {
-  code: "Code",
-  tests: "Tests",
+  code: "Cod",
+  tests: "Teste",
   mocks: "Mocks",
-  generated: "Generated",
-  docs: "Docs",
+  generated: "Generat",
+  docs: "Documentație",
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
 function fileDirectory(path: string) {
@@ -82,15 +82,15 @@ function describeFiles(
   parsed: Extract<ReviewParsedDiff, { readonly kind: "files" }>,
   { filter, viewed }: ChangedFiles,
 ) {
-  const noun = (count: number) => (count === 1 ? "file" : "files");
+  const noun = (count: number) => (count === 1 ? "fișier" : "fișiere");
   return [
-    `${parsed.fileCount} ${filter.hiddenCount ? "visible" : "changed"} ${noun(parsed.fileCount)}`,
+    `${parsed.fileCount} ${noun(parsed.fileCount)} ${filter.hiddenCount ? "vizibile" : "modificate"}`,
     viewed.supported
-      ? `${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
+      ? `${parsed.files.filter((file) => viewed.isViewed(file.path)).length} văzute`
       : null,
     filter.hideTestFiles
-      ? `${filter.hiddenCount} test ${noun(filter.hiddenCount)} hidden`
-      : "Test files included",
+      ? `${filter.hiddenCount} ${noun(filter.hiddenCount)} de test ascunse`
+      : "Fișierele de test incluse",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -107,7 +107,7 @@ function FileRow(props: {
   return (
     <RowPressable
       accessibilityRole="button"
-      accessibilityLabel={`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions${props.viewed ? ", viewed" : ""}`}
+      accessibilityLabel={`Vezi diff-ul pentru ${file.path}, ${file.additions} adăugări, ${file.deletions} ștergeri${props.viewed ? ", văzut" : ""}`}
       onPress={props.onPress}
       className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-3 active:opacity-70"
     >
@@ -163,11 +163,11 @@ function FileRowSkeleton(props: { readonly index: number }) {
 function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] }) {
   return (
     <Menu
-      title="Review files"
+      title="Revizuiește fișierele"
       actions={[
         {
           id: "hide-tests",
-          title: "Hide test files",
+          title: "Ascunde fișierele de test",
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
@@ -177,7 +177,7 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
-          accessibilityLabel="Filter review files"
+          accessibilityLabel="Filtrează fișierele"
           selected={filter.hideTestFiles}
         />
       </View>
@@ -190,16 +190,20 @@ function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
   if (parsed.kind === "files") {
     return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
       <EmptyState
-        title={diff.nextCursor ? "No non-test files loaded yet" : "Only test files changed"}
-        detail="Test files are hidden from this review."
-        action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+        title={
+          diff.nextCursor
+            ? "Niciun fișier non-test încărcat încă"
+            : "S-au modificat doar fișiere de test"
+        }
+        detail="Fișierele de test sunt ascunse în această revizuire."
+        action={<Button label="Arată fișierele de test" tone="contrast" onPress={filter.showAll} />}
         variant="plain"
       />
     ) : null;
   }
   return !diff.isPending && !diff.error ? (
     <Text textRole="footnote" className="py-6 text-foreground-muted">
-      No text changes available.
+      Nicio modificare de text disponibilă.
     </Text>
   ) : null;
 }
@@ -210,7 +214,7 @@ function FilesFooter({ files }: { readonly files: ChangedFiles }) {
     <>
       {diff.nextCursor ? (
         <Button
-          label={diff.error ? "Retry loading files" : "Load more files"}
+          label={diff.error ? "Reîncearcă încărcarea" : "Încarcă mai multe fișiere"}
           tone="secondary"
           onPress={diff.error ? diff.refresh : diff.loadMore}
           loading={diff.isPending}
@@ -270,12 +274,12 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
         <PullRequestReadStatus pending={false} error={diff.error} terminology={files.terminology} />
         {loading ? (
           <View
-            accessibilityLabel="Loading changed files"
+            accessibilityLabel="Se încarcă fișierele modificate"
             accessibilityState={{ busy: true }}
             className="min-h-17 flex-row items-center gap-2 py-3"
           >
             <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              <PullRequestSectionHeading>Fișiere modificate</PullRequestSectionHeading>
               {pr ? (
                 <Text textRole="caption" className="text-foreground-muted">
                   {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
@@ -302,7 +306,7 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
         ) : parsed.kind === "files" ? (
           <View className="min-h-17 flex-row items-center gap-2 py-3">
             <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              <PullRequestSectionHeading>Fișiere modificate</PullRequestSectionHeading>
               <Text textRole="caption" className="text-foreground-muted">
                 {describeFiles(parsed, files)}
               </Text>
@@ -377,7 +381,7 @@ function DirectoryRow(props: {
   readonly collapsed: boolean;
   readonly onPress: () => void;
 }) {
-  const label = props.directory || "Repository root";
+  const label = props.directory || "Rădăcina repository-ului";
   return (
     <RowPressable
       accessibilityRole="button"
@@ -418,7 +422,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Changed files"
+        title="Fișiere modificate"
         subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? params.repository}`}
         onClose={() => navigation.goBack()}
         // iOS gets the native menu below; SheetHeader would render this as a custom bar item.
@@ -426,8 +430,8 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
       />
       <Toolbar placement="right">
         <Toolbar.Menu
-          title="Review files"
-          accessibilityLabel="Filter review files"
+          title="Revizuiește fișierele"
+          accessibilityLabel="Filtrează fișierele"
           icon="line.3.horizontal.decrease"
         >
           <Toolbar.MenuAction
@@ -435,7 +439,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
             isOn={filter.hideTestFiles}
             onPress={filter.toggle}
           >
-            <Toolbar.Label>Hide test files</Toolbar.Label>
+            <Toolbar.Label>Ascunde fișierele de test</Toolbar.Label>
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
@@ -505,7 +509,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
             loading ? (
               <View
                 accessible
-                accessibilityLabel="Loading changed files"
+                accessibilityLabel="Se încarcă fișierele modificate"
                 accessibilityState={{ busy: true }}
               >
                 {Array.from({ length: loadingRowCount(files) }, (_, index) => (

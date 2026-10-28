@@ -32,10 +32,10 @@ function ConnectCliAuthMessage({
 }
 
 const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
+  eyebrow: "Cerere de autorizare",
+  title: "Link-ul de conectare e incomplet",
   description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+    "Link-ului îi lipsește cererea de autorizare. Rulează din nou `t3 connect` în terminal și deschide adresa nouă afișată.",
 } as const;
 
 export function ConnectCliAuthorizeSurface() {
@@ -88,18 +88,18 @@ export function ConnectCliAuthorizeSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Browser authorization"
-        title="Connecting your terminal"
+        eyebrow="Autorizare în browser"
+        title="Se conectează terminalul"
         description={
           isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+            ? "Se redirecționează pentru autorizarea T3 Connect pentru CLI…"
+            : "Autentifică-te ca să continui autorizarea T3 Connect pentru CLI."
         }
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            Autentifică-te
           </Button>
         </div>
       ) : null}

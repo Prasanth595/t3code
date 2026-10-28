@@ -9,21 +9,30 @@ import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
 
-const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
-const INVOLVEMENT = { all: "All PRs", reviewing: "Your review", authored: "By you" } as const;
-const DRAFTS = { all: "All drafts", only: "Drafts only", hide: "Hide drafts" } as const;
-const REVIEWS = {
-  all: "All reviews",
-  approved: "Approved",
-  "changes-requested": "Changes requested",
-  "review-required": "Review required",
-  none: "No reviews",
+const STATES = {
+  open: "Deschise",
+  closed: "Închise",
+  merged: "Îmbinate",
+  all: "Toate stările",
 } as const;
-const CHECKS = { all: "All checks", passing: "Passing", failing: "Failing" } as const;
+const INVOLVEMENT = {
+  all: "Toate PR-urile",
+  reviewing: "Revizuirea ta",
+  authored: "De tine",
+} as const;
+const DRAFTS = { all: "Toate ciornele", only: "Doar ciorne", hide: "Ascunde ciornele" } as const;
+const REVIEWS = {
+  all: "Toate revizuirile",
+  approved: "Aprobate",
+  "changes-requested": "Modificări cerute",
+  "review-required": "Revizuire necesară",
+  none: "Fără revizuiri",
+} as const;
+const CHECKS = { all: "Toate verificările", passing: "Trec", failing: "Eșuează" } as const;
 const SORTS = {
-  updated: "Recently updated",
-  created: "Newest created",
-  oldest: "Oldest updated",
+  updated: "Actualizate recent",
+  created: "Create recent",
+  oldest: "Actualizate cel mai demult",
 } as const;
 // A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
 const ROW_STYLE =
@@ -195,17 +204,17 @@ export function PullRequestListFilters(props: {
   const more: MenuProps["actions"] = [
     {
       id: "drafts",
-      title: value.filters.draft ? DRAFTS[value.filters.draft] : "Drafts",
+      title: value.filters.draft ? DRAFTS[value.filters.draft] : "Ciorne",
       subactions: choices("draft", DRAFTS, value.filters.draft ?? "all"),
     },
     {
       id: "reviews",
-      title: value.filters.review ? REVIEWS[value.filters.review] : "Reviews",
+      title: value.filters.review ? REVIEWS[value.filters.review] : "Revizuiri",
       subactions: choices("review", REVIEWS, value.filters.review ?? "all"),
     },
     {
       id: "checks",
-      title: value.filters.checks ? `${CHECKS[value.filters.checks]} checks` : "Checks",
+      title: value.filters.checks ? `Verificări: ${CHECKS[value.filters.checks]}` : "Verificări",
       subactions: choices("checks", CHECKS, value.filters.checks ?? "all"),
     },
     {
@@ -214,11 +223,11 @@ export function PullRequestListFilters(props: {
         projects.find(
           (project) =>
             project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
-        )?.title ?? "Project",
+        )?.title ?? "Proiect",
       subactions: choices(
         "project",
         Object.fromEntries([
-          ["", "All projects"],
+          ["", "Toate proiectele"],
           ...projects.map((project) => [
             JSON.stringify([project.environmentId, project.id]),
             project.title,
@@ -231,7 +240,7 @@ export function PullRequestListFilters(props: {
   ];
   const reset = (withEnvironment: boolean): MenuProps["actions"][number] => ({
     id: id("reset", withEnvironment ? "environment" : ""),
-    title: "Reset filters",
+    title: "Resetează filtrele",
     attributes: {
       disabled:
         count === 0 &&
@@ -246,7 +255,7 @@ export function PullRequestListFilters(props: {
   const environmentActions = choices(
     "environment",
     Object.fromEntries([
-      ["", "All environments"],
+      ["", "Toate mediile"],
       ...props.environments.map((environment) => [environment.id, environment.label]),
     ]),
     props.environmentId ?? "",
@@ -254,8 +263,12 @@ export function PullRequestListFilters(props: {
   const stateActions = choices("state", STATES, value.state);
   const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
   const labelActions: MenuProps["actions"] = [
-    { id: id("search", "labels"), title: "Search labels…", image: "magnifyingglass" },
-    { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
+    { id: id("search", "labels"), title: "Caută etichete…", image: "magnifyingglass" },
+    {
+      id: id("labels", ""),
+      title: "Toate etichetele",
+      state: selectedLabels.length ? "off" : "on",
+    },
     ...labels.map((label) => {
       const color = props.labelColors[label.toLowerCase()];
       return {
@@ -267,12 +280,12 @@ export function PullRequestListFilters(props: {
     }),
   ];
   const authorActions: MenuProps["actions"] = [
-    { id: id("search", "authors"), title: "Search authors…", image: "magnifyingglass" },
+    { id: id("search", "authors"), title: "Caută autori…", image: "magnifyingglass" },
     ...choices(
       "author",
       Object.fromEntries([
-        ["", "All authors"],
-        ["me", "Me"],
+        ["", "Toți autorii"],
+        ["me", "Eu"],
         ...authors.map((login) => [login, login]),
       ]),
       author ?? "",
@@ -284,11 +297,11 @@ export function PullRequestListFilters(props: {
     Platform.OS === "android"
       ? {
           actions: [
-            { id: "environment", title: "Environment", subactions: environmentActions },
-            { id: "state", title: "State", subactions: stateActions },
-            { id: "involvement", title: "Involvement", subactions: involvementActions },
-            { id: "labels", title: "Labels", subactions: labelActions },
-            { id: "author", title: "Author", subactions: authorActions },
+            { id: "environment", title: "Mediu", subactions: environmentActions },
+            { id: "state", title: "Stare", subactions: stateActions },
+            { id: "involvement", title: "Implicare", subactions: involvementActions },
+            { id: "labels", title: "Etichete", subactions: labelActions },
+            { id: "author", title: "Autor", subactions: authorActions },
             ...more,
             reset(true),
           ],
@@ -311,10 +324,10 @@ export function PullRequestListFilters(props: {
     >
       {Platform.OS === "android" ? null : (
         <ListFilterMenu
-          label={count ? String(count) : "Filters"}
+          label={count ? String(count) : "Filtre"}
           icon
           active={count > 0}
-          accessibilityLabel={count ? `Filters, ${count} active` : "More filters"}
+          accessibilityLabel={count ? `Filtre, ${count} active` : "Mai multe filtre"}
           actions={[...more, reset(false)]}
           onSelect={select}
         />
@@ -323,9 +336,9 @@ export function PullRequestListFilters(props: {
         <ListFilterMenu
           label={
             props.environments.find((environment) => environment.id === props.environmentId)
-              ?.label ?? "All environments"
+              ?.label ?? "Toate mediile"
           }
-          accessibilityLabel="Choose pull request environment"
+          accessibilityLabel="Alege mediul pull request-urilor"
           actions={environmentActions}
           onSelect={select}
         />
@@ -333,28 +346,28 @@ export function PullRequestListFilters(props: {
       <ListFilterMenu
         label={STATES[value.state]}
         active={value.state !== "open"}
-        accessibilityLabel="Filter by state"
+        accessibilityLabel="Filtrează după stare"
         actions={stateActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={INVOLVEMENT[value.involvement]}
         active={value.involvement !== "all"}
-        accessibilityLabel="Filter by involvement"
+        accessibilityLabel="Filtrează după implicare"
         actions={involvementActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={selectedLabels.length ? `Labels ${selectedLabels.length}` : "Labels"}
+        label={selectedLabels.length ? `Etichete ${selectedLabels.length}` : "Etichete"}
         active={selectedLabels.length > 0}
-        accessibilityLabel="Filter by label"
+        accessibilityLabel="Filtrează după etichetă"
         actions={labelActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={author === "me" ? "By you" : (author ?? "Author")}
+        label={author === "me" ? "De tine" : (author ?? "Autor")}
         active={Boolean(author)}
-        accessibilityLabel="Filter by author"
+        accessibilityLabel="Filtrează după autor"
         actions={authorActions}
         onSelect={select}
       />

@@ -226,7 +226,7 @@ describe("buildProjectGroups", () => {
       });
       expect(groups).toHaveLength(3);
       const scratch = groups.find((group) => group.representative.isScratch)!;
-      expect(scratch.label).toBe("No project");
+      expect(scratch.label).toBe("Fără proiect");
       expect(scratch.representative.id).toBe(projects[2]?.id);
       expect(scratch.members).toHaveLength(2);
       expect(scratch.memberProjectRefs).toEqual(

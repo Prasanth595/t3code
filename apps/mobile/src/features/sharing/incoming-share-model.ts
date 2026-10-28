@@ -112,7 +112,7 @@ export function selectIncomingShareAttachments(input: {
       continue;
     }
     if (input.maxFileAttachmentBytes === null) {
-      warnings.push(`'${attachment.name}' was skipped because this server does not support files.`);
+      warnings.push(`„${attachment.name}” a fost omis pentru că serverul nu suportă fișiere.`);
       continue;
     }
     const maxFileAttachmentBytes = clampFileAttachmentUploadBytes(input.maxFileAttachmentBytes);
@@ -262,7 +262,7 @@ export async function buildIncomingShareDraft(input: {
     if (attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       if (!warnedAttachmentLimit) {
         warnings.push(
-          `Only the first ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} shared ${payload.shareType === "image" ? "images" : "files"} were attached.`,
+          `Au fost atașate doar primele ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} ${payload.shareType === "image" ? "imagini" : "fișiere"} partajate.`,
         );
         warnedAttachmentLimit = true;
       }
@@ -282,7 +282,7 @@ export async function buildIncomingShareDraft(input: {
           : undefined;
       const name = resolved?.originalName ?? sharedFileName ?? fallbackName(uri, index, mimeType);
       if (!uri) {
-        warnings.push("One shared file could not be read.");
+        warnings.push("Un fișier partajat nu a putut fi citit.");
         continue;
       }
       let persistedFileUri: string | undefined;
@@ -297,14 +297,14 @@ export async function buildIncomingShareDraft(input: {
           sizeBytes = (await input.fileReader.readSize?.(persistedFileUri)) ?? null;
         }
         if (sizeBytes === null) {
-          warnings.push(`The size of '${name}' could not be determined.`);
+          warnings.push(`Mărimea „${name}” nu a putut fi determinată.`);
           if (persistedFileUri) {
             await releaseOwnedFiles(input.fileReader, [persistedFileUri]);
           }
           continue;
         }
         if (sizeBytes <= 0) {
-          warnings.push(`'${name}' is empty or could not be read.`);
+          warnings.push(`„${name}” e gol sau nu a putut fi citit.`);
           if (persistedFileUri) {
             await releaseOwnedFiles(input.fileReader, [persistedFileUri]);
           }
@@ -325,7 +325,7 @@ export async function buildIncomingShareDraft(input: {
             sizeBytes = storedSize;
           }
           if (sizeBytes <= 0) {
-            warnings.push(`'${name}' is empty or could not be read.`);
+            warnings.push(`„${name}” e gol sau nu a putut fi citit.`);
             await releaseOwnedFiles(input.fileReader, [persistedFileUri]);
             continue;
           }
@@ -345,7 +345,7 @@ export async function buildIncomingShareDraft(input: {
         });
         retainedFileUri = persistedFileUri ?? uri;
       } catch (error) {
-        warnings.push(error instanceof Error ? error.message : `Could not read '${name}'.`);
+        warnings.push(error instanceof Error ? error.message : `„${name}” nu a putut fi citit.`);
         if (persistedFileUri !== undefined) {
           await releaseOwnedFiles(input.fileReader, [persistedFileUri]);
         }
@@ -358,13 +358,13 @@ export async function buildIncomingShareDraft(input: {
       continue;
     }
     if (!uri || !mimeType.startsWith("image/")) {
-      warnings.push("One shared item was not a supported image.");
+      warnings.push("Un element partajat nu e o imagine suportată.");
       await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
     }
     if (!isProviderSendTurnSupportedImageMimeType(mimeType)) {
       warnings.push(
-        `'${resolved?.originalName ?? fallbackName(uri, index, mimeType)}' is not a supported image type.`,
+        `„${resolved?.originalName ?? fallbackName(uri, index, mimeType)}” nu e un tip de imagine suportat.`,
       );
       await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
@@ -375,7 +375,7 @@ export async function buildIncomingShareDraft(input: {
       resolved.contentSize > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
     ) {
       warnings.push(
-        `'${resolved.originalName ?? fallbackName(uri, index, mimeType)}' exceeds the 10 MB attachment limit.`,
+        `„${resolved.originalName ?? fallbackName(uri, index, mimeType)}” depășește limita de 10 MB.`,
       );
       await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
@@ -395,7 +395,7 @@ export async function buildIncomingShareDraft(input: {
         : (resolved?.contentSize ?? estimateBase64ByteSize(base64));
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
         warnings.push(
-          `'${resolved?.originalName ?? fallbackName(uri, index, mimeType)}' exceeds the 10 MB attachment limit.`,
+          `„${resolved?.originalName ?? fallbackName(uri, index, mimeType)}” depășește limita de 10 MB.`,
         );
         continue;
       }
@@ -411,7 +411,7 @@ export async function buildIncomingShareDraft(input: {
         previewUri: dataUrl,
       });
     } catch {
-      warnings.push(`Could not read '${fallbackName(uri, index, mimeType)}'.`);
+      warnings.push(`„${fallbackName(uri, index, mimeType)}” nu a putut fi citit.`);
     } finally {
       await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
     }

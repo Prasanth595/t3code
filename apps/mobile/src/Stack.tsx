@@ -241,7 +241,7 @@ const SETTINGS_SCREENS = {
     linking: "settings",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Settings",
+      title: "Setări",
       ...(Platform.OS === "android" ? { animation: "none" as const } : {}),
       // Android draws its own app bar here. Hidden only from inside the screen, the native one
       // showed for the first frame of the Settings tab and pushed the page down.
@@ -254,60 +254,60 @@ const SETTINGS_SCREENS = {
     linking: "settings/environments",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Environments",
+      title: "Medii",
     },
   }),
   SettingsEnvironmentDetail: createNativeStackScreen({
     screen: SettingsEnvironmentDetailRouteScreen,
     linking: "settings/environments/:environmentId",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Environment" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Mediu" },
   }),
   SettingsEnvironmentNewThreads: createNativeStackScreen({
     screen: SettingsEnvironmentNewThreadsRouteScreen,
     linking: "settings/new-threads",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "New threads" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Conversații noi" },
   }),
   SettingsEnvironmentSourceControl: createNativeStackScreen({
     screen: SettingsEnvironmentSourceControlRouteScreen,
     linking: "settings/source-control",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Source control" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Controlul versiunilor" },
   }),
   SettingsEnvironmentAgentBehavior: createNativeStackScreen({
     screen: SettingsEnvironmentAgentBehaviorRouteScreen,
     linking: "settings/agent-behavior",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Agent behavior" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Comportamentul agentului" },
   }),
   SettingsProviderAccounts: createNativeStackScreen({
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Provider accounts" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Conturi furnizori" },
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,
     linking: "settings/maintenance",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Maintenance" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Întreținere" },
   }),
   SettingsNotifications: createNativeStackScreen({
     screen: SettingsNotificationsRouteScreen,
     linking: "settings/notifications",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Notifications" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Notificări" },
   }),
   SettingsThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
     linking: "settings/thread-preferences",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Thread behavior" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Comportament conversații" },
   }),
   SettingsAbout: createNativeStackScreen({
     screen: SettingsAboutRouteScreen,
     linking: "settings/about",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "About Mira" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Despre Mira" },
   }),
   SettingsEnvironmentNew: createNativeStackScreen({
     screen: ConnectionsNewRouteScreen,
     linking: "settings/environment-new",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Add Environment",
+      title: "Adaugă mediu",
     },
   }),
   SettingsArchive: createNativeStackScreen({
@@ -315,20 +315,20 @@ const SETTINGS_SCREENS = {
     linking: "settings/archive",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Archived Threads",
+      title: "Conversații arhivate",
     },
   }),
   SettingsNavigation: createNativeStackScreen({
     screen: SettingsNavigationRouteScreen,
     linking: "settings/navigation-tabs",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Navigation tabs" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "File de navigare" },
   }),
   SettingsAppearance: createNativeStackScreen({
     screen: SettingsAppearanceRouteScreen,
     linking: "settings/appearance",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Appearance",
+      title: "Aspect",
     },
   }),
   SettingsProjectGrouping: createNativeStackScreen({
@@ -336,7 +336,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/project-grouping",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Organization",
+      title: "Organizare",
     },
   }),
   SettingsOrganization: createNativeStackScreen({
@@ -344,20 +344,20 @@ const SETTINGS_SCREENS = {
     linking: "settings/organization",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Organization",
+      title: "Organizare",
     },
   }),
   SettingsProjectOverview: createNativeStackScreen({
     screen: SettingsProjectOverviewRouteScreen,
     linking: "settings/project",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Project overview" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Prezentare proiect" },
   }),
   SettingsKeyboard: createNativeStackScreen({
     screen: SettingsKeyboardRouteScreen,
     linking: "settings/keyboard",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Keyboard",
+      title: "Tastatură",
     },
   }),
   SettingsMicrophone: createNativeStackScreen({
@@ -365,7 +365,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/microphone",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Microphone",
+      title: "Microfon",
     },
   }),
   SettingsFollowUp: createNativeStackScreen({
@@ -373,7 +373,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/follow-ups",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Follow-ups",
+      title: "Mesaje ulterioare",
     },
   }),
   SettingsScheduledTasks: createNativeStackScreen({
@@ -381,22 +381,22 @@ const SETTINGS_SCREENS = {
     linking: "settings/scheduled-tasks",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Scheduled Tasks",
+      title: "Sarcini programate",
       headerTitleStyle: { fontSize: 16, fontWeight: "800" },
     },
   }),
   SettingsScheduledTaskNew: createNativeStackScreen({
     screen: SettingsScheduledTaskNewRouteScreen,
     linking: "settings/scheduled-tasks/new",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "New scheduled task" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Sarcină programată nouă" },
   }),
   SettingsScheduledTaskEdit: createNativeStackScreen({
     screen: SettingsScheduledTaskEditRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Edit scheduled task" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Editează sarcina programată" },
   }),
   SettingsScheduledTaskBranch: createNativeStackScreen({
     screen: ScheduledTaskBranchPickerRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Base branch" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Branch de bază" },
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
@@ -415,7 +415,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/client-storage",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Client Storage",
+      title: "Stocare locală",
     },
   }),
   SettingsDiagnostics: createNativeStackScreen({
@@ -423,21 +423,21 @@ const SETTINGS_SCREENS = {
     linking: "settings/diagnostics",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Diagnostics",
+      title: "Diagnosticare",
     },
   }),
   // These params snapshot the tap time, local filters, and freshly aggregated pools.
   // A linking path would round-trip them as URL query strings and preserve stale values.
   SettingsUsageAccount: createNativeStackScreen({
     screen: UsageLimitAccountScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Account" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Cont" },
   }),
   SettingsOpenSourceLicenses: createNativeStackScreen({
     screen: SettingsOpenSourceLicensesRouteScreen,
     linking: "settings/open-source-licenses",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Open source licenses",
+      title: "Licențe open source",
     },
   }),
   SettingsOpenSourceLicense: createNativeStackScreen({
@@ -445,7 +445,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/open-source-licenses/:entryKey",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "License notice",
+      title: "Licență",
     },
   }),
   SettingsUsage: createNativeStackScreen({
@@ -453,7 +453,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/usage",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Usage",
+      title: "Utilizare",
     },
   }),
   SettingsAuth: createNativeStackScreen({
@@ -595,13 +595,13 @@ function NotFoundScreen() {
       style={[{ flex: 1 }, screenBgStyle]}
     >
       <Text className="text-3xl font-t3-bold text-foreground" selectable>
-        Route not found
+        Pagina nu a fost găsită
       </Text>
       <Pressable
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >
-        <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
+        <Text className="text-base font-t3-bold text-primary-foreground">Înapoi acasă</Text>
       </Pressable>
     </ScrollView>
   );
@@ -747,12 +747,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,
       linking: { path: "new", alias: ["new/project"] },
-      options: { ...GLASS_HEADER_OPTIONS, title: "Choose project" },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Alege proiectul" },
     }),
     NewTaskEnvironment: createNativeStackScreen({
       linking: "new/draft/environment",
       screen: NewTaskEnvironmentPickerRouteScreen,
-      options: { ...GLASS_HEADER_OPTIONS, title: "Environment" },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Mediu" },
     }),
     NewTaskBranch: createNativeStackScreen({
       linking: "new/draft/branch",
@@ -765,7 +765,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
 
       options: {
         ...GLASS_HEADER_OPTIONS,
-        title: "Add project",
+        title: "Adaugă proiect",
       },
     }),
     AddProjectRepository: createNativeStackScreen({
@@ -861,7 +861,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
-        title: "Files",
+        title: "Fișiere",
       },
     }),
     ThreadFile: createNativeStackScreen({
@@ -977,7 +977,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: "settings/legal",
       options: {
         ...LEGAL_DOCUMENT_HEADER_OPTIONS,
-        title: "Legal",
+        title: "Informații legale",
       },
     }),
     ConnectOnboarding: createNativeStackScreen({
@@ -986,7 +986,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         // Android root formSheets lack a native stack bar; the route provides AndroidSheetHeader.
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
-        title: "Set up T3 Connect",
+        title: "Configurează contul Mira",
         gestureEnabled: true,
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: formSheetDetents(0.6, 0.95),
@@ -997,7 +997,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ConnectionsRouteScreen,
       linking: "connections",
       options: {
-        title: "Environments",
+        title: "Medii",
         ...(Platform.OS === "android"
           ? { presentation: "card" as const, headerShown: false }
           : {
@@ -1013,7 +1013,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         // Mount the iOS header immediately to avoid remounting the pairing form.
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        title: "Add Environment",
+        title: "Adaugă mediu",
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
@@ -1045,14 +1045,14 @@ function GuardedScreenLayout(props: {
 function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
   const navigation = useNavigation();
   const exit = navigation.canGoBack()
-    ? { label: "Go back", onPress: () => navigation.goBack() }
+    ? { label: "Înapoi", onPress: () => navigation.goBack() }
     : props.routeName === "Home"
       ? // Home itself failed, and the Settings list renders inside it; open a Settings page.
         {
-          label: "Open settings",
+          label: "Deschide setările",
           onPress: () => openSettings(navigation, DEFAULT_SETTINGS_PAGE),
         }
-      : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
+      : { label: "Înapoi acasă", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
 
   return <RenderFailureView {...props} exit={exit} />;
 }

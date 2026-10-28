@@ -37,11 +37,11 @@ export function ComposerModelControl(props: {
       }).label
     : "";
   const badge = props.modelOption?.providerBadge;
-  const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
+  const label = props.modelOption?.label ?? props.selection?.model ?? "Alege modelul";
   return (
     <ComposerInlineControl
       accessibilityLabel={[
-        "Model and reasoning settings",
+        "Setări model și raționament",
         label,
         badge?.showBadge ? badge.displayName : null,
         summary,

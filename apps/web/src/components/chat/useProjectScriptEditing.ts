@@ -79,7 +79,7 @@ export function useProjectScriptEditing(input: {
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
+            message: "Această conexiune nu poate schimba scurtăturile de tastatură.",
           }),
         ),
       );
@@ -124,8 +124,8 @@ export function useProjectScriptEditing(input: {
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
             message: isDeletingScript
-              ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
-              : "The script was saved, but this connection can no longer change keyboard shortcuts.",
+              ? "Scriptul a fost șters, dar scurtătura lui nu a putut fi eliminată pentru că permisiunea s-a schimbat."
+              : "Scriptul a fost salvat, dar conexiunea nu mai poate schimba scurtăturile de tastatură.",
           }),
         ),
       );
@@ -251,15 +251,15 @@ export function useProjectScriptEditing(input: {
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: `Deleted action "${deletedName ?? "Unknown"}"`,
+        title: `Acțiunea „${deletedName ?? "Necunoscută"}” a fost ștearsă`,
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not delete action",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: "Acțiunea nu a putut fi ștearsă",
+          description: error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
         }),
       );
     }

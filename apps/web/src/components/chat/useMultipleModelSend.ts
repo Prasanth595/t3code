@@ -221,7 +221,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `Started ${startedCount} ${startedCount === 1 ? "thread" : "threads"} in background`,
+            title: `${startedCount === 1 ? "A pornit o conversație" : `Au pornit ${startedCount} conversații`} în fundal`,
           }),
         );
       }
@@ -232,7 +232,10 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     if (sendResult._tag === "Failure") {
       const error = squashAtomCommandFailure(sendResult);
       failedSelections.push(...selections);
-      setThreadError(threadId, error instanceof Error ? error.message : "Failed to send messages.");
+      setThreadError(
+        threadId,
+        error instanceof Error ? error.message : "Mesajele nu au putut fi trimise.",
+      );
     }
     const restoreFailedDraft = () => {
       appAtomRegistry.set(fanoutSelectionsAtom, failedSelections);
@@ -255,12 +258,12 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         const recoveryToastId = toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "A background prompt could not be sent",
+            title: "Un prompt din fundal nu a putut fi trimis",
             description:
-              "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
+              "Ciorna ta mai nouă nu s-a schimbat. Restaurează promptul eșuat când editorul e gol.",
             timeout: 0,
             actionProps: {
-              children: "Restore prompt",
+              children: "Restaurează promptul",
               onClick: () => {
                 if (
                   !draftId ||
@@ -272,7 +275,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                 ) {
                   toastManager.update(recoveryToastId, {
                     description:
-                      "Return to the original draft and send or clear its current prompt before restoring.",
+                      "Întoarce-te la ciorna originală și trimite sau șterge promptul curent înainte de restaurare.",
                   });
                   return;
                 }

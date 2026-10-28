@@ -48,7 +48,7 @@ export function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGu
 function alertOnFailure(failureTitle: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);
-    Dialog.alert(failureTitle, error instanceof Error ? error.message : "Try again.");
+    Dialog.alert(failureTitle, error instanceof Error ? error.message : "Încearcă din nou.");
   }
 }
 
@@ -83,9 +83,9 @@ export function ThreadGuestShareBar(props: {
   const disabled = busy || !props.canOperateThread;
   const stopSharing = () =>
     Dialog.confirm({
-      title: "Stop sharing?",
-      message: "The guest loses access and the link stops working.",
-      confirmText: "Stop sharing",
+      title: "Oprești partajarea?",
+      message: "Invitatul pierde accesul și link-ul nu mai funcționează.",
+      confirmText: "Oprește partajarea",
       destructive: true,
       onConfirm: () => {
         if (disabled) return;
@@ -95,7 +95,7 @@ export function ThreadGuestShareBar(props: {
           input: { threadId: threadRef.threadId },
         }).then((result) => {
           setBusy(false);
-          alertOnFailure("Could not stop sharing", result);
+          alertOnFailure("Partajarea nu a putut fi oprită", result);
         });
       },
     });
@@ -105,12 +105,12 @@ export function ThreadGuestShareBar(props: {
       <SymbolView name="person.2" size={12} tintColorClassName="accent-foreground-muted" />
       <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
         {expiredAt === share.expiresAt
-          ? "Guest link expired"
+          ? "Link-ul de invitat a expirat"
           : share.guestName === null
-            ? "Guest link active"
-            : `${share.guestName} is a guest`}
+            ? "Link de invitat activ"
+            : `${share.guestName} e invitat`}
       </Text>
-      <Button label="Stop sharing" tone="text" disabled={disabled} onPress={stopSharing} />
+      <Button label="Oprește partajarea" tone="text" disabled={disabled} onPress={stopSharing} />
     </View>
   );
 }
@@ -150,7 +150,9 @@ export function ThreadGuestPendingMessage(props: {
     });
     setBusy(false);
     alertOnFailure(
-      decision === "send" ? "Could not send guest message" : "Could not dismiss guest message",
+      decision === "send"
+        ? "Mesajul invitatului nu a putut fi trimis"
+        : "Mesajul invitatului nu a putut fi respins",
       result,
     );
   };
@@ -169,16 +171,16 @@ export function ThreadGuestPendingMessage(props: {
       {canOperate ? (
         <View className="mt-1.5 flex-row gap-2">
           <Button
-            label="Dismiss"
+            label="Respinge"
             tone="secondary"
-            accessibilityLabel={`Dismiss message from ${guestName}`}
+            accessibilityLabel={`Respinge mesajul de la ${guestName}`}
             disabled={busy}
             onPress={() => void resolve("dismiss")}
           />
           <Button
-            label="Send"
+            label="Trimite"
             tone="primary"
-            accessibilityLabel={`Send message from ${guestName}`}
+            accessibilityLabel={`Trimite mesajul de la ${guestName}`}
             disabled={busy}
             onPress={() => void resolve("send")}
           />

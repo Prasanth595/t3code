@@ -23,7 +23,7 @@ export function TextAppearanceSection() {
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label="Text size"
+        label="Mărime text"
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}
@@ -34,7 +34,7 @@ export function TextAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="plusminus"
-        label="Render math"
+        label="Afișează formule matematice"
         value={mathRenderingEnabled}
         onValueChange={setMathRenderingEnabled}
       />

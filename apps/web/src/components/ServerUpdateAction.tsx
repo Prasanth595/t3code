@@ -32,9 +32,9 @@ import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
-  downloading: "Downloading…",
-  installing: "Downloading…",
-  resuming: "Restarting…",
+  downloading: "Se descarcă…",
+  installing: "Se descarcă…",
+  resuming: "Se repornește…",
 };
 const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
 
@@ -43,7 +43,7 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
 }
 
 function updateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+  return error instanceof Error ? error.message : "Actualizarea serverului a eșuat.";
 }
 
 export interface ServerUpdateTarget {
@@ -96,7 +96,7 @@ export function useServerUpdate() {
       if (!quiet) {
         toastManager.add({
           type: "error",
-          title: `${serverLabel} update failed`,
+          title: `Actualizarea ${serverLabel} a eșuat`,
           description: message,
         });
       }
@@ -105,11 +105,11 @@ export function useServerUpdate() {
     if (!quiet) {
       toastManager.add({
         type: "success",
-        title: `${serverLabel} updated`,
+        title: `${serverLabel} a fost actualizat`,
         description:
           selfUpdate === "desktop-managed"
-            ? `Desktop app relaunched on ${result.value.targetVersion}.`
-            : `Reconnected on t3@${result.value.targetVersion}.`,
+            ? `Aplicația desktop a repornit pe ${result.value.targetVersion}.`
+            : `Reconectat pe t3@${result.value.targetVersion}.`,
       });
     }
     return { status: "updated" };
@@ -118,7 +118,7 @@ export function useServerUpdate() {
 
 export function ServerUpdatesAction({
   targets,
-  label = "Update all",
+  label = "Actualizează tot",
   variant = "outline",
   size = "xs",
   className,
@@ -145,7 +145,7 @@ export function ServerUpdatesAction({
       if (desktopTargets.length > 0) {
         const confirmed =
           (await requestConfirmDialog(
-            `Update the Mira desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
+            `Actualizezi aplicațiile desktop Mira pe ${desktopTargets.map((target) => target.serverLabel).join(", ")}? Se vor închide și redeschide pe acele calculatoare.`,
           )) ?? true;
         if (!confirmed) return;
       }
@@ -207,7 +207,7 @@ export function ServerUpdateAction({
   desktopAppUpdate = false,
   threadContinuation = false,
   targetVersion,
-  label = "Update",
+  label = "Actualizează",
   variant = "outline",
   size = "xs",
   className,
@@ -227,7 +227,9 @@ export function ServerUpdateAction({
       toastManager.add({
         type: "success",
         title:
-          installation?.kind === "npm-global" ? "Update command copied" : "Relaunch command copied",
+          installation?.kind === "npm-global"
+            ? "Comanda de actualizare a fost copiată"
+            : "Comanda de repornire a fost copiată",
         description:
           installation?.kind === "npm-global"
             ? `Run \`${command}\` on ${serverLabel}, then restart t3 with your usual options.`
@@ -237,7 +239,7 @@ export function ServerUpdateAction({
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not copy update command",
+        title: "Comanda de actualizare nu a putut fi copiată",
         description: error.message,
       });
     },
@@ -253,7 +255,7 @@ export function ServerUpdateAction({
     if (isDesktopAppUpdate) {
       const confirmed =
         (await requestConfirmDialog(
-          `Update the Mira desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
+          `Actualizezi aplicația desktop Mira care rulează ${serverLabel}? Se va închide și redeschide pe acel calculator.`,
         )) ?? true;
       if (!confirmed) {
         return;
@@ -274,7 +276,7 @@ export function ServerUpdateAction({
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
     return (
       <span className="text-muted-foreground text-xs">
-        Update the desktop app on that machine to update this server.
+        Actualizează aplicația desktop de pe acel calculator ca să actualizezi serverul.
       </span>
     );
   }
@@ -284,8 +286,8 @@ export function ServerUpdateAction({
   const actionLabel =
     manualCommand !== null
       ? installation?.kind === "npm-global"
-        ? "Copy update command"
-        : "Copy relaunch command"
+        ? "Copiază comanda de actualizare"
+        : "Copiază comanda de repornire"
       : label;
   const onClick =
     manualCommand !== null
@@ -301,7 +303,7 @@ export function ServerUpdateAction({
               size="icon-xs"
               variant="ghost-muted"
               className={className}
-              aria-label={`${actionLabel} for ${serverLabel}`}
+              aria-label={`${actionLabel} pentru ${serverLabel}`}
               disabled={manualCommand === null && !canUpdate}
               onClick={onClick}
             />
@@ -333,7 +335,7 @@ export function OutdatedServerUpdateAction({
   serverLabel,
   fromVersion,
   targetVersion,
-  label = "Update",
+  label = "Actualizează",
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
@@ -355,15 +357,15 @@ export function OutdatedServerUpdateAction({
       if (isAtomCommandInterrupted(result)) return;
       toastManager.add({
         type: "error",
-        title: `${serverLabel} update failed`,
+        title: `Actualizarea ${serverLabel} a eșuat`,
         description: updateFailureMessage(squashAtomCommandFailure(result)),
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: `${serverLabel} updated`,
-      description: `Reconnected on t3@${result.value.targetVersion}.`,
+      title: `${serverLabel} a fost actualizat`,
+      description: `Reconectat pe t3@${result.value.targetVersion}.`,
     });
   };
   return (

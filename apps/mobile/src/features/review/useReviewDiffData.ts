@@ -69,15 +69,18 @@ function getCachedReviewFile(
     deletions: stat.deletions,
     ...(patch?._tag === "Success"
       ? patch.value.source.truncated
-        ? { notice: "File preview exceeds the size limit. Counts include all changes." }
+        ? {
+            notice:
+              "Previzualizarea fișierului depășește limita de mărime. Totalurile includ toate modificările.",
+          }
         : loaded
           ? {}
-          : { notice: "Could not display file preview." }
+          : { notice: "Previzualizarea fișierului nu a putut fi afișată." }
       : {
           notice:
             patch?._tag === "Failure"
-              ? "Could not load diff. Select the file to retry."
-              : "Loading diff…",
+              ? "Diff-ul nu a putut fi încărcat. Alege fișierul ca să reîncerci."
+              : "Se încarcă diff-ul…",
         }),
   };
   if (patch) normalizedFiles.set(patch, { stat, diffHash, file });

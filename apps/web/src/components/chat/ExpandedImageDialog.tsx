@@ -155,10 +155,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const showingAccessibilityDetails =
     Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
   const contentsLabel = showingAccessibilityDetails
-    ? "Show screenshot"
+    ? "Arată captura"
     : accessibilityDetails?.format === "json"
-      ? "Show accessibility JSON"
-      : "Show extracted text";
+      ? "Arată JSON-ul de accesibilitate"
+      : "Arată textul extras";
 
   return (
     <Dialog
@@ -188,7 +188,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           variant="media-close"
           className="absolute right-0 top-0 z-20"
           onClick={onClose}
-          aria-label={`Close ${mediaLabel} preview`}
+          aria-label={`Închide previzualizarea ${mediaLabel}`}
         >
           <XIcon />
         </Button>
@@ -198,7 +198,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label="Anterior"
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -219,8 +219,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <ExpandedMediaFailure>
                 <p>
                   {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
+                    ? "Imaginea nu a putut fi încărcată."
+                    : "Imagine indisponibilă. Fișierul poate fi fost mutat sau șters."}
                 </p>
                 {openOriginalLink}
               </ExpandedMediaFailure>
@@ -274,7 +274,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label="Următor"
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

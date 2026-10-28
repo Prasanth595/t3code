@@ -363,8 +363,10 @@ function terminalSelectionMenuItems(options?: {
   return [
     ...(options?.canAddToChat === false
       ? []
-      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
+      : ([
+          { id: "add-to-chat", label: "Adaugă în chat" },
+        ] satisfies ContextMenuItem<"add-to-chat">[])),
+    { id: "copy", label: "Copiază" },
   ];
 }
 
@@ -379,9 +381,9 @@ function terminalContextMenuItems(options: {
       ...item,
       disabled: !hasSelection,
     })),
-    { id: "paste", label: "Paste", ...(options.readOnly ? { disabled: true } : {}) },
-    { id: "select-all", label: "Select all" },
-    { id: "scroll-to-bottom", label: "Jump to latest" },
+    { id: "paste", label: "Lipește", ...(options.readOnly ? { disabled: true } : {}) },
+    { id: "select-all", label: "Selectează tot" },
+    { id: "scroll-to-bottom", label: "Mergi la final" },
   ];
 }
 
@@ -561,7 +563,10 @@ function TerminalSessionViewport({
         shouldHandleTerminalExit(status, synchronized, hasHandledExitRef.current, version)
       ) {
         hasHandledExitRef.current = true;
-        writeSystemMessage(terminal, status === "closed" ? "Terminal closed" : "Process exited");
+        writeSystemMessage(
+          terminal,
+          status === "closed" ? "Terminal închis" : "Procesul s-a încheiat",
+        );
         window.setTimeout(() => {
           if (hasHandledExitRef.current) {
             handleSessionExited();
@@ -759,7 +764,7 @@ function TerminalSessionViewport({
         try {
           await writeTextToClipboard(text, "terminal selection");
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to copy terminal selection");
+          reportIfCurrent(requestId, error, "Selecția nu a putut fi copiată");
         }
         focusIfCurrent(requestId);
       };
@@ -775,7 +780,7 @@ function TerminalSessionViewport({
             () => requestId === selectionActionRequestIdRef.current,
           );
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to read the clipboard");
+          reportIfCurrent(requestId, error, "Clipboard-ul nu a putut fi citit");
           return;
         }
         focusIfCurrent(requestId);

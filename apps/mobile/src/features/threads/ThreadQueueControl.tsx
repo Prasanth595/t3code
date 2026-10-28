@@ -192,7 +192,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue paused</Text>
           <Button
-            label="Resume queue"
+            label="Reia coada"
             disabled={resuming || busyRunId !== null}
             onPress={async () => {
               if (busyRef.current) return;
@@ -207,7 +207,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       ) : null}
       {queuedRuns.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          No messages waiting in this queue.
+          Niciun mesaj în coadă.
         </Text>
       ) : null}
       {queuedRuns.map(({ run, text, attachments, context }, index) => {
@@ -231,7 +231,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           text,
         });
         const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+          controls.displayText || (attachments.length > 0 ? "Atașamente" : "Mesaj în coadă");
         return (
           <QueueShiftedRow
             key={run.id}
@@ -326,7 +326,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               >
                 <View className="flex-row items-center">
                   <Menu
-                    accessibilityLabel={`Actions for queued message ${index + 1}`}
+                    accessibilityLabel={`Acțiuni pentru mesajul ${index + 1} din coadă`}
                     shouldOpenOnLongPress
                     style={{ flex: 1 }}
                     actions={[
@@ -334,7 +334,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         ? [
                             {
                               id: "steer",
-                              title: workflow?.canSendNow ? "Send now" : "Steer now",
+                              title: workflow?.canSendNow ? "Trimite acum" : "Redirecționează acum",
                               attributes: { disabled: !controls.canSend },
                               image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                             },
@@ -342,19 +342,23 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         : []),
                       {
                         id: "edit",
-                        title: "Edit",
+                        title: "Editează",
                         attributes: { disabled: !controls.canEdit },
                         image: Platform.OS === "ios" ? "pencil" : "edit",
                       },
-                      { id: "up", title: "Move up", attributes: { disabled: !controls.canMoveUp } },
+                      {
+                        id: "up",
+                        title: "Mută în sus",
+                        attributes: { disabled: !controls.canMoveUp },
+                      },
                       {
                         id: "down",
-                        title: "Move down",
+                        title: "Mută în jos",
                         attributes: { disabled: !controls.canMoveDown },
                       },
                       {
                         id: "remove",
-                        title: "Remove",
+                        title: "Elimină",
                         attributes: { disabled: !controls.canDismiss, destructive: true },
                       },
                     ]}
@@ -366,9 +370,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       accessibilityRole="button"
                       accessibilityLabel={title}
                       accessibilityHint={
-                        controls.canEdit
-                          ? "Opens this message in the composer for editing"
-                          : undefined
+                        controls.canEdit ? "Deschide mesajul în editor" : undefined
                       }
                       disabled={!controls.canEdit}
                       onPress={() => void act(run.id, "edit")}
@@ -406,8 +408,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       accessibilityRole="button"
                       accessibilityLabel={
                         workflow?.canSendNow
-                          ? `Send message ${index + 1} now`
-                          : `Steer with message ${index + 1} now`
+                          ? `Trimite acum mesajul ${index + 1}`
+                          : `Redirecționează acum cu mesajul ${index + 1}`
                       }
                       disabled={!controls.canSend}
                       onPress={() => void act(run.id, "steer")}
@@ -420,7 +422,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                           tintColorClassName="accent-primary-foreground"
                         />
                         <Text className="font-t3-medium text-sm text-primary-foreground">
-                          {workflow?.canSendNow ? "Send now" : "Steer"}
+                          {workflow?.canSendNow ? "Trimite acum" : "Redirecționează"}
                         </Text>
                       </View>
                     </Pressable>
@@ -454,7 +456,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                 color={theme["--color-foreground"]}
                 hideBackButton
                 hideShadow={false}
-                title="Queued"
+                title="În coadă"
                 titleColor={theme["--color-foreground"]}
                 titleFontSize={18}
                 titleFontWeight="800"
@@ -471,7 +473,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View collapsable={false} className="flex-1 bg-sheet">
         <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-        <AndroidSheetHeader title="Queued" onBack={() => navigation.goBack()} />
+        <AndroidSheetHeader title="În coadă" onBack={() => navigation.goBack()} />
         <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
       </View>
     </GestureHandlerRootView>
@@ -628,11 +630,11 @@ function QueueDragHandle(props: {
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
+        accessibilityLabel={`Reordonează ${props.title}`}
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp ? [{ name: "decrement", label: "Mută în sus" }] : []),
+          ...(props.canMoveDown ? [{ name: "increment", label: "Mută în jos" }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;

@@ -22,10 +22,15 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
   const fileCount = entry.files?.length ?? 0;
   const attachmentCount = imageCount + fileCount;
   if (attachmentCount === 0) {
-    return "(empty)";
+    return "(gol)";
   }
-  const label = imageCount > 0 && fileCount > 0 ? "attachment" : fileCount > 0 ? "file" : "image";
-  return `(${attachmentCount} ${label}${attachmentCount === 1 ? "" : "s"})`;
+  const [one, many] =
+    imageCount > 0 && fileCount > 0
+      ? ["atașament", "atașamente"]
+      : fileCount > 0
+        ? ["fișier", "fișiere"]
+        : ["imagine", "imagini"];
+  return `(${attachmentCount} ${attachmentCount === 1 ? one : many})`;
 }
 
 /** Window capture gives the open menu priority over composer key handlers. */
@@ -120,7 +125,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
     <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">
       <ComposerBanner.Row
         render={<button type="button" />}
-        aria-label="Close stash"
+        aria-label="Închide"
         aria-expanded="true"
         onPointerDown={(event) => event.preventDefault()}
         onClick={onClose}
@@ -135,14 +140,14 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
       <ComposerBanner.Scroll>
-        <ComposerBanner.Children render={<ul role="list" />} aria-label="Stashed prompts">
+        <ComposerBanner.Children render={<ul role="list" />} aria-label="Prompturi puse deoparte">
           {entries.length === 0 ? (
             <ComposerBanner.Row render={<li />}>
               <ComposerBanner.Icon />
               <ComposerBanner.Content className="text-muted-foreground">
-                Nothing stashed yet.
+                Nimic pus deoparte încă.
                 {stashShortcutLabel
-                  ? ` Press ${stashShortcutLabel} with a prompt in the composer to stash it.`
+                  ? ` Apasă ${stashShortcutLabel} cu un prompt în editor ca să-l pui deoparte.`
                   : null}
               </ComposerBanner.Content>
             </ComposerBanner.Row>
@@ -170,7 +175,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                     type="button"
                     className="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
                     data-stash-restore={entry.id}
-                    aria-label={`Restore stashed prompt: ${stashEntrySnippet(entry)}`}
+                    aria-label={`Restaurează promptul: ${stashEntrySnippet(entry)}`}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => onRestore(entry)}
                   >
@@ -216,7 +221,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                   </time>
                   <ComposerBanner.Dismiss
                     className="z-10"
-                    aria-label="Delete stashed prompt"
+                    aria-label="Șterge promptul pus deoparte"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => onDelete(entry)}
                   />

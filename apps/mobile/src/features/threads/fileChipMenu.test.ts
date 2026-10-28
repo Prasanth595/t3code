@@ -63,7 +63,7 @@ describe("file chip downloads", () => {
     const target = resolveFileChipTarget(href, "/repo")!;
     expect(fileChipMenu(target).actions).toContainEqual({
       id: "save",
-      title: "Save or share",
+      title: "Salvează sau partajează",
     });
     expect(fileChipShareSource(target, threadId)).toEqual({
       name: path.split("/").at(-1),

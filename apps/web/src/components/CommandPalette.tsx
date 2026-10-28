@@ -307,7 +307,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         } else {
           toastManager.add({
             id: "appearance-cycle",
-            title: `Appearance: ${APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label}`,
+            title: `Aspect: ${APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label}`,
             timeout: 1500,
           });
         }
@@ -428,10 +428,10 @@ function CommandPaletteDialog(props: {
     <CommandDialogPopup
       aria-label={
         props.mode === "files"
-          ? "File picker"
+          ? "Selector de fișiere"
           : props.mode === "content"
-            ? "Search project contents"
-            : "Command palette"
+            ? "Caută în proiect"
+            : "Paleta de comenzi"
       }
       className={cn("overflow-hidden", props.mode === "content" && "h-105")}
       data-command-palette="true"
@@ -574,7 +574,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: target.failureTitle,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     }
@@ -771,7 +771,7 @@ function OpenCommandPaletteDialog(props: {
   const isBrowsePending = hasBrowseTarget && (browseAccess.isPending || browseQuery.isPending);
   const browseAccessError =
     hasBrowseTarget && !browseAccess.isPending && !browseAccess.canReadFiles
-      ? (browseAccess.error ?? "This connection cannot browse host folders.")
+      ? (browseAccess.error ?? "Această conexiune nu poate răsfoi dosarele.")
       : null;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } =
@@ -891,7 +891,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action" as const,
         value: "new-thread-in:no-project",
         searchTerms: ["no project", "without project", "none"],
-        title: "No project",
+        title: "Fără proiect",
         icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newWithoutProject" as const,
         run: () => startScratchThread(scratchTargetEnvironmentId),
@@ -1018,8 +1018,8 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: `action:add-project:${environmentId}:local`,
         searchTerms: ["local", "folder", "directory", "browse"],
-        title: "Local folder",
-        description: "Browse a folder on disk",
+        title: "Dosar local",
+        description: "Alege un dosar de pe disc",
         icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () => {
@@ -1033,8 +1033,8 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: `action:add-project:${environmentId}:new`,
         searchTerms: ["new project", "create", "empty", "repository", "git init"],
-        title: "New project",
-        description: "Start a new Git repository from a name",
+        title: "Proiect nou",
+        description: "Pornește un repository Git nou cu un nume",
         icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () => {
@@ -1050,11 +1050,11 @@ function OpenCommandPaletteDialog(props: {
 
     for (const source of orderedSources) {
       const label = addProjectRemoteSourceLabel(source);
-      const title = source === "url" ? "Git URL" : `${label} repository`;
+      const title = source === "url" ? "Git URL" : `Repository ${label}`;
       const description =
         source === "url"
-          ? "Clone from a remote URL"
-          : `Clone ${label} ${addProjectRemoteSourcePathHint(source)}`;
+          ? "Clonează de la o adresă"
+          : `Clonează ${label} ${addProjectRemoteSourcePathHint(source)}`;
       const readiness = readinessBySource(source);
       const disabledHint = readiness.hint;
 
@@ -1070,12 +1070,13 @@ function OpenCommandPaletteDialog(props: {
                     openSourceControlSettings();
                   }}
                 >
-                  Setup Required
+                  Necesită configurare
                 </Button>
               }
             />
             <TooltipPopup align="end" side="left">
-              {disabledHint ?? "Open Settings -> Source control to configure this provider."}
+              {disabledHint ??
+                "Deschide Setări -> Controlul versiunilor ca să configurezi acest furnizor."}
             </TooltipPopup>
           </Tooltip>
         </span>
@@ -1111,7 +1112,7 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
-    return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
+    return [{ value: `sources:${environmentId}`, label: "Surse", items: sourceItems }];
   };
 
   const startAddProjectSourceSelection = (environmentId: EnvironmentId): void => {
@@ -1120,8 +1121,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Environment unavailable",
-          description: `${environment?.label ?? "The selected environment"} is not connected.`,
+          title: "Mediu indisponibil",
+          description: `${environment?.label ?? "Mediul selectat"} nu e conectat.`,
         }),
       );
       return;
@@ -1150,7 +1151,7 @@ function OpenCommandPaletteDialog(props: {
     title: option.label,
     description: option.isConnected
       ? option.isPrimary
-        ? "This device"
+        ? "Acest dispozitiv"
         : option.environmentId
       : option.status,
     disabled: !option.isConnected,
@@ -1174,7 +1175,7 @@ function OpenCommandPaletteDialog(props: {
   const addProjectEnvironmentGroups = [
     {
       value: "environments",
-      label: "Environments",
+      label: "Medii",
       items: addProjectEnvironmentItems,
     },
   ];
@@ -1219,7 +1220,7 @@ function OpenCommandPaletteDialog(props: {
             New thread in <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
-        searchTitle: `New thread in ${activeProjectTitle}`,
+        searchTitle: `Conversație nouă în ${activeProjectTitle}`,
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newLocal",
         run: async () => {
@@ -1237,10 +1238,10 @@ function OpenCommandPaletteDialog(props: {
       kind: "submenu",
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
-      title: "New thread in...",
+      title: "Conversație nouă în...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [{ value: "projects", label: "Proiecte", items: projectThreadItems }],
     });
   }
 
@@ -1249,7 +1250,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "no project", "without project", "none", "chat"],
-      title: "New thread without a project",
+      title: "Conversație nouă fără proiect",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
       run: () => startScratchThread(scratchTargetEnvironmentId),
@@ -1260,7 +1261,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "find-current-thread",
-      title: "Find in current thread",
+      title: "Caută în conversația curentă",
       searchTerms: ["find", "search", "messages", "plans"],
       icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.find",
@@ -1300,7 +1301,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:copy-prompt-link",
       searchTerms: ["copy", "share", "prompt", "link"],
-      title: "Copy prompt link",
+      title: "Copiază link-ul promptului",
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       run: () => copyPromptLink(plainPromptLink),
     });
@@ -1311,7 +1312,7 @@ function OpenCommandPaletteDialog(props: {
           kind: "action",
           value: "action:copy-prompt-link-with-context",
           searchTerms: ["copy", "share", "prompt", "link", "repository", "model"],
-          title: "Copy prompt link with repo and model",
+          title: "Copiază link-ul promptului cu proiectul și modelul",
           icon: <LinkIcon className={ITEM_ICON_CLASS} />,
           run: () => copyPromptLink(contextLink),
         });
@@ -1328,7 +1329,9 @@ function OpenCommandPaletteDialog(props: {
           ? ["copy", "pull request", "link", "reference"]
           : ["copy", "thread id", "reference"],
       title:
-        activeThreadReferenceCopyTarget.kind === "pull-request" ? "Copy PR link" : "Copy thread ID",
+        activeThreadReferenceCopyTarget.kind === "pull-request"
+          ? "Copiază link-ul PR"
+          : "Copiază ID-ul conversației",
       description: activeThreadReferenceCopyTarget.value,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
@@ -1345,7 +1348,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:link-pull-request",
       searchTerms: ["link", "pull request", "pr", "attach", "stack"],
-      title: "Link pull request to thread",
+      title: "Leagă un pull request de conversație",
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
@@ -1356,7 +1359,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:open-thread-pull-requests",
         searchTerms: ["pull requests", "linked", "stack", "prs"],
-        title: "Show linked pull requests",
+        title: "Arată pull request-urile legate",
         disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
         icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
         run: async () => {
@@ -1372,7 +1375,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:share-thread-with-guest",
       searchTerms: ["share", "guest", "invite", "link", "teammate"],
-      title: "Share with guest",
+      title: "Partajează cu un invitat",
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
@@ -1386,7 +1389,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:restart-agent-session",
       searchTerms: ["restart", "reset", "reload", "agent", "session", "skills", "plugins", "mcp"],
-      title: "Restart agent session",
+      title: "Repornește sesiunea agentului",
       icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         const { environmentId } = thread;
@@ -1399,8 +1402,8 @@ function OpenCommandPaletteDialog(props: {
         }
         toastManager.add({
           type: "success",
-          title: "Agent session will restart",
-          description: "Your next message starts a fresh session.",
+          title: "Sesiunea agentului va reporni",
+          description: "Următorul mesaj pornește o sesiune nouă.",
         });
         const project = projectByKey.get(`${environmentId}:${thread.projectId}`);
         if (!project) return;
@@ -1421,7 +1424,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:open-file-picker",
     searchTerms: ["go to file", "open file", "file picker", "find file", "quick open"],
-    title: "Go to file",
+    title: "Mergi la fișier",
     icon: <FileSearchIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     shortcutCommand: "filePicker.toggle",
@@ -1434,7 +1437,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:search-project-contents",
     searchTerms: ["search project", "find in files", "grep", "content search", "text search"],
-    title: "Search project contents",
+    title: "Caută în proiect",
     icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     shortcutCommand: "projectSearch.toggle",
@@ -1448,7 +1451,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:new-project",
       searchTerms: ["new project", "create project", "empty", "repository", "repo", "git init"],
-      title: "New project",
+      title: "Proiect nou",
       icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
@@ -1479,7 +1482,7 @@ function OpenCommandPaletteDialog(props: {
       "url",
       "environment",
     ],
-    title: "Add project",
+    title: "Adaugă proiect",
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
@@ -1492,7 +1495,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:add-project:wsl-folder",
       searchTerms: ["add project", "open", "wsl", "linux", "folder", "directory"],
-      title: "Open WSL folder",
+      title: "Deschide dosar WSL",
       description: wslAddProjectEnvironmentOption.label,
       icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
@@ -1526,13 +1529,13 @@ function OpenCommandPaletteDialog(props: {
       case "new-thread-in":
         pushPaletteView({
           addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-          groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+          groups: [{ value: "projects", label: "Proiecte", items: projectThreadItems }],
         });
         return;
       case "change-theme":
         pushPaletteView({
           addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
-          groups: [{ value: "themes", label: "Change theme", items: [] }],
+          groups: [{ value: "themes", label: "Schimbă tema", items: [] }],
         });
         return;
     }
@@ -1570,7 +1573,7 @@ function OpenCommandPaletteDialog(props: {
         "merge",
         "branch",
       ],
-      title: "Open pull requests",
+      title: "Deschide pull request-urile",
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
@@ -1582,7 +1585,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
-    title: "Open usage",
+    title: "Deschide utilizarea",
     icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
     shortcutCommand: "usage.open",
     run: async () => {
@@ -1594,7 +1597,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:settings",
     searchTerms: ["settings", "preferences", "configuration", "keybindings"],
-    title: "Open settings",
+    title: "Deschide setările",
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings" });
@@ -1626,7 +1629,7 @@ function OpenCommandPaletteDialog(props: {
         "remove",
         "t3.json",
       ],
-      title: "Project settings",
+      title: "Setările proiectului",
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
@@ -1648,7 +1651,7 @@ function OpenCommandPaletteDialog(props: {
     value: `setting:${item.id}`,
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
     title: item.title,
-    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    description: `Setări · ${SETTINGS_SECTION_LABELS[item.to]}`,
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
@@ -1723,8 +1726,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Environment unavailable",
-          description: `${environment?.label ?? "The selected environment"} is not connected.`,
+          title: "Mediu indisponibil",
+          description: `${environment?.label ?? "Mediul selectat"} nu e conectat.`,
         }),
       );
       return;
@@ -1735,8 +1738,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to add project",
-          description: "Windows-style paths are only supported on Windows.",
+          title: "Proiectul nu a putut fi adăugat",
+          description: "Căile de tip Windows sunt suportate doar pe Windows.",
         }),
       );
       return;
@@ -1746,8 +1749,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to add project",
-          description: "Relative paths require an active project.",
+          title: "Proiectul nu a putut fi adăugat",
+          description: "Căile relative necesită un proiect activ.",
         }),
       );
       return;
@@ -1782,8 +1785,8 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to open project",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Proiectul nu a putut fi deschis",
+              description: error instanceof Error ? error.message : "A apărut o eroare.",
             }),
           );
           return;
@@ -1797,8 +1800,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Cannot add project",
-          description: "This connection cannot add projects.",
+          title: "Proiectul nu poate fi adăugat",
+          description: "Această conexiune nu poate adăuga proiecte.",
         }),
       );
       return;
@@ -1820,8 +1823,8 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Proiectul nu a putut fi adăugat",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -1836,8 +1839,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to add project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Proiectul nu a putut fi adăugat",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
       return;
@@ -1899,8 +1902,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Environment unavailable",
-          description: `${browseEnvironment?.label ?? "The selected environment"} is not connected.`,
+          title: "Mediu indisponibil",
+          description: `${browseEnvironment?.label ?? "Mediul selectat"} nu e conectat.`,
         }),
       );
       return;
@@ -1948,7 +1951,7 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Repository lookup failed",
+              title: "Căutarea repository-ului a eșuat",
               description: errorMessage(squashAtomCommandFailure(lookupResult)),
             }),
           );
@@ -1982,8 +1985,9 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Clone unavailable",
-          description: "This connection needs permission to write source control and add projects.",
+          title: "Clonarea nu e disponibilă",
+          description:
+            "Conexiunea are nevoie de permisiunea de a scrie în controlul versiunilor și de a adăuga proiecte.",
         }),
       );
       return;
@@ -1994,8 +1998,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Clone failed",
-          description: "Windows-style paths are only supported on Windows.",
+          title: "Clonarea a eșuat",
+          description: "Căile de tip Windows sunt suportate doar pe Windows.",
         }),
       );
       return;
@@ -2005,8 +2009,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Clone failed",
-          description: "Relative paths require an active project.",
+          title: "Clonarea a eșuat",
+          description: "Căile relative necesită un proiect activ.",
         }),
       );
       return;
@@ -2036,7 +2040,7 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Clone failed",
+              title: "Clonarea a eșuat",
               description: errorMessage(squashAtomCommandFailure(cloneResult)),
             }),
           );
@@ -2065,7 +2069,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Clone failed",
+            title: "Clonarea a eșuat",
             description: errorMessage(squashAtomCommandFailure(startResult)),
           }),
         );
@@ -2081,8 +2085,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Proiectul nu a putut fi deschis",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     }
@@ -2140,7 +2144,7 @@ function OpenCommandPaletteDialog(props: {
     browseTo,
   });
   const cloneDestinationBrowseGroups = browseGroups.map((group) =>
-    group.value === "directories" ? { ...group, label: "Select where to clone" } : group,
+    group.value === "directories" ? { ...group, label: "Alege unde să clonezi" } : group,
   );
 
   const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
@@ -2183,7 +2187,7 @@ function OpenCommandPaletteDialog(props: {
       ? null
       : {
           value: "new-project-machines",
-          label: "Environments",
+          label: "Medii",
           items: newProjectEnvironmentOptions.map((option) => ({
             ...buildEnvironmentItem(
               option,
@@ -2211,8 +2215,8 @@ function OpenCommandPaletteDialog(props: {
               kind: "action",
               value: "new-project:existing",
               searchTerms: [],
-              title: "Add existing project",
-              description: "Open a folder or clone a repository",
+              title: "Adaugă un proiect existent",
+              description: "Deschide un dosar sau clonează un repository",
               icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
               titleTrailingContent: (
                 <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70" />
@@ -2230,7 +2234,7 @@ function OpenCommandPaletteDialog(props: {
       : [
           {
             value: "new-project-options",
-            label: "Options",
+            label: "Opțiuni",
             items: [
               {
                 kind: "action",
@@ -2238,13 +2242,13 @@ function OpenCommandPaletteDialog(props: {
                 searchTerms: [],
                 title:
                   newProjectPublishTargets.length > 1
-                    ? "Create private repository"
-                    : `Create private repository on ${newProjectPublishTarget.definition.label}`,
+                    ? "Creează un repository privat"
+                    : `Creează un repository privat pe ${newProjectPublishTarget.definition.label}`,
                 description:
                   newProjectName.length > 0
                     ? getNewProjectRepository(newProjectPublishTarget, newProjectPathPreview)
                     : (newProjectPublishTarget.owner ??
-                      `Your ${newProjectPublishTarget.definition.label} account`),
+                      `Contul tău ${newProjectPublishTarget.definition.label}`),
                 icon: sourceControlHostIcon(newProjectPublishTarget.definition, ITEM_ICON_CLASS),
                 titleTrailingContent: (
                   <span className="ms-auto flex items-center gap-2">
@@ -2291,7 +2295,7 @@ function OpenCommandPaletteDialog(props: {
 
   const inputPlaceholder =
     newProjectFlow !== null
-      ? "Project name"
+      ? "Numele proiectului"
       : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
         getCommandPaletteInputPlaceholder(paletteMode));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
@@ -2323,11 +2327,11 @@ function OpenCommandPaletteDialog(props: {
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
   const submitActionLabel = isCloneDestinationStep
     ? willCreateProjectPath
-      ? "Create & Clone"
-      : "Clone"
+      ? "Creează și clonează"
+      : "Clonează"
     : willCreateProjectPath
-      ? "Create & Add"
-      : "Add";
+      ? "Creează și adaugă"
+      : "Adaugă";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const hasHighlightedNewProjectItem = newProjectFlow !== null && highlightedItemValue !== null;
   const createShortcutLabel = hasHighlightedNewProjectItem
@@ -2335,8 +2339,8 @@ function OpenCommandPaletteDialog(props: {
     : "Enter";
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
-      ? "Continue"
-      : "Lookup"
+      ? "Continuă"
+      : "Caută"
     : null;
   const isRemoteProjectPending = isRemoteProjectLookingUp || isRemoteProjectCloning;
   const canSubmitRemoteProjectFlow =
@@ -2513,8 +2517,8 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to run command",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: "Comanda nu a putut rula",
+          description: error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
         }),
       );
     });
@@ -2596,8 +2600,8 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add WSL project",
-            description: "Start the matching WSL backend, then choose the folder again.",
+            title: "Proiectul WSL nu a putut fi adăugat",
+            description: "Pornește serverul WSL corespunzător, apoi alege din nou dosarul.",
           }),
         );
         return;
@@ -2616,10 +2620,10 @@ function OpenCommandPaletteDialog(props: {
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton
-        label={isCreatingNewProject ? "Creating" : "Create"}
+        label={isCreatingNewProject ? "Se creează" : "Creează"}
         shortcutLabel={createShortcutLabel}
-        ariaLabel={`Create (${createShortcutLabel})`}
-        tooltip={`Create (${createShortcutLabel})`}
+        ariaLabel={`Creează (${createShortcutLabel})`}
+        tooltip={`Creează (${createShortcutLabel})`}
         disabled={!canSubmitNewProject}
         onSubmit={() => {
           void submitNewProject();
@@ -2627,10 +2631,10 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : addProjectCloneFlow?.step === "repository" ? (
       <CommandPaletteSubmitButton
-        label={isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}
+        label={isRemoteProjectPending ? "Se lucrează" : remoteProjectButtonLabel}
         shortcutLabel="Enter"
-        ariaLabel={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-        tooltip={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
+        ariaLabel={`${remoteProjectButtonLabel ?? "Continuă"} (Enter)`}
+        tooltip={`${remoteProjectButtonLabel ?? "Continuă"} (Enter)`}
         disabled={!canSubmitRemoteProjectFlow}
         onSubmit={() => {
           void submitAddProjectCloneFlow();
@@ -2638,15 +2642,15 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : isBrowsing ? (
       <CommandPaletteSubmitButton
-        label={isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+        label={isCloneDestinationStep && isRemoteProjectPending ? "Se clonează" : submitActionLabel}
         shortcutLabel={addShortcutLabel}
         ariaLabel={`${submitActionLabel} (${addShortcutLabel})`}
         tooltip={
           isCloneDestinationStep && !canCloneProject
-            ? "This connection needs permission to write source control and add projects."
+            ? "Conexiunea are nevoie de permisiunea de a scrie în controlul versiunilor și de a adăuga proiecte."
             : canCreateProject
               ? `${submitActionLabel} (${addShortcutLabel})`
-              : "This connection cannot add projects."
+              : "Această conexiune nu poate adăuga proiecte."
         }
         disabled={
           !canCreateProject ||
@@ -2670,14 +2674,14 @@ function OpenCommandPaletteDialog(props: {
   const footerActionLabel =
     newProjectFlow !== null
       ? highlightedItemValue === null
-        ? "Create"
+        ? "Creează"
         : highlightedItemValue === newProjectPublishToggleValue
-          ? "Toggle"
-          : "Select"
+          ? "Comută"
+          : "Alege"
       : addProjectCloneFlow?.step === "repository"
-        ? (remoteProjectButtonLabel ?? "Continue")
+        ? (remoteProjectButtonLabel ?? "Continuă")
         : !canSubmitBrowsePath || hasHighlightedBrowseItem
-          ? "Select"
+          ? "Alege"
           : undefined;
 
   const footerTrailing = canOpenProjectFromFileManager ? (
@@ -2687,7 +2691,7 @@ function OpenCommandPaletteDialog(props: {
         void handleOpenProjectFromFileManager();
       }}
     >
-      {`Open in ${fileManagerName}`}
+      {`Deschide în ${fileManagerName}`}
     </CommandFooterAction>
   ) : isThreadSearchPending && !isLinkedThreadSearch && !isBrowsing ? (
     // In the footer, so the list keeps its height while message results may
@@ -2698,7 +2702,7 @@ function OpenCommandPaletteDialog(props: {
   return (
     <CommandPaletteContent
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
-      aria-label="Command palette"
+      aria-label="Paleta de comenzi"
       autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
@@ -2721,7 +2725,7 @@ function OpenCommandPaletteDialog(props: {
                 <button
                   type="button"
                   className="flex cursor-pointer items-center"
-                  aria-label="Back"
+                  aria-label="Înapoi"
                   onClick={popView}
                 >
                   <ArrowLeftIcon />
@@ -2772,7 +2776,7 @@ function OpenCommandPaletteDialog(props: {
         </div>
       ) : isBrowsePending && browseResult === null ? (
         <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
-          Loading folders...
+          Se încarcă dosarele...
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults
@@ -2786,19 +2790,20 @@ function OpenCommandPaletteDialog(props: {
           ? {
               emptyStateMessage:
                 addProjectCloneFlow.source === "url"
-                  ? "Enter a Git clone URL and press Enter to continue."
-                  : "Enter a repository path and press Enter to look it up.",
+                  ? "Introdu o adresă Git și apasă Enter ca să continui."
+                  : "Introdu calea repository-ului și apasă Enter ca să-l cauți.",
             }
           : addProjectCloneFlow?.step === "confirm"
-            ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
+            ? { emptyStateMessage: "Alege o cale de destinație și apasă Enter ca să clonezi." }
             : relativePathNeedsActiveProject
-              ? { emptyStateMessage: "Relative paths require an active project." }
+              ? { emptyStateMessage: "Căile relative necesită un proiect activ." }
               : willCreateProjectPath
                 ? {
-                    emptyStateMessage: "Press Enter to create this folder and add it as a project.",
+                    emptyStateMessage:
+                      "Apasă Enter ca să creezi dosarul și să-l adaugi ca proiect.",
                   }
                 : isThreadSearchPending
-                  ? { emptyStateMessage: "Searching thread messages…" }
+                  ? { emptyStateMessage: "Se caută în mesaje…" }
                   : {})}
       />
     </CommandPaletteContent>

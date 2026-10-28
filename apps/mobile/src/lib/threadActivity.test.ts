@@ -208,8 +208,8 @@ it("binds a persisted resume answer only to the next compaction in its run", () 
     );
     expect(compactRows).toHaveLength(2);
     expect(labels.get(compactRows[0]!.id)).toEqual({
-      title: "Context compacted after 2h 10m idle",
-      compacting: "Compacting after 2h 10m idle…",
+      title: "Context compactat după 2h 10m de inactivitate",
+      compacting: "Se compactează după 2h 10m de inactivitate…",
     });
     expect(labels.get(compactRows[1]!.id)).toBeUndefined();
   }
@@ -726,7 +726,7 @@ describe("buildThreadFeed", () => {
     expect(collapsed[1]).toMatchObject({
       type: "run-fold",
       createdAt: "2026-06-20T00:00:01.500Z",
-      label: "Worked for 2.0s",
+      label: "A lucrat 2.0s",
     });
 
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
@@ -965,10 +965,10 @@ describe("buildThreadFeed", () => {
     const settled = deriveThreadFeedPresentation(feed(false), null, new Set());
     expect(shape(settled)).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:resume-answer",
     ]);
     const launchFold = settled.find((entry) => entry.type === "run-fold");
@@ -977,11 +977,11 @@ describe("buildThreadFeed", () => {
       shape(deriveThreadFeedPresentation(feed(false), null, new Set([launchFold.runId]))),
     ).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "activity-group",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:resume-answer",
     ]);
 
@@ -998,7 +998,7 @@ describe("buildThreadFeed", () => {
       ),
     ).toEqual([
       "user:launch",
-      "fold:Worked for 8.0s",
+      "fold:A lucrat 8.0s",
       "assistant:launch-answer",
       "user:resume",
       "activity-group",
@@ -1085,7 +1085,7 @@ describe("buildThreadFeed", () => {
     );
     expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
       id: "live-activity-row",
-      activities: [{ live: true, groupStandIn: { label: "Running vp" } }],
+      activities: [{ live: true, groupStandIn: { label: "Rulează vp" } }],
     });
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
@@ -1480,7 +1480,7 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
       at,
     );
   expect(rows([first]).find((row) => row.type === "work-toggle")).toMatchObject({
-    summary: "Thinking",
+    summary: "Se gândește",
     thought: "first-thought",
     live: true,
     shimmer: true,
@@ -1494,7 +1494,9 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   const header = afterSteer.find((row) => row.type === "work-toggle");
   if (header?.type !== "work-toggle") throw new Error("Expected thought toggle");
   const expanded = rows([first, steer], new Set([header.groupId]));
-  expect(expanded.find((row) => row.type === "work-toggle")).toMatchObject({ summary: "Thought" });
+  expect(expanded.find((row) => row.type === "work-toggle")).toMatchObject({
+    summary: "S-a gândit",
+  });
   expect(expanded.find((row) => row.type === "activity-group")).toMatchObject({
     activities: [{ lifecycleStatus: "completed", workEntry: { toolLifecycleStatus: "completed" } }],
   });
@@ -1507,8 +1509,8 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
     expect(live).toHaveLength(1);
     expect(live[0]).toMatchObject(
       items.at(-1)!.type === "reasoning"
-        ? { summary: "Thinking", thought: "next-thought" }
-        : { summary: "Running vp" },
+        ? { summary: "Se gândește", thought: "next-thought" }
+        : { summary: "Rulează vp" },
     );
   }
   expect(first.status).toBe("running");

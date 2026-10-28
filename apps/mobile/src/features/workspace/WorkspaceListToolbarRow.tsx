@@ -28,7 +28,7 @@ export function WorkspaceListToolbarRow(props: {
       {props.searching ? (
         <>
           <AndroidHeaderIconButton
-            accessibilityLabel="Close search"
+            accessibilityLabel="Închide căutarea"
             icon="arrow.left"
             onPress={props.onCloseSearch}
           />

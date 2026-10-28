@@ -100,7 +100,7 @@ export function AppBar(props: AppBarProps) {
           <View className="flex-row items-center gap-2" style={{ minHeight: buttonSize }}>
             {props.onBack ? (
               <Pressable
-                accessibilityLabel="Navigate up"
+                accessibilityLabel="Înapoi"
                 accessibilityRole="button"
                 hitSlop={8}
                 onPress={props.onBack}
@@ -170,7 +170,7 @@ export function AppBar(props: AppBarProps) {
               ...(search.refreshInToolbar && search.onRefresh
                 ? [
                     {
-                      accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
+                      accessibilityLabel: search.refreshAccessibilityLabel ?? "Reîmprospătează",
                       icon: "arrow.clockwise" as const,
                       onPress: search.onRefresh,
                     },
@@ -211,14 +211,14 @@ export function AppBar(props: AppBarProps) {
             >
               <View className="flex-1 flex-row items-center gap-1">
                 <ScreenHeaderButton
-                  accessibilityLabel={search.closeAccessibilityLabel ?? "Close search"}
+                  accessibilityLabel={search.closeAccessibilityLabel ?? "Închide căutarea"}
                   icon="arrow.left"
                   onPress={closeSearch}
                 />
                 <SearchField
                   inputRef={inputRef}
                   accessibilityLabel={search.placeholder}
-                  clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
+                  clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Șterge căutarea"}
                   placeholder={search.placeholder}
                   value={search.value}
                   onChangeText={search.onChangeText}

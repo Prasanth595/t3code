@@ -15,7 +15,7 @@ export function createNativeMailSearchToolbarItem(
   input: NativeMailSearchToolbarInput,
 ): HeaderBarButtonMailSearchToolbarItem {
   return {
-    placeholder: "Search",
+    placeholder: "Caută",
     ...input,
     type: "mailSearchToolbar",
     useFallbackSearchField: true,

@@ -63,7 +63,7 @@ export function SettingsScopeNotice({
           const { primary, secondary } = environment
             ? settingsScopeEnvironmentLabels(environment, environments)
             : {
-                primary: member.environmentLabel ?? "Environment",
+                primary: member.environmentLabel ?? "Mediu",
                 secondary: member.environmentId,
               };
           return {
@@ -110,7 +110,7 @@ export function SettingsScopeNotice({
               })
           : [
               {
-                label: "Open all environments",
+                label: "Deschide toate mediile",
                 icon: <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />,
                 search: {},
               },

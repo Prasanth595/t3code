@@ -71,14 +71,16 @@ export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",
     actions: [
-      ...(target.fullPath ? [{ id: "copy-full-path", title: "Copy full path" }] : []),
-      ...(target.relativePath ? [{ id: "copy-relative-path", title: "Copy relative path" }] : []),
-      { id: "open-file", title: "Open in file viewer" },
+      ...(target.fullPath ? [{ id: "copy-full-path", title: "Copiază calea completă" }] : []),
+      ...(target.relativePath
+        ? [{ id: "copy-relative-path", title: "Copiază calea relativă" }]
+        : []),
+      { id: "open-file", title: "Deschide în vizualizator" },
       ...(fileChipMetadata(target)
         ? [
             {
               id: "save",
-              title: "Save or share",
+              title: "Salvează sau partajează",
             },
           ]
         : []),

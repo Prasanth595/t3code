@@ -105,11 +105,11 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
       <View className="h-11 flex-row items-center justify-between px-3">
         <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-          {app?.server ?? "App"}
+          {app?.server ?? "Aplicație"}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Exit full screen"
+          accessibilityLabel="Ieși din ecran complet"
           hitSlop={8}
           onPress={onClose}
         >
@@ -128,7 +128,9 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
       >
         {app === undefined ? (
           detail.data === undefined ? null : (
-            <Text className="m-6 text-sm text-foreground-muted">This app cannot be shown.</Text>
+            <Text className="m-6 text-sm text-foreground-muted">
+              Această aplicație nu poate fi afișată.
+            </Text>
           )
         ) : size.width > 0 ? (
           <ThreadMcpApp

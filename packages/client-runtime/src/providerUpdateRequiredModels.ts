@@ -32,5 +32,5 @@ export function formatProviderUpdateRequiredNotice(
     RUNTIME_NAMES[provider.driver] ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
   const version = minVersion.startsWith("v") ? minVersion : `v${minVersion}`;
   const names = formatModelList(models.map((model) => model.name));
-  return `Update ${providerName} to ${version} or newer to use ${names}.`;
+  return `Actualizează ${providerName} la ${version} sau mai nou ca să folosești ${names}.`;
 }

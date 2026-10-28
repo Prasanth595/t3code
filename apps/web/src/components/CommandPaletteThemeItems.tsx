@@ -20,17 +20,17 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export const APPEARANCE_OPTIONS = [
-  { mode: "system", label: "System", icon: MonitorIcon },
-  { mode: "light", label: "Light", icon: SunIcon },
-  { mode: "dark", label: "Dark", icon: MoonIcon },
+  { mode: "system", label: "Sistem", icon: MonitorIcon },
+  { mode: "light", label: "Luminos", icon: SunIcon },
+  { mode: "dark", label: "Întunecat", icon: MoonIcon },
 ] as const;
 
 export function notifyThemeSaveFailure(): void {
   toastManager.add(
     stackedThreadToast({
       type: "error",
-      title: "Couldn't save theme selection",
-      description: "Try again.",
+      title: "Tema aleasă nu a putut fi salvată",
+      description: "Încearcă din nou.",
     }),
   );
 }
@@ -69,19 +69,22 @@ export function useCommandPaletteThemeItems() {
     kind: "submenu",
     value: "action:change-theme",
     searchTerms: ["change theme", "appearance", "colors", "palette"],
-    title: "Change theme",
+    title: "Schimbă tema",
     icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
     addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
     shortcutCommand: "theme.select",
     groups: [
       {
         value: "themes",
-        label: "Change theme",
+        label: "Schimbă tema",
         items: themeCards.map(({ id, label, previews }) => ({
           kind: "action",
           value: id === null ? "theme:standard" : `theme:palette:${id}`,
           title: label,
-          description: previews.length === 1 ? `For ${previews[0]!.mode} mode` : undefined,
+          description:
+            previews.length === 1
+              ? `Pentru modul ${previews[0]!.mode === "light" ? "luminos" : "întunecat"}`
+              : undefined,
           searchTerms: [label, "theme", "appearance"],
           icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
           titleTrailingContent: (
@@ -117,14 +120,14 @@ export function useCommandPaletteThemeItems() {
     kind: "submenu",
     value: "action:change-appearance",
     searchTerms: ["change appearance", "light", "dark", "system", "mode", "toggle"],
-    title: "Change appearance",
+    title: "Schimbă aspectul",
     icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
     addonIcon: <MonitorIcon className={ADDON_ICON_CLASS} />,
     shortcutCommand: "appearance.cycle",
     groups: [
       {
         value: "appearance",
-        label: "Change appearance",
+        label: "Schimbă aspectul",
         items: APPEARANCE_OPTIONS.map(({ mode, label, icon: Icon }) => ({
           kind: "action",
           value: `appearance:${mode}`,
@@ -147,7 +150,7 @@ export function useCommandPaletteThemeItems() {
     kind: "action",
     value: "action:theme-editor",
     searchTerms: ["theme", "appearance", "colors", "palette", "customize"],
-    title: "Toggle theme editor",
+    title: "Comută editorul de teme",
     icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
     shortcutCommand: "themeEditor.toggle",
     run: async () => {

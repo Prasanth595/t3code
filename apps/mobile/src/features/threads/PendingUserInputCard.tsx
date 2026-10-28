@@ -136,7 +136,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-          User input needed
+          E nevoie de răspunsul tău
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
           {questionCount} question{questionCount === 1 ? "" : "s"}
@@ -151,7 +151,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
-          accessibilityLabel="Stop"
+          accessibilityLabel="Oprește"
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
@@ -182,13 +182,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
+        accessibilityLabel="Restrânge întrebarea"
         onPress={props.onToggleCollapsed}
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-            User input needed
+            E nevoie de răspunsul tău
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
@@ -212,8 +212,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       >
         {!canRespond ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            The provider process for this request is no longer available. Interrupt or restart the
-            run to continue.
+            Procesul furnizorului pentru această cerere nu mai e disponibil. Întrerupe sau
+            repornește rularea ca să continui.
           </Text>
         ) : null}
         {props.pendingUserInput.questions.map((question) => {
@@ -285,7 +285,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         })}
       </ScrollView>
       <Button
-        label="Submit answers"
+        label="Trimite răspunsurile"
         fullWidth
         tone={props.answers ? "primary" : "secondary"}
         disabled={!props.canOperateThread || responseDisabled || props.answers === null}
@@ -293,7 +293,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       />
       {props.pendingUserInput.dismissible ? (
         <Button
-          label="Dismiss without answering"
+          label="Închide fără răspuns"
           tone="text"
           disabled={isResponding}
           onPress={() => void props.onDismiss()}
@@ -301,7 +301,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       ) : null}
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-tertiary">
-          This connection cannot submit answers.
+          Această conexiune nu poate trimite răspunsuri.
         </Text>
       ) : null}
     </Animated.View>

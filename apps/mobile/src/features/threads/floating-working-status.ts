@@ -46,7 +46,7 @@ export function connectionFloatingStatus(input: {
   readonly environmentLabel: string | null;
   readonly onReconnect: () => void;
 }): FloatingWorkingStatus | null {
-  const environmentLabel = input.environmentLabel ?? "Environment";
+  const environmentLabel = input.environmentLabel ?? "Mediul";
   const unavailable = (label: string): FloatingWorkingStatus => ({
     kind: "connection",
     tone: "unavailable",
@@ -62,22 +62,22 @@ export function connectionFloatingStatus(input: {
         tone: "reconnecting",
         label:
           input.connectionError === null
-            ? `Reconnecting to ${environmentLabel}...`
-            : `Failed to connect. Retrying ${environmentLabel}...`,
+            ? `Reconectare la ${environmentLabel}...`
+            : `Conectarea a eșuat. Se reîncearcă ${environmentLabel}...`,
         onPress: input.onReconnect,
       };
     case "offline":
-      return unavailable("You are offline");
+      return unavailable("Ești offline");
     case "unsupported":
-      return unavailable("Client not supported");
+      return unavailable("Client nesuportat");
     case "error":
       return unavailable(
         input.connectionError
-          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
-          : `Failed to connect to ${environmentLabel}`,
+          ? `Conectarea la ${environmentLabel} a eșuat: ${input.connectionError}`
+          : `Conectarea la ${environmentLabel} a eșuat`,
       );
     case "available":
-      return unavailable(`${environmentLabel} is not connected`);
+      return unavailable(`${environmentLabel} nu este conectat`);
     case "connected":
       return null;
   }

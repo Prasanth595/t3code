@@ -48,7 +48,7 @@ export function GitActionProgressOverlay(props: {
   const prUrl = progress.prUrl;
   // A finished action reports only the URL it created.
   const openLabel = prUrl
-    ? `Open ${(sourceControlClients.findByChangeRequestUrl(prUrl) ?? sourceControlClients.get(undefined)).changeRequest.shortLabel}`
+    ? `Deschide ${(sourceControlClients.findByChangeRequestUrl(prUrl) ?? sourceControlClients.get(undefined)).changeRequest.shortLabel}`
     : null;
 
   return (
@@ -60,7 +60,7 @@ export function GitActionProgressOverlay(props: {
       pointerEvents="box-none"
     >
       <Toast
-        message={progress.label ?? "Source control"}
+        message={progress.label ?? "Controlul versiunilor"}
         description={progress.description ?? undefined}
         tone={
           progress.phase === "error"

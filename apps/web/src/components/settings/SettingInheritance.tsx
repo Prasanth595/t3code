@@ -32,28 +32,28 @@ interface InheritanceLayer {
 }
 
 const WRITING_STYLE_LABELS: Record<string, string> = {
-  repo_conventions: "Repository conventions",
+  repo_conventions: "Convențiile repository-ului",
   conventional_commits: "Conventional Commits",
-  custom: "Custom instructions",
+  custom: "Instrucțiuni personalizate",
 };
 
 function formatValue(key: keyof ServerSettings, value: unknown): string {
   if (value === null || value === undefined) {
     return key === "pullRequestMergeMethod"
-      ? "Last selected"
+      ? "Ultima aleasă"
       : key === "sidebarAutoSettleAfterDays"
-        ? "Never"
+        ? "Niciodată"
         : key === "defaultModelSelection"
-          ? "Automatic"
+          ? "Automat"
           : key === "sourceControlWriterModelSelection"
-            ? "Text generation model"
+            ? "Model de generare text"
             : key === "reviewGuideModelSelection"
-              ? "Source control writer model"
+              ? "Model pentru texte de control al versiunilor"
               : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
-                ? "Inherit"
-                : "Not set";
+                ? "Moștenește"
+                : "Nesetat";
   }
-  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "boolean") return value ? "Activ" : "Oprit";
   if (typeof value === "number") {
     return key === "sidebarAutoSettleAfterDays"
       ? `${value} ${value === 1 ? "day" : "days"}`
@@ -71,7 +71,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
         value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
       ];
     }
-    return value === "" ? "Empty" : value;
+    return value === "" ? "Gol" : value;
   }
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
   if (typeof value === "object") {
@@ -80,7 +80,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
       return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
     }
   }
-  return "Custom";
+  return "Personalizat";
 }
 
 /** Matches resolveProjectSettings order. */
@@ -97,8 +97,8 @@ export function settingInheritanceLayers(
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
       key: "project",
-      label: "Project",
-      value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
+      label: "Proiect",
+      value: source === "project" ? formatValue(key, target.settings[key]) : "Moștenește",
       effective: source === "project",
       set: source === "project",
     });
@@ -106,7 +106,7 @@ export function settingInheritanceLayers(
   layers.push({
     key: "environment",
     label: target.label,
-    value: environmentSet ? formatValue(key, environmentValue) : "Inherits",
+    value: environmentSet ? formatValue(key, environmentValue) : "Moștenește",
     effective: source === "environment" && environmentSet,
     set: environmentSet,
   });
@@ -114,7 +114,7 @@ export function settingInheritanceLayers(
     layers.push({
       key: "t3.json",
       label: "t3.json",
-      value: source === "t3.json" ? formatValue(key, target.settings[key]) : "Inherits",
+      value: source === "t3.json" ? formatValue(key, target.settings[key]) : "Moștenește",
       effective: source === "t3.json",
       set: source === "t3.json",
     });
@@ -125,7 +125,7 @@ export function settingInheritanceLayers(
     : DEFAULT_SERVER_SETTINGS[key];
   layers.push({
     key: "built-in",
-    label: "Default",
+    label: "Implicit",
     value: formatValue(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,
@@ -177,7 +177,7 @@ export function SettingInheritance({
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
   const overrideSummary =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      ? `${summary} · ${overridingProjects.length} ${overridingProjects.length === 1 ? "excepție de proiect" : "excepții de proiect"}`
       : summary;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
@@ -239,7 +239,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={`${overrideSummary}. Arată de unde vine valoarea`}
                 />
               }
             />
@@ -329,9 +329,7 @@ export function SettingInheritance({
                             {winningLayer?.value}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {winningLayer?.key === "environment"
-                              ? "Environment"
-                              : winningLayer?.label}
+                            {winningLayer?.key === "environment" ? "Mediu" : winningLayer?.label}
                           </span>
                           <ChevronRightIcon
                             aria-hidden
@@ -364,7 +362,7 @@ export function SettingInheritance({
                     {chain}
                     {hasMultipleEnvironments ? (
                       <p className="px-2 pt-1.5 text-xs text-muted-foreground">
-                        Same on all machines
+                        La fel pe toate calculatoarele
                       </p>
                     ) : null}
                   </>
@@ -383,10 +381,10 @@ export function SettingInheritance({
                             aria-hidden
                             className="size-3 [[data-panel-open]_&]:rotate-90"
                           />
-                          Overridden by
+                          Suprascris de
                         </CollapsibleTrigger>
                       ) : (
-                        <span>Overridden by</span>
+                        <span>Suprascris de</span>
                       )}
                       {onClearOverrides ? (
                         <InlineButton onClick={() => onClearOverrides(overriding)}>

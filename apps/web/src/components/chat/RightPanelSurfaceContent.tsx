@@ -119,8 +119,8 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
-            error="Update this environment's Mira server to browse pull requests."
+            title="Pull request-urile nu sunt disponibile"
+            error="Actualizează serverul Mira al acestui mediu ca să vezi pull request-urile."
           />
         );
       }

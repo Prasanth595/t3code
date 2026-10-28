@@ -55,8 +55,8 @@ export function SidebarThreadHeader({
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+    ? `Conversație nouă (${newThreadShortcutLabel})`
+    : "Conversație nouă";
 
   return (
     <div className="flex items-center gap-1">
@@ -72,8 +72,8 @@ export function SidebarThreadHeader({
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
-          placeholder="Search"
-          aria-label="Search threads"
+          placeholder="Caută"
+          aria-label="Caută conversații"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}
@@ -91,7 +91,7 @@ export function SidebarThreadHeader({
             size="icon-micro"
             variant="ghost-muted"
             className="shrink-0"
-            aria-label="Clear thread search"
+            aria-label="Șterge căutarea"
             onClick={() => {
               onClearSearch();
               searchInputRef.current?.focus();
@@ -105,19 +105,19 @@ export function SidebarThreadHeader({
         {hasProjects ? (
           <>
             {projectScope}
-            <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+            <SidebarHeaderIconButton label="Adaugă proiect" onClick={onNewProject}>
               <FolderPlusIcon />
             </SidebarHeaderIconButton>
           </>
         ) : null}
         <SidebarHeaderIconButton
-          label="New thread"
+          label="Conversație nouă"
           tooltip={
             showNewThreadInProjectHint ? (
               <span className="flex flex-col gap-0.5">
                 <span>{newThreadLabel}</span>
                 <span className="text-muted-foreground">
-                  New thread in current project: Shift+click
+                  Conversație nouă în proiectul curent: Shift+clic
                   {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
                 </span>
               </span>

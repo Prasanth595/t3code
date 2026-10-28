@@ -27,7 +27,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
               <Pressable
                 key={tab}
                 accessibilityRole="tab"
-                accessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
+                accessibilityLabel={tab === "threads" ? "Conversații" : "Pull request-uri"}
                 accessibilityState={{ selected }}
                 onPress={() => {
                   if (selected) return;
@@ -59,7 +59,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="New chat"
+          accessibilityLabel="Chat nou"
           onPress={props.onNewTask}
           className="flex-1 items-center justify-center"
         >

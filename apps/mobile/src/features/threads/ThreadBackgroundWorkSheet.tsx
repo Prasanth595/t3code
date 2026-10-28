@@ -23,9 +23,9 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const KIND_LABELS = {
   subagent: "Subagent",
-  command: "Command",
-  monitor: "Monitor",
-  background_task: "Background task",
+  command: "Comandă",
+  monitor: "Monitorizare",
+  background_task: "Sarcină în fundal",
 } as const;
 
 type BackgroundWorkTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
@@ -56,7 +56,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
     >
       {presentation === null ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          Nothing running in the background.
+          Nimic nu rulează în fundal.
         </Text>
       ) : (
         presentation.items.map((item) => (
@@ -83,7 +83,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
               tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
-              title="Background work"
+              title="Activitate în fundal"
               titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
@@ -97,7 +97,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title="Background work" onBack={() => navigation.goBack()} />
+      <AndroidSheetHeader title="Activitate în fundal" onBack={() => navigation.goBack()} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );
@@ -133,7 +133,7 @@ function BackgroundWorkRow(props: {
   ) : (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`Open subagent ${item.label}`}
+      accessibilityLabel={`Deschide subagentul ${item.label}`}
       onPress={() => props.onOpen(childThreadId)}
       className="active:opacity-70"
     >

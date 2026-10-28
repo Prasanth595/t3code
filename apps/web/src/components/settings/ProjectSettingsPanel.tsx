@@ -131,15 +131,15 @@ export function ProjectSettingsPanel({
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
         {groups.length === 0
-          ? "Add a project from the sidebar to configure it here."
-          : "This project is no longer available."}
+          ? "Adaugă un proiect din bara laterală ca să-l configurezi aici."
+          : "Proiectul nu mai e disponibil."}
       </div>
     );
   }
   if (members.length === 0)
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This checkout is no longer available in the selected project and environment.
+        Acest checkout nu mai e disponibil în proiectul și mediul selectat.
       </p>
     );
   const scopedGroup = {
@@ -206,7 +206,7 @@ function ProjectDetail({
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       }),
     );
   };
@@ -222,7 +222,7 @@ function ProjectDetail({
     const result = AsyncResult.failure<void, Error>(
       Cause.fail(
         new Error(
-          `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+          `Această conexiune nu poate modifica proiecte în ${denied.environmentLabel ?? "acest mediu"}.`,
         ),
       ),
     );
@@ -246,7 +246,7 @@ function ProjectDetail({
     });
     if (unavailable) {
       const error = new Error(
-        `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+        `Conectează ${unavailable.environmentLabel ?? "mediul selectat"} și încearcă din nou.`,
       );
       const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
       reportFailure(failureTitle, result);
@@ -265,7 +265,7 @@ function ProjectDetail({
       if (result._tag === "Failure") {
         reportFailure(
           group.memberProjects.length > 1
-            ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            ? `${failureTitle} pe ${member.environmentLabel ?? "mediul curent"}`
             : failureTitle,
           result,
         );
@@ -278,7 +278,7 @@ function ProjectDetail({
   const renameGroup = async (nextTitle: string, wasEdited: boolean) => {
     const title = nextTitle.trim();
     if (!title) {
-      toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+      toastManager.add({ type: "warning", title: "Numele proiectului nu poate fi gol" });
       return;
     }
     if (
@@ -290,7 +290,7 @@ function ProjectDetail({
     ) {
       return;
     }
-    await updateAllMembers({ title }, "Failed to rename project");
+    await updateAllMembers({ title }, "Proiectul nu a putut fi redenumit");
   };
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
@@ -304,7 +304,7 @@ function ProjectDetail({
     if (savingFaviconRef.current) return;
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, "Failed to update project icon");
+    await updateAllMembers(input, "Pictograma proiectului nu a putut fi actualizată");
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
   };
@@ -312,7 +312,7 @@ function ProjectDetail({
   const hasMultipleCheckouts = group.memberProjects.length > 1;
 
   const removeMembers = async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
-    if (checkProjectAccess(members, "Failed to remove project")) return;
+    if (checkProjectAccess(members, "Proiectul nu a putut fi eliminat")) return;
     const api = readLocalApi();
     if (!api) return;
 
@@ -328,11 +328,11 @@ function ProjectDetail({
       api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
     );
     if (confirmed._tag === "Failure" || !confirmed.value) return;
-    if (checkProjectAccess(members, "Failed to remove project")) return;
+    if (checkProjectAccess(members, "Proiectul nu a putut fi eliminat")) return;
 
     const draftStore = useComposerDraftStore.getState();
     for (const member of members) {
-      if (checkProjectAccess([member], "Failed to remove project")) return;
+      if (checkProjectAccess([member], "Proiectul nu a putut fi eliminat")) return;
       const memberThreads = projectThreads.filter(
         (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
       );
@@ -347,7 +347,7 @@ function ProjectDetail({
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportFailure(`Failed to remove "${member.title}"`, result);
+        reportFailure(`„${member.title}” nu a putut fi eliminat`, result);
         return;
       }
       const projectRef = scopeProjectRef(member.environmentId, member.id);
@@ -384,19 +384,19 @@ function ProjectDetail({
       variant="outline"
       disabled={!editableIds.has(member.environmentId)}
       onClick={() => void removeMembers([member])}
-      aria-label={`Remove checkout ${member.workspaceRoot}`}
+      aria-label={`Elimină checkout-ul ${member.workspaceRoot}`}
     >
       Remove
     </Button>
   );
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection title="Checkout-uri">
       {Array.from(checkoutsByEnvironment, ([environmentId, members]) => {
         if (checkoutsByEnvironment.size === 1) {
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
-              title={member.environmentLabel ?? "Environment"}
+              title={member.environmentLabel ?? "Mediu"}
               description={member.workspaceRoot}
               control={checkoutRemoveButton(member)}
             />
@@ -407,7 +407,7 @@ function ProjectDetail({
         const environment = environmentById.get(environmentId);
         const labels = environment
           ? settingsScopeEnvironmentLabels(environment, environments)
-          : { primary: firstMember.environmentLabel ?? "Environment", secondary: environmentId };
+          : { primary: firstMember.environmentLabel ?? "Mediu", secondary: environmentId };
         return (
           <SettingsRow
             key={environmentId}
@@ -463,26 +463,27 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            Can't find a setting? Keep this project picked above and hop to any other settings page.
+            Nu găsești o setare? Păstrează proiectul ales mai sus și mergi la orice altă pagină de
+            setări.
           </AlertDescription>
         </Alert>
-        <SettingsSection id="project-overview" title="Project" hideTitle>
+        <SettingsSection id="project-overview" title="Proiect" hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
-                ? "Shared settings require permission to change every checkout in this group."
-                : "This connection cannot change this project."}
+                ? "Setările comune necesită permisiunea de a schimba fiecare checkout din grup."
+                : "Această conexiune nu poate modifica acest proiect."}
             </p>
           ) : null}
           <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            title="Nume"
+            description="Numele comun al acestui grup de proiecte în bara laterală și în liste."
             control={
               <Input
                 key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
                 className="w-full sm:w-64"
-                aria-label="Project name"
+                aria-label="Numele proiectului"
                 disabled={!canEditGroup}
                 defaultValue={group.displayName}
                 onChange={() => {
@@ -500,7 +501,7 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Project icon"
+            title="Pictograma proiectului"
             description={
               projectIcon?.kind === "lucide"
                 ? `${projectIcon.name} · ${projectIcon.color}`
@@ -508,7 +509,7 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : (faviconPath ?? "Automat")
             }
             resetAction={
               group.memberProjects.some(
@@ -528,21 +529,21 @@ function ProjectDetail({
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon"
+                  aria-label="Alege o pictogramă"
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setIconPickerOpen(true)}
                 >
-                  Choose icon
+                  Alege pictograma
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon file"
+                  aria-label="Alege un fișier pentru pictogramă"
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setFaviconPickerOpen(true)}
                 >
-                  Choose file
+                  Alege fișierul
                 </Button>
               </div>
             }
@@ -551,21 +552,21 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
-        <SettingsSection title="Danger">
+        <SettingsSection title="Zonă periculoasă">
           <SettingsRow
             title={
               hasOtherMembers
-                ? "Remove checkout"
+                ? "Elimină checkout-ul"
                 : group.memberProjects.length > 1
-                  ? "Remove this project everywhere"
-                  : "Remove project"
+                  ? "Elimină proiectul peste tot"
+                  : "Elimină proiectul"
             }
             description={
               hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                ? "Șterge checkout-urile calculatorului selectat și conversațiile lor. Celelalte calculatoare și fișierele de pe disc nu sunt atinse."
                 : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
+                  ? `Șterge toate cele ${group.memberProjects.length} checkout-uri și conversațiile lor de pe toate calculatoarele. Fișierele de pe disc nu sunt atinse.`
+                  : "Șterge proiectul și conversațiile lui. Fișierele de pe disc nu sunt atinse."
             }
             control={
               <Button
@@ -576,10 +577,10 @@ function ProjectDetail({
               >
                 <Trash2Icon />
                 {hasOtherMembers
-                  ? "Remove checkout"
+                  ? "Elimină checkout-ul"
                   : group.memberProjects.length > 1
-                    ? "Remove all entries"
-                    : "Remove project"}
+                    ? "Elimină toate intrările"
+                    : "Elimină proiectul"}
               </Button>
             }
           />

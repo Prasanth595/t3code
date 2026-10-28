@@ -42,7 +42,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         stackedThreadToast({
           type: "error",
           title,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     }
@@ -51,11 +51,11 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
   const activeProjectFileCopy = useProjectFileCopy(activeProjectRef);
   const projectCloneSendBlockReason =
     activeProjectClone?.phase === "running"
-      ? "Cloning repository"
+      ? "Se clonează repository-ul"
       : activeProjectClone !== null && activeProjectClone.phase !== "done"
-        ? "Repository not cloned"
+        ? "Repository-ul nu a fost clonat"
         : activeProjectFileCopy?.phase === "copying"
-          ? "Copying files"
+          ? "Se copiază fișierele"
           : null;
   const projectCloneBannerItem = (() => {
     if (activeProjectFileCopy?.phase === "failed" && activeProjectRef) {
@@ -79,14 +79,14 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         variant: "info",
         priority: "activity",
         icon: <DownloadIcon />,
-        title: `Cloning ${name}`,
+        title: `Se clonează ${name}`,
         description: projectCloneProgressSummary(activeProjectClone),
         actions: (
           <Button
             size="xs"
             variant="ghost"
             onClick={() =>
-              void runProjectCloneActionStable("Failed to cancel clone", () =>
+              void runProjectCloneActionStable("Clonarea nu a putut fi anulată", () =>
                 cancelProjectClone({ environmentId, input: { projectId } }),
               )
             }
@@ -101,8 +101,8 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
       id: `project-clone:${projectId}`,
       variant: cancelled ? "warning" : "error",
       icon: <DownloadIcon />,
-      title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
-      description: cancelled ? "Retry to bring in the repository." : activeProjectClone.error,
+      title: cancelled ? `Clonarea ${name} a fost anulată` : `Clonarea ${name} a eșuat`,
+      description: cancelled ? "Reîncearcă ca să aduci repository-ul." : activeProjectClone.error,
       actions: (
         <>
           <Button
@@ -110,13 +110,13 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
             variant="ghost"
             onClick={() => void removeClonedProject({ environmentId, projectId })}
           >
-            Remove project
+            Elimină proiectul
           </Button>
           <Button
             size="xs"
             variant="ghost"
             onClick={() =>
-              void runProjectCloneActionStable("Failed to retry clone", () =>
+              void runProjectCloneActionStable("Clonarea nu a putut fi reluată", () =>
                 retryProjectClone({ environmentId, input: { projectId } }),
               )
             }

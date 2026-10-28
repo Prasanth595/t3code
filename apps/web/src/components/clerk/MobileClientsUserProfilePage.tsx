@@ -28,7 +28,7 @@ function MobileClientStatusBadge({
 }) {
   return (
     <Badge variant={enabled ? "success" : "outline"}>
-      {label}: {enabled ? "On" : "Off"}
+      {label}: {enabled ? "Activ" : "Oprit"}
     </Badge>
   );
 }
@@ -50,10 +50,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
         </p>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        <MobileClientStatusBadge
-          enabled={device.notifications.enabled}
-          label="Push notifications"
-        />
+        <MobileClientStatusBadge enabled={device.notifications.enabled} label="Notificări push" />
         <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
       </div>
       <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
@@ -92,10 +89,10 @@ function EmptyMobileClients() {
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No mobile clients</EmptyTitle>
+        <EmptyTitle>Niciun dispozitiv mobil</EmptyTitle>
         <EmptyDescription>
-          Install Mira on your phone and sign in to T3 Connect to get push notifications and Live
-          Activities.
+          Instalează Mira pe telefon și autentifică-te în contul Mira ca să primești notificări push
+          și Live Activities.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -111,8 +108,8 @@ export function MobileClientsUserProfilePage() {
 
   return (
     <ClerkUserProfilePage
-      title="Mobile clients"
-      description="Mobile devices that get notifications from your environments."
+      title="Dispozitive mobile"
+      description="Dispozitivele mobile care primesc notificări de la mediile tale."
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
@@ -128,12 +125,12 @@ export function MobileClientsUserProfilePage() {
           >
             <div>
               <p className="font-medium text-destructive-foreground">
-                Could not load mobile clients
+                Dispozitivele mobile nu au putut fi încărcate
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="outline" onClick={devicesState.refresh}>
-              Try again
+              Încearcă din nou
             </Button>
           </div>
         ) : null}

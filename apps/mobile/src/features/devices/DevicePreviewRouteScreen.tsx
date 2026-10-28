@@ -150,7 +150,7 @@ function DevicePreviewScreen({
       )
       .map((host) => ({
         id: `retry-${host.id}`,
-        title: `Retry ${host.label}`,
+        title: `Reîncearcă ${host.label}`,
         icon: "arrow.clockwise" as const,
         onPress: () => {
           void retryHost({ environmentId, input: { retryHostId: host.id } });
@@ -160,7 +160,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "check-device-tools",
-            title: "Check device tool versions",
+            title: "Verifică versiunile instrumentelor",
             icon: "arrow.clockwise" as const,
             onPress: () => {
               void retryHost({ environmentId, input: { inspectOnly: true } });
@@ -170,11 +170,11 @@ function DevicePreviewScreen({
       : []),
     {
       id: "device-tools",
-      title: "Device tool versions",
+      title: "Versiunile instrumentelor",
       icon: "info.circle",
       onPress: () =>
         Dialog.alert(
-          "Device tool versions",
+          "Versiunile instrumentelor",
           deviceToolUpdateOwnership +
             "\n\n" +
             deviceToolUpdatePolicy(
@@ -193,7 +193,7 @@ function DevicePreviewScreen({
     },
     {
       id: "reload",
-      title: "Reload stream",
+      title: "Reîncarcă transmisia",
       icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
@@ -205,7 +205,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "back",
-            title: "Back",
+            title: "Înapoi",
             icon: "arrow.left",
             disabled: !inputConnected,
             onPress: () => streamRef.current?.back(),
@@ -214,7 +214,7 @@ function DevicePreviewScreen({
       : []),
     {
       id: "app-switcher",
-      title: "App switcher",
+      title: "Comutator aplicații",
       icon: "square.on.square",
       disabled: !inputConnected,
       onPress: () => streamRef.current?.appSwitcher(),
@@ -223,7 +223,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "rotate",
-            title: "Rotate device",
+            title: "Rotește dispozitivul",
             icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
@@ -232,7 +232,7 @@ function DevicePreviewScreen({
       : []),
     {
       id: "shutdown",
-      title: shuttingDown ? "Shutting down…" : "Shut down device",
+      title: shuttingDown ? "Se oprește…" : "Oprește dispozitivul",
       icon: "power",
       disabled: !preview || shuttingDown,
       onPress: () => void shutDownDevice(),
@@ -244,7 +244,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "devices",
-            title: "Devices",
+            title: "Dispozitive",
             inline: true,
             items: previews.map((device) => ({
               id: device.key,
@@ -277,7 +277,7 @@ function DevicePreviewScreen({
                 {state.error}
               </AppText>
               <View className="items-center">
-                <Button label="Retry" tone="secondary" onPress={state.refresh} />
+                <Button label="Reîncearcă" tone="secondary" onPress={state.refresh} />
               </View>
             </>
           ) : focused && foreground ? (
@@ -294,19 +294,19 @@ function DevicePreviewScreen({
         >
           {inputConnected ? (
             <Pressable
-              accessibilityLabel="Hide device controls"
+              accessibilityLabel="Ascunde controalele"
               className="absolute inset-0 bg-black/30"
               onPress={() => setControlsVisible(false)}
             />
           ) : null}
           <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
             <GlassSurface className="flex-row items-center gap-1 p-1">
-              <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
+              <SheetCloseButton accessibilityLabel="Închide previzualizarea" onClose={onClose} />
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
-                {preview?.name ?? "Devices"}
+                {preview?.name ?? "Dispozitive"}
               </AppText>
               <ControlPill
-                accessibilityLabel="Home"
+                accessibilityLabel="Acasă"
                 icon="house"
                 disabled={!inputConnected}
                 onPress={pressHome}
@@ -318,8 +318,8 @@ function DevicePreviewScreen({
       ) : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Show device controls"
-          accessibilityHint="Shaking the phone also shows them"
+          accessibilityLabel="Arată controalele"
+          accessibilityHint="Le poți afișa și scuturând telefonul"
           hitSlop={12}
           className="absolute h-6 w-16 items-center justify-center self-center"
           style={{
@@ -340,14 +340,14 @@ function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenu
     <Menu
       actions={androidHeaderMenuActions(items)}
       isAnchoredToRight
-      title="Device options"
+      title="Opțiuni dispozitiv"
       onPressAction={({ nativeEvent }) => {
         const action = findHeaderMenuAction(items, nativeEvent.event);
         if (action && !action.disabled) action.onPress();
       }}
     >
       <Pressable
-        accessibilityLabel="Device options"
+        accessibilityLabel="Opțiuni dispozitiv"
         accessibilityRole="button"
         className="size-11 items-center justify-center rounded-full bg-subtle"
       >
@@ -401,7 +401,7 @@ function OpenDevicePreview({
             {error}
           </AppText>
           <View className="items-center">
-            <Button label="Retry" tone="secondary" onPress={refresh} />
+            <Button label="Reîncearcă" tone="secondary" onPress={refresh} />
           </View>
         </>
       ) : (

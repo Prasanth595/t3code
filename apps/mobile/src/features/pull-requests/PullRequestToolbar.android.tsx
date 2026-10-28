@@ -61,17 +61,17 @@ export function PullRequestToolbar(props: { readonly onRequestVisibility?: () =>
         searchField={
           <SearchField
             inputRef={input}
-            accessibilityLabel="Search pull requests"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
+            accessibilityLabel="Caută pull request-uri"
+            clearAccessibilityLabel="Șterge căutarea"
+            placeholder="Caută pull request-uri"
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
         }
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search pull requests"
-        titleAccessibilityLabel="Mira, Pull requests"
+        searchAccessibilityLabel="Caută pull request-uri"
+        titleAccessibilityLabel="Mira, Pull request-uri"
         onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         filter={
           filters ? (
@@ -81,7 +81,7 @@ export function PullRequestToolbar(props: { readonly onRequestVisibility?: () =>
             >
               {(open) => (
                 <AndroidHeaderIconButton
-                  accessibilityLabel="Filter pull requests"
+                  accessibilityLabel="Filtrează pull request-urile"
                   icon={
                     filters.customized
                       ? "line.3.horizontal.decrease.circle.fill"

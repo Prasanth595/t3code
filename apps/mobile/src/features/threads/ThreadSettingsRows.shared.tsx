@@ -99,7 +99,7 @@ export function ModelRowContent(
       </Pressable>
       {props.onToggleHidden ? (
         <Pressable
-          accessibilityLabel={`${props.option.isHidden ? "Show" : "Hide"} model: ${props.option.providerLabel}, ${props.option.label}`}
+          accessibilityLabel={`${props.option.isHidden ? "Arată" : "Ascunde"} modelul: ${props.option.providerLabel}, ${props.option.label}`}
           accessibilityRole="button"
           accessibilityState={{ disabled: props.hiddenUpdatePending === true }}
           className="min-h-11 min-w-11 items-center justify-center"
@@ -115,7 +115,7 @@ export function ModelRowContent(
         </Pressable>
       ) : null}
       <Pressable
-        accessibilityLabel={`${props.isFavorite ? "Remove from" : "Add to"} favorites: ${
+        accessibilityLabel={`${props.isFavorite ? "Elimină din" : "Adaugă la"} favorite: ${
           props.option.providerLabel
         }, ${props.option.label}`}
         accessibilityRole="button"

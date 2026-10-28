@@ -114,7 +114,7 @@ function previewProfileName(
   profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
   profileId: string,
 ): string {
-  return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
+  return profiles.find((profile) => profile.id === profileId)?.name ?? "Profil eliminat";
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
@@ -273,7 +273,7 @@ export function PreviewView({
       if (error instanceof BrowserSettingsReadError) {
         toastManager.add({
           type: "error",
-          title: "Unable to open browser",
+          title: "Browserul nu a putut fi deschis",
           description: error.message,
         });
       }
@@ -317,8 +317,8 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to change the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Fila nu a putut fi schimbată",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       });
       return;
     }
@@ -369,8 +369,8 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to resize browser viewport",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Dimensiunea browserului nu a putut fi schimbată",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       });
       throw error;
     }
@@ -424,7 +424,9 @@ export function PreviewView({
     snapshot,
   );
   const moveLabel =
-    moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
+    moveTarget === "server"
+      ? `Deschide în browserul ${environmentLabel}`
+      : "Deschide pe acest calculator";
   const handleMoveTab = async () => {
     if (!moveTarget || !tabId || !snapshot) return;
     const result = await openPreviewSession({
@@ -447,8 +449,8 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to move the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Fila nu a putut fi mutată",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       });
       return;
     }
@@ -516,8 +518,8 @@ export function PreviewView({
     void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Previzualizarea separată nu a putut fi actualizată",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       });
     });
   };
@@ -538,8 +540,8 @@ export function PreviewView({
                 toastId,
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to copy recording path",
-                  description: "Clipboard API unavailable.",
+                  title: "Calea înregistrării nu a putut fi copiată",
+                  description: "Clipboard-ul nu e disponibil.",
                   actionProps: revealAction,
                 }),
               );
@@ -560,8 +562,8 @@ export function PreviewView({
                   toastId,
                   stackedThreadToast({
                     type: "error",
-                    title: "Unable to copy recording path",
-                    description: error instanceof Error ? error.message : "An error occurred.",
+                    title: "Calea înregistrării nu a putut fi copiată",
+                    description: error instanceof Error ? error.message : "A apărut o eroare.",
                     actionProps: revealAction,
                   }),
                 );
@@ -578,11 +580,11 @@ export function PreviewView({
               toastId,
               stackedThreadToast({
                 type: "success",
-                title: "Recording saved",
+                title: "Înregistrare salvată",
                 actionProps: revealAction,
                 data: {
                   secondaryActionProps: {
-                    children: pathCopied ? "Copied!" : "Copy path",
+                    children: pathCopied ? "Copiat!" : "Copiază calea",
                     disabled: pathCopied,
                     onClick: copyPath,
                   },
@@ -595,11 +597,11 @@ export function PreviewView({
           toastId = toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: "Recording saved",
+              title: "Înregistrare salvată",
               actionProps: revealAction,
               data: {
                 secondaryActionProps: {
-                  children: "Copy path",
+                  children: "Copiază calea",
                   onClick: copyPath,
                 },
                 secondaryActionVariant: "outline",
@@ -610,8 +612,8 @@ export function PreviewView({
         (error) => {
           toastManager.add({
             type: "error",
-            title: "Unable to stop recording",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Înregistrarea nu a putut fi oprită",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           });
         },
       );
@@ -619,11 +621,11 @@ export function PreviewView({
     }
     if (record) {
       void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
-        const description = error instanceof Error ? error.message : "An error occurred.";
+        const description = error instanceof Error ? error.message : "A apărut o eroare.";
         if (isBrowserRecordingStartCancelledError(error)) return;
         toastManager.add({
           type: "error",
-          title: "Unable to start recording",
+          title: "Înregistrarea nu a putut porni",
           description,
         });
       });
@@ -641,7 +643,7 @@ export function PreviewView({
 
         const updateScreenshotToast = (
           type: "success" | "error" = "success",
-          title = "Screenshot saved",
+          title = "Captură salvată",
           description?: string,
         ) => {
           toastManager.update(
@@ -651,7 +653,7 @@ export function PreviewView({
               title,
               description,
               actionProps: {
-                children: imageCopied ? "Copied!" : "Copy image",
+                children: imageCopied ? "Copiat!" : "Copiază imaginea",
                 disabled: imageCopied,
                 onClick: copyImage,
               },
@@ -660,7 +662,7 @@ export function PreviewView({
                   {
                     id: "copy-path",
                     props: {
-                      children: pathCopied ? "Copied!" : "Copy path",
+                      children: pathCopied ? "Copiat!" : "Copiază calea",
                       disabled: pathCopied,
                       onClick: copyPath,
                     },
@@ -679,8 +681,8 @@ export function PreviewView({
           if (!navigator.clipboard?.writeText) {
             updateScreenshotToast(
               "error",
-              "Unable to copy screenshot path",
-              "Clipboard API unavailable.",
+              "Calea capturii nu a putut fi copiată",
+              "Clipboard-ul nu e disponibil.",
             );
             return;
           }
@@ -697,8 +699,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot path",
-                error instanceof Error ? error.message : "An error occurred.",
+                "Calea capturii nu a putut fi copiată",
+                error instanceof Error ? error.message : "A apărut o eroare.",
               );
             },
           );
@@ -717,8 +719,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot",
-                error instanceof Error ? error.message : "An error occurred.",
+                "Captura nu a putut fi copiată",
+                error instanceof Error ? error.message : "A apărut o eroare.",
               );
             },
           );
@@ -727,9 +729,9 @@ export function PreviewView({
         toastId = toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: "Screenshot saved",
+            title: "Captură salvată",
             actionProps: {
-              children: "Copy image",
+              children: "Copiază imaginea",
               onClick: copyImage,
             },
             data: {
@@ -737,7 +739,7 @@ export function PreviewView({
                 {
                   id: "copy-path",
                   props: {
-                    children: "Copy path",
+                    children: "Copiază calea",
                     onClick: copyPath,
                   },
                 },
@@ -753,8 +755,8 @@ export function PreviewView({
       (error) => {
         toastManager.add({
           type: "error",
-          title: "Unable to capture screenshot",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Captura nu a putut fi făcută",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         });
       },
     );
@@ -818,8 +820,8 @@ export function PreviewView({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not capture the picked element",
-            description: "The annotation was kept without the screenshot.",
+            title: "Elementul ales nu a putut fi capturat",
+            description: "Adnotarea a fost păstrată fără captură.",
           }),
         );
       }
@@ -928,7 +930,9 @@ export function PreviewView({
         pickActive={pickActive}
         pickDisabled={!tabId || isUnreachable}
         pickDisabledReason={
-          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
+          isUnreachable
+            ? "Pagina nu s-a încărcat. Selecția nu e disponibilă până se afișează pagina"
+            : undefined
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
@@ -1022,7 +1026,7 @@ export function PreviewView({
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
-                This tab is open in the Mira desktop app.
+                Fila e deschisă în aplicația desktop Mira.
               </p>
             </div>
           )

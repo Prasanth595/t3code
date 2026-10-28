@@ -28,13 +28,13 @@ export function promptLinkNotice(input: {
 }): string {
   return [
     input.hiddenCharacters > 0
-      ? "This prompt had hidden characters, it may be malicious. They were removed. Read it before you send."
-      : "This prompt came from a link. Read it before you send.",
+      ? "Promptul avea caractere ascunse și poate fi rău intenționat. Au fost eliminate. Citește-l înainte să-l trimiți."
+      : "Promptul vine dintr-un link. Citește-l înainte să-l trimiți.",
     input.modelUnavailable
-      ? "The requested model is not available, so your default is used."
+      ? "Modelul cerut nu e disponibil, așa că se folosește cel implicit."
       : null,
     input.pullRequestUnavailable != null
-      ? `Pull request #${input.pullRequestUnavailable} could not be loaded, so this task starts from your default branch.`
+      ? `Pull request-ul #${input.pullRequestUnavailable} nu a putut fi încărcat, așa că sarcina pornește din branch-ul implicit.`
       : null,
   ]
     .filter((line) => line !== null)

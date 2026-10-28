@@ -79,9 +79,9 @@ export function ThreadMarkdownImageView(props: {
         <MediaActionsMenu media={mediaActions}>
           <Pressable
             accessibilityRole="imagebutton"
-            accessibilityLabel={props.alt ?? "Markdown image"}
+            accessibilityLabel={props.alt ?? "Imagine"}
             accessibilityHint={
-              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              mediaActions.actions.length > 0 ? "Ține apăsat pentru acțiuni" : undefined
             }
             className="items-center justify-center rounded-[10px] bg-md-code-bg"
             style={frameStyle}
@@ -89,8 +89,8 @@ export function ThreadMarkdownImageView(props: {
             {failed ? (
               <Text className="px-3 text-center text-xs text-foreground-muted">
                 {props.unavailableDetail
-                  ? `Image unavailable. ${props.unavailableDetail}`
-                  : "Image unavailable"}
+                  ? `Imagine indisponibilă. ${props.unavailableDetail}`
+                  : "Imagine indisponibilă"}
               </Text>
             ) : (
               <AppActivityIndicator />
@@ -102,16 +102,16 @@ export function ThreadMarkdownImageView(props: {
           <MediaActionsMenu media={mediaActions}>
             <Pressable
               accessibilityRole="imagebutton"
-              accessibilityLabel={props.alt ?? "Markdown image"}
+              accessibilityLabel={props.alt ?? "Imagine"}
               accessibilityHint={
-                mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+                mediaActions.actions.length > 0 ? "Ține apăsat pentru acțiuni" : undefined
               }
               onPress={() =>
                 props.onPressPreview(
                   withGallery({
                     kind: "image",
                     uri: props.uri!,
-                    name: props.actionsSource?.name ?? props.alt ?? "Image",
+                    name: props.actionsSource?.name ?? props.alt ?? "Imagine",
                     sourceIdentifier,
                     actionsSource: props.actionsSource,
                   }),

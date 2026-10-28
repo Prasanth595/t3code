@@ -18,7 +18,7 @@ function reportScratchFailure(title: string, error: unknown) {
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : "A apărut o eroare.",
     }),
   );
 }
@@ -43,7 +43,7 @@ export function useScratchProject() {
 
   const openScratchProject = async (
     environmentId: EnvironmentId,
-    failureTitle = "Could not start without a project",
+    failureTitle = "Nu am putut porni fără proiect",
   ): Promise<EnvironmentProject | null> => {
     const result = await openScratch({ environmentId, input: {} });
     if (result._tag === "Success") return result.value;
@@ -57,7 +57,7 @@ export function useScratchProject() {
     const project = await openScratchProject(environmentId);
     if (project) {
       await handleNewThread(scopeProjectRef(project.environmentId, project.id)).catch(
-        (error: unknown) => reportScratchFailure("Could not start without a project", error),
+        (error: unknown) => reportScratchFailure("Nu am putut porni fără proiect", error),
       );
     }
   };

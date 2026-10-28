@@ -654,9 +654,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       case "cached":
       case "synchronizing":
         if (contentPresentationKind === "ready") {
-          return "Syncing messages...";
+          return "Se sincronizează mesajele...";
         }
-        return contentPresentationKind === "loading" ? "Loading messages..." : null;
+        return contentPresentationKind === "loading" ? "Se încarcă mesajele..." : null;
       default:
         return null;
     }
@@ -747,8 +747,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not update thread",
-        error instanceof Error ? error.message : "Try again.",
+        "Conversația nu a putut fi actualizată",
+        error instanceof Error ? error.message : "Încearcă din nou.",
       );
     }
   };
@@ -772,7 +772,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree
+          ? "Se pregătește worktree-ul…"
+          : "Se pornește…",
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -820,8 +822,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           });
         },
         action: {
-          label: statusPending ? "Stopping..." : "Stop",
-          accessibilityLabel: "Stop background work",
+          label: statusPending ? "Se oprește..." : "Oprește",
+          accessibilityLabel: "Oprește activitatea din fundal",
           disabled: !props.canOperateThread || statusPending,
           onPress: () => void runStatusAction("stop"),
         },
@@ -831,11 +833,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
         snoozed && snoozedUntil !== null
-          ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
+          ? `Amânată, revine în ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
           : settled
-            ? "Settled"
-            : "Woke from snooze";
-      const actionLabel = snoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
+            ? "Finalizată"
+            : "Revenită din amânare";
+      const actionLabel = snoozed ? "Reactivează acum" : settled ? "Redeschide" : "Închide";
       return {
         kind: "lifecycle",
         state,
@@ -843,10 +845,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         action: {
           label: statusPending
             ? snoozed
-              ? "Waking..."
+              ? "Se reactivează..."
               : settled
-                ? "Un-settling..."
-                : "Dismissing..."
+                ? "Se redeschide..."
+                : "Se închide..."
             : actionLabel,
           accessibilityLabel: actionLabel,
           disabled: !props.canOperateThread || statusPending,
@@ -1311,8 +1313,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
             if (feedbackTarget?.supportsFeedback) {
               if (hasAttachmentsOrContext) {
                 Dialog.alert(
-                  "Approval feedback",
-                  "Send approval feedback without attachments or added context.",
+                  "Feedback la aprobare",
+                  "Trimite feedback-ul la aprobare fără atașamente sau context suplimentar.",
                 );
                 return false;
               }
@@ -1362,8 +1364,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     if (AsyncResult.isFailure(edited)) {
       const error = squashAtomCommandFailure(edited);
       Dialog.alert(
-        "Could not edit message",
-        error instanceof Error ? error.message : "Please try again.",
+        "Mesajul nu a putut fi editat",
+        error instanceof Error ? error.message : "Încearcă din nou.",
       );
       return;
     }
@@ -1472,7 +1474,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
             renderFallback={(fallback) => (
               <RenderFailureView
                 {...fallback}
-                title="The conversation couldn't be displayed"
+                title="Conversația nu a putut fi afișată"
                 bottomInset={estimatedOverlayHeight}
               />
             )}
@@ -1764,9 +1766,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         placeholder={
                           props.activePendingApproval
                             ? props.activePendingApproval.supportsFeedback
-                              ? "Send feedback to decline this request"
-                              : "Send a message to decline and redirect the agent"
-                            : "Ask the repo agent, or run a command…"
+                              ? "Trimite feedback ca să refuzi cererea"
+                              : "Trimite un mesaj ca să refuzi și să redirecționezi agentul"
+                            : "Întreabă agentul sau rulează o comandă…"
                         }
                         contentMaxWidth={contentMaxWidth}
                         draftControls={props.draftMode?.controls}
@@ -1788,7 +1790,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                             ? props.draftMode.sendBlockedReason
                             : props.creationState?.kind === "preparing" &&
                                 !props.creationState.serverOwned
-                              ? "Starting the task…"
+                              ? "Se pornește sarcina…"
                               : null
                         }
                         interactionLocked={props.draftMode?.interactionLocked}

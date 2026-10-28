@@ -132,8 +132,8 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open pull request link",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Link-ul pull request-ului nu a putut fi deschis",
+          description: error instanceof Error ? error.message : "A apărut o eroare.",
         }),
       );
     });

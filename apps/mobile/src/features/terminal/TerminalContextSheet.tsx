@@ -37,9 +37,9 @@ export function TerminalContextSheet(props: {
       version: 1 as const,
       kind: "terminal" as const,
       contextId: ComposerContextId.make(uuidv4()),
-      label: `${props.terminalLabel} · visible lines ${range.start + 1}–${range.end + 1}`,
+      label: `${props.terminalLabel} · liniile vizibile ${range.start + 1}–${range.end + 1}`,
       terminalId: props.terminalId,
-      terminalLabel: `${props.terminalLabel} (visible output)`,
+      terminalLabel: `${props.terminalLabel} (rezultat vizibil)`,
       lineStart: range.start + 1,
       lineEnd: range.end + 1,
       text: selectedText,
@@ -50,13 +50,16 @@ export function TerminalContextSheet(props: {
         context: { version: 1, records: [record] },
       })
     ) {
-      Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+      Dialog.alert(
+        "Prea multe elemente de context",
+        "Elimină o parte din context și încearcă din nou.",
+      );
       return;
     }
     props.onAttach();
   };
   return (
-    <Sheet title="Terminal output" onClose={props.onClose}>
+    <Sheet title="Rezultat terminal" onClose={props.onClose}>
       <ScrollView
         nestedScrollEnabled
         className="flex-1"
@@ -64,14 +67,14 @@ export function TerminalContextSheet(props: {
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
       >
         <Text className="pb-4 text-sm text-foreground-muted">
-          Tap the first and last line to select a range.
+          Atinge prima și ultima linie ca să alegi un interval.
         </Text>
         <View className="overflow-hidden rounded-xl bg-card-alt">
           {lines.map((line, index) => (
             <Pressable
               key={index}
               accessibilityRole="button"
-              accessibilityLabel={`Line ${index + 1}: ${line}`}
+              accessibilityLabel={`Linia ${index + 1}: ${line}`}
               accessibilityState={{ selected: index >= range.start && index <= range.end }}
               onPress={() => {
                 if (anchor === null) {
@@ -110,11 +113,11 @@ export function TerminalContextSheet(props: {
       >
         {tooLarge ? (
           <Text className="text-sm text-foreground-muted">
-            Select fewer lines to fit the context limit.
+            Alege mai puține linii ca să încapă în limita de context.
           </Text>
         ) : null}
         <Button
-          label="Attach selected output"
+          label="Atașează rezultatul selectat"
           tone="primary"
           fullWidth
           disabled={!selectedText.trim() || tooLarge}

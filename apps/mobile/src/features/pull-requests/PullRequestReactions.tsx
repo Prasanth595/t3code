@@ -61,7 +61,7 @@ function ReactionPills(props: {
         next.delete(content);
         return { signature: current.signature, values: next };
       });
-      Dialog.alert("Couldn't save the reaction", "Try again in a moment.");
+      Dialog.alert("Reacția nu a putut fi salvată", "Încearcă din nou imediat.");
       return;
     }
     props.onChanged();
@@ -89,7 +89,7 @@ function ReactionPills(props: {
       ))}
       {props.canReact ? (
         <Menu
-          accessibilityLabel="Add a reaction"
+          accessibilityLabel="Adaugă o reacție"
           actions={PULL_REQUEST_REACTION_ORDER.map((content) => ({
             id: content,
             title: `${pullRequestReactionEmoji(content)}  ${pullRequestReactionName(content)}`,
@@ -169,7 +169,7 @@ export function PullRequestCommentFooter(props: {
       {canEdit && editableKind !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Edit comment"
+          accessibilityLabel="Editează comentariul"
           onPress={() => {
             props.onEdit?.();
             navigation.navigate("PullRequestEdit", {

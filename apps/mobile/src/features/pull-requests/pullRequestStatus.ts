@@ -11,28 +11,28 @@ import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 const STATES = {
   open: {
-    label: "Open",
+    label: "Deschis",
     icon: PullRequestGlyph.pullRequest,
     tint: "accent-adaptive-emerald-600-400",
     text: "text-adaptive-emerald-600-400",
     background: "bg-adaptive-emerald-500-a12-a16",
   },
   merged: {
-    label: "Merged",
+    label: "Îmbinat",
     icon: PullRequestGlyph.merged,
     tint: "accent-adaptive-violet-600-400",
     text: "text-adaptive-violet-600-400",
     background: "bg-adaptive-violet-500-a12-a16",
   },
   closed: {
-    label: "Closed",
+    label: "Închis",
     icon: PullRequestGlyph.closed,
     tint: "accent-danger-foreground",
     text: "text-danger-foreground",
     background: "bg-danger",
   },
   draft: {
-    label: "Draft",
+    label: "Ciornă",
     icon: PullRequestGlyph.draft,
     tint: "accent-icon-muted",
     text: "text-foreground-muted",
@@ -54,37 +54,37 @@ export function pullRequestConflict(pr: {
   readonly baseBranch?: string | undefined;
 }) {
   if (pr.state !== "open" || pr.isDraft || pr.mergeability !== "conflicting") return null;
-  return { label: pr.baseBranch ? `Conflicts with ${pr.baseBranch}` : "Has conflicts" };
+  return { label: pr.baseBranch ? `Conflicte cu ${pr.baseBranch}` : "Are conflicte" };
 }
 
 export function checkStatus(check: PullRequestCheck) {
   switch (check.status) {
     case "success":
       return {
-        label: "Passed",
+        label: "Trecut",
         icon: "checkmark.circle",
         tint: "accent-adaptive-emerald-600-400",
       } as const;
     case "failure":
       return {
-        label: "Failed",
+        label: "Eșuat",
         icon: "exclamationmark.circle",
         tint: "accent-danger-foreground",
       } as const;
     case "action-required":
       return {
-        label: "Action required",
+        label: "Acțiune necesară",
         icon: "exclamationmark.circle",
         tint: "accent-warning-foreground",
       } as const;
     case "pending":
-      return { label: "Pending", icon: "clock", tint: "accent-warning-foreground" } as const;
+      return { label: "În așteptare", icon: "clock", tint: "accent-warning-foreground" } as const;
     case "cancelled":
-      return { label: "Cancelled", icon: "minus", tint: "accent-icon-muted" } as const;
+      return { label: "Anulat", icon: "minus", tint: "accent-icon-muted" } as const;
     case "skipped":
-      return { label: "Skipped", icon: "slash.circle", tint: "accent-icon-muted" } as const;
+      return { label: "Omis", icon: "slash.circle", tint: "accent-icon-muted" } as const;
     case "neutral":
-      return { label: "Neutral", icon: "minus", tint: "accent-icon-muted" } as const;
+      return { label: "Neutru", icon: "minus", tint: "accent-icon-muted" } as const;
   }
 }
 
@@ -104,16 +104,16 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
     } as const;
   if (required)
     return {
-      label: `${required} need attention`,
-      title: "Checks need attention",
-      count: `${required} awaiting action`,
+      label: `${required} necesită atenție`,
+      title: "Verificările necesită atenție",
+      count: `${required} așteaptă acțiune`,
       icon: "exclamationmark.circle",
       tint: "accent-warning-foreground",
     } as const;
   if (pending)
     return {
       label: `${pending} pending`,
-      title: "Checks running",
+      title: "Verificări în curs",
       count: `${pending} pending`,
       icon: "clock",
       tint: "accent-warning-foreground",
@@ -121,14 +121,14 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   if (passed)
     return {
       label: `${passed} of ${pr.checks.length} passed`,
-      title: passed === pr.checks.length ? "All checks passed" : "Checks completed",
+      title: passed === pr.checks.length ? "Toate verificările au trecut" : "Verificări terminate",
       count,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   return {
-    label: pr.checks.length ? `${pr.checks.length} completed` : "No checks reported",
-    title: pr.checks.length ? "Checks completed" : "No checks reported",
+    label: pr.checks.length ? `${pr.checks.length} terminate` : "Nicio verificare raportată",
+    title: pr.checks.length ? "Verificări terminate" : "Nicio verificare raportată",
     count,
     icon: "minus",
     tint: "accent-icon-muted",
@@ -170,7 +170,7 @@ export function pullRequestReviewSummary(
   );
   if (requested.length)
     return {
-      title: "Changes requested",
+      title: "Modificări cerute",
       count: `${requested.length} ${requested.length === 1 ? "reviewer" : "reviewers"}`,
       icon: "xmark.circle.fill",
       tint: "accent-danger-foreground",
@@ -180,8 +180,8 @@ export function pullRequestReviewSummary(
     return {
       title:
         approved.length === 1 && approved[0]?.author
-          ? `Approved by ${approved[0].author.login}`
-          : "Reviews approved",
+          ? `Aprobat de ${approved[0].author.login}`
+          : "Revizuiri aprobate",
       count: `${approved.length} approved`,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
@@ -190,15 +190,15 @@ export function pullRequestReviewSummary(
   const commented = reviews.filter((review) => review.reviewState === "COMMENTED");
   if (commented.length && !pr.reviewers.length)
     return {
-      title: "Reviews",
+      title: "Revizuiri",
       count: `${commented.length} commented`,
       icon: "bubble.left",
       tint: "accent-icon-muted",
       reviews,
     } as const;
   return {
-    title: pr.reviewers.length ? "Awaiting review" : "Request a review",
-    count: pr.reviewers.length ? `${pr.reviewers.length} requested` : "None assigned",
+    title: pr.reviewers.length ? "Așteaptă revizuire" : "Cere o revizuire",
+    count: pr.reviewers.length ? `${pr.reviewers.length} cerute` : "Niciun revizor",
     icon: "person.2",
     tint: "accent-icon-muted",
     reviews,
@@ -208,10 +208,10 @@ export function pullRequestReviewSummary(
 export function pullRequestBranchSummary(
   pr: Pick<PullRequestDetail, "mergeability" | "baseComparison" | "behindBy" | "baseBranch">,
 ) {
-  if (pr.mergeability === "conflicting") return "Has conflicts";
-  if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} behind ${pr.baseBranch}`.trim();
-  if (pr.baseComparison === "up-to-date") return "Up to date";
-  return pr.mergeability === "mergeable" ? "No conflicts" : "Not reported";
+  if (pr.mergeability === "conflicting") return "Are conflicte";
+  if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} în urma ${pr.baseBranch}`.trim();
+  if (pr.baseComparison === "up-to-date") return "La zi";
+  return pr.mergeability === "mergeable" ? "Fără conflicte" : "Neraportat";
 }
 
 export function pullRequestChecksStatus(state: PullRequestChecksState) {

@@ -38,7 +38,7 @@ export function SettingsProviderAccountsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Provider accounts" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="Conturi furnizori" trailing={<AndroidSettingsEnvironmentFilter />}>
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
@@ -46,15 +46,15 @@ export function SettingsProviderAccountsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           {selectedTargets.length === 0 ? (
-            <Text className="text-foreground-muted">Select a connected environment.</Text>
+            <Text className="text-foreground-muted">Alege un mediu conectat.</Text>
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
                 {!permittedEnvironments.has(environment.environmentId) ? (
                   <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Limited permissions</Text>
+                    <Text className="text-base text-foreground">Permisiuni limitate</Text>
                     <Text className="text-sm text-foreground-muted">
-                      {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                      {`Această sesiune poate vedea furnizorii din ${environment.label}, dar nu le poate schimba setările.`}
                     </Text>
                   </View>
                 ) : (
@@ -78,7 +78,8 @@ export function SettingsProviderAccountsRouteScreen() {
                         (provider.driver === "acpRegistry" && provider.installed),
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
+                        Configurează un furnizor cu autentificare în aplicație din Setările web sau
+                        desktop.
                       </Text>
                     ) : null}
                   </>
@@ -150,7 +151,11 @@ function ProviderAccount({
     if (result._tag === "Success") return true;
     if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Autentificarea la furnizor nu a putut fi actualizată.",
+      );
     }
     return false;
   }
@@ -198,12 +203,12 @@ function ProviderAccount({
           {active || state?.phase === "failed" || state?.phase === "cancelled"
             ? state.message
             : signedIn
-              ? "Signed in."
+              ? "Autentificat."
               : isDiscovering
-                ? "Discovering sign-in methods…"
+                ? "Se caută metodele de autentificare…"
                 : needsExternalSetup
-                  ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-                  : "Connect this provider."}
+                  ? "Furnizorul nu oferă autentificare în aplicație. Urmează documentația lui ca să termini configurarea."
+                  : "Conectează acest furnizor."}
         </Text>
         {signedIn && !active && provider.auth.email?.trim() ? (
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
@@ -220,10 +225,10 @@ function ProviderAccount({
                 {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
               </Text>
             </ScrollView>
-            {field("input", "Terminal response", true)}
+            {field("input", "Răspuns terminal", true)}
             <SettingsActionRow
               icon="arrow.up"
-              label="Send response"
+              label="Trimite răspunsul"
               disabled={disabled}
               onPress={() => {
                 void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
@@ -240,7 +245,7 @@ function ProviderAccount({
             ))}
             <SettingsActionRow
               icon="person.crop.circle"
-              label="Connect"
+              label="Conectează"
               disabled={disabled}
               onPress={() => {
                 void send({ type: "credentials", values }).then((sent) => {
@@ -252,10 +257,10 @@ function ProviderAccount({
         ) : null}
         {url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction) ? (
           <>
-            {field("callback", "Final localhost URL", false)}
+            {field("callback", "Adresa localhost finală", false)}
             <SettingsActionRow
               icon="arrow.right"
-              label="Continue"
+              label="Continuă"
               disabled={disabled || !values.callback?.trim()}
               onPress={() => {
                 if (!state?.flowId) return;
@@ -293,13 +298,17 @@ function ProviderAccount({
               }}
             />
           ))}
-          <SettingsActionRow icon="xmark" label="Cancel" onPress={() => setChoosingMethod(false)} />
+          <SettingsActionRow
+            icon="xmark"
+            label="Anulează"
+            onPress={() => setChoosingMethod(false)}
+          />
         </View>
       ) : null}
       {url ? (
         <SettingsActionRow
           icon="globe"
-          label="Open sign-in page"
+          label="Deschide pagina de autentificare"
           disabled={disabled}
           onPress={() => {
             void (async () => {
@@ -310,24 +319,24 @@ function ProviderAccount({
               )
                 return;
               await Linking.openURL(url);
-            })().catch(() => setError("Could not open the sign-in page."));
+            })().catch(() => setError("Pagina de autentificare nu a putut fi deschisă."));
           }}
         />
       ) : null}
       {needsExternalSetup && provider.setup?.documentationUrl ? (
         <SettingsActionRow
           icon="globe"
-          label="Open docs"
+          label="Deschide documentația"
           onPress={() => {
             void Linking.openURL(provider.setup!.documentationUrl!).catch(() =>
-              setError("Could not open the provider docs."),
+              setError("Documentația furnizorului nu a putut fi deschisă."),
             );
           }}
         />
       ) : active && state?.flowId ? (
         <SettingsActionRow
           icon="xmark"
-          label="Cancel sign-in"
+          label="Anulează autentificarea"
           disabled={disabled}
           onPress={() => {
             void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
@@ -336,7 +345,7 @@ function ProviderAccount({
       ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
         <SettingsActionRow
           icon="person.crop.circle"
-          label={signedIn ? "Change account" : "Sign in"}
+          label={signedIn ? "Schimbă contul" : "Autentifică-te"}
           disabled={disabled || !provider.enabled || !provider.installed || state === null}
           loading={pending}
           onPress={chooseMethod}
@@ -345,17 +354,17 @@ function ProviderAccount({
       {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
         <SettingsActionRow
           icon="person.crop.circle"
-          label="Sign out"
+          label="Deconectează-te"
           tone="danger"
           disabled={disabled || state === null}
           onPress={() =>
             Dialog.alert(
-              "Sign out?",
-              `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+              "Te deconectezi?",
+              `Conversațiile în curs care folosesc această autentificare pe ${environment.label} se vor opri. Istoricul se păstrează.`,
               [
-                { text: "Cancel", style: "cancel" },
+                { text: "Anulează", style: "cancel" },
                 {
-                  text: "Sign out",
+                  text: "Deconectează-te",
                   style: "destructive",
                   onPress: () => {
                     void run(() => logout(target));
@@ -375,7 +384,7 @@ function ProviderAccountEmail({ email }: { readonly email: string }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+      accessibilityLabel={revealed ? "Ascunde emailul contului" : "Arată emailul contului"}
       onPress={() => setRevealed((value) => !value)}
       className="min-h-[44px] justify-center"
     >

@@ -130,7 +130,10 @@ export function appendReviewCommentToDraft(input: {
       reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
     )
   ) {
-    Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+    Dialog.alert(
+      "Prea multe elemente de context",
+      "Elimină o parte din context și încearcă din nou.",
+    );
     return;
   }
   if (input.attachments && input.attachments.length > 0) {
@@ -139,7 +142,7 @@ export function appendReviewCommentToDraft(input: {
     });
     if (rejectedCount > 0) {
       setPendingConnectionError(
-        `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        `${rejectedCount === 1 ? "Un atașament nu a fost adăugat" : `${rejectedCount} atașamente nu au fost adăugate`}. Un mesaj poate avea cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente.`,
       );
     }
   }
@@ -421,8 +424,8 @@ export function useThreadComposerState() {
     setThreadComposerError(
       selectedThreadKey,
       keepable
-        ? "That message already started. Your edit is back in the composer."
-        : "That message already started, so the edit was discarded.",
+        ? "Mesajul a pornit deja. Editarea ta e din nou în editor."
+        : "Mesajul a pornit deja, așa că editarea a fost renunțată.",
     );
   }, [editedRunId, selectedThreadKey, selectedThreadRuns]);
 
@@ -450,7 +453,7 @@ export function useThreadComposerState() {
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
     const text = draft.text.trim();
     if (text.length === 0) {
-      Dialog.alert("Add a message", "A queued message cannot be left empty.");
+      Dialog.alert("Adaugă un mesaj", "Un mesaj din coadă nu poate fi gol.");
       return;
     }
     if (
@@ -458,8 +461,8 @@ export function useThreadComposerState() {
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        "Prea multe atașamente",
+        `Elimină atașamente până rămân cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return;
     }
@@ -478,8 +481,8 @@ export function useThreadComposerState() {
       setIsSavingQueuedEdit(false);
       const error = squashAtomCommandFailure(prepared);
       Dialog.alert(
-        "Could not save the queued message",
-        error instanceof Error ? error.message : "Your edit is still in the composer.",
+        "Mesajul din coadă nu a putut fi salvat",
+        error instanceof Error ? error.message : "Editarea ta e încă în editor.",
       );
       return;
     }
@@ -511,8 +514,8 @@ export function useThreadComposerState() {
     setIsSavingQueuedEdit(false);
     if (result._tag !== "Success") {
       Dialog.alert(
-        "Could not save the queued message",
-        "It may have already started. Your edit is still in the composer.",
+        "Mesajul din coadă nu a putut fi salvat",
+        "Se poate să fi pornit deja. Editarea ta e încă în editor.",
       );
       return;
     }
@@ -569,8 +572,8 @@ export function useThreadComposerState() {
     // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        "Prea multe atașamente",
+        `Elimină atașamente până rămân cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
       return null;
     }
@@ -799,12 +802,12 @@ export function useThreadComposerState() {
           ) {
             await removePersistedComposerAttachmentFile(attachment.fileUri);
             setPendingConnectionError(
-              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+              `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`,
             );
           }
         } catch (error) {
           setPendingConnectionError(
-            error instanceof Error ? error.message : "Could not attach pasted text.",
+            error instanceof Error ? error.message : "Textul lipit nu a putut fi atașat.",
           );
         }
       } else if (shouldFold && !wouldExceedInputLimit) {
@@ -812,8 +815,8 @@ export function useThreadComposerState() {
       } else if (shouldFold) {
         setPendingConnectionError(
           wouldExceedInputLimit
-            ? "Pasted text is too large for this message. Remove some text or an attachment, then paste again."
-            : "Could not attach pasted text. Remove an attachment or use a smaller paste, then try again.",
+            ? "Textul lipit e prea mare. Elimină o parte din text sau un atașament, apoi lipește din nou."
+            : "Textul lipit nu a putut fi atașat. Elimină un atașament sau lipește mai puțin, apoi încearcă din nou.",
         );
       } else {
         insertComposerDraftText(threadKey, result.text, insertion);
@@ -823,7 +826,7 @@ export function useThreadComposerState() {
       setPendingConnectionError(result.error);
     } else if (rejectedPasteCount > 0) {
       setPendingConnectionError(
-        `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+        `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`,
       );
     }
   };

@@ -54,7 +54,7 @@ export function useComposerAttachmentActions(props: {
     const problems = [
       ...(error ? [error] : []),
       ...(rejected
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
+        ? [`Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente per mesaj.`]
         : []),
     ];
     if (problems.length) Dialog.alert(title, problems.join("\n\n"));
@@ -70,7 +70,7 @@ export function useComposerAttachmentActions(props: {
         : undefined,
     });
     report(
-      "Could not attach photo or video",
+      "Poza sau video-ul nu a putut fi atașat",
       result.error,
       await append(key, result.attachments, insertion),
     );
@@ -80,7 +80,7 @@ export function useComposerAttachmentActions(props: {
     if (!key || props.locked) return;
     const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) {
-      Dialog.alert("Could not attach file", "This server does not support file attachments.");
+      Dialog.alert("Fișierul nu a putut fi atașat", "Acest server nu suportă atașarea fișierelor.");
       return;
     }
     const insertion = captureComposerDraftInsertion(key);
@@ -88,7 +88,11 @@ export function useComposerAttachmentActions(props: {
       existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
       maxBytes,
     });
-    report("Could not attach file", result.error, await append(key, result.files, insertion));
+    report(
+      "Fișierul nu a putut fi atașat",
+      result.error,
+      await append(key, result.files, insertion),
+    );
   };
   const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
     const key = props.draftKey;
@@ -99,9 +103,12 @@ export function useComposerAttachmentActions(props: {
         uris,
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
       });
-      report("Could not paste images", null, await append(key, images, insertion));
+      report("Imaginile nu au putut fi lipite", null, await append(key, images, insertion));
     } catch (error) {
-      Dialog.alert("Could not paste images", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        "Imaginile nu au putut fi lipite",
+        error instanceof Error ? error.message : "Încearcă din nou.",
+      );
     }
   };
   const onNativePasteText = async (paste: ComposerTextPaste) => {
@@ -124,11 +131,11 @@ export function useComposerAttachmentActions(props: {
       });
       const rejected = await append(key, [attachment], { text: paste.value, ...paste.selection });
       if (rejected) await removePersistedComposerAttachmentFile(attachment.fileUri);
-      report("Could not attach pasted text", null, rejected);
+      report("Textul lipit nu a putut fi atașat", null, rejected);
     } catch (error) {
       Dialog.alert(
-        "Could not attach pasted text",
-        error instanceof Error ? error.message : "Try again.",
+        "Textul lipit nu a putut fi atașat",
+        error instanceof Error ? error.message : "Încearcă din nou.",
       );
     }
   };

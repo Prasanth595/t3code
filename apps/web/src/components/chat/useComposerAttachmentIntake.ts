@@ -131,7 +131,7 @@ export function useComposerAttachmentIntake(input: {
     ) {
       toastManager.add({
         type: "error",
-        title: "This question cannot accept attachments.",
+        title: "Această întrebare nu acceptă atașamente.",
       });
       return false;
     }
@@ -179,22 +179,22 @@ export function useComposerAttachmentIntake(input: {
         replacedReattachMarkerIds.add(matchingReattachMarker.id);
       }
       if (!matchingReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+        error = `Poți atașa cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} fișiere per mesaj.`;
         continue;
       }
       if (attachmentKind === "unsupported-image") {
-        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
+        error = `„${file.name}” nu e un tip de imagine suportat. Atașează imagini GIF, HEIC, HEIF, JPEG, PNG sau WebP.`;
         continue;
       }
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
         if (fileStagingLimit === null) {
-          error = "This server does not support file attachments.";
+          error = "Acest server nu suportă atașarea fișierelor.";
           continue;
         }
         if (file.size <= 0) {
-          error = `'${file.name}' is empty or could not be read.`;
+          error = `„${file.name}” e gol sau nu a putut fi citit.`;
           continue;
         }
         if (file.size > fileStagingLimit) {
@@ -234,7 +234,7 @@ export function useComposerAttachmentIntake(input: {
         const attached = storedFiles[0]!;
         toastManager.add({
           type: "info",
-          title: `Large paste attached as ${attached.name}`,
+          title: `Text lung atașat ca ${attached.name}`,
           description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
             isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
           } to keep a large paste inline.`,
@@ -270,8 +270,8 @@ export function useComposerAttachmentIntake(input: {
         compressionErrors.set(
           id,
           result.reason === "unreadable"
-            ? `'${file.name}' could not be read as an image.`
-            : `'${file.name}' is too large to attach, even after compression.`,
+            ? `„${file.name}” nu a putut fi citit ca imagine.`
+            : `„${file.name}” e prea mare pentru atașare, chiar și după comprimare.`,
         );
         continue;
       }
@@ -400,8 +400,8 @@ export function useComposerAttachmentIntake(input: {
       }
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large for this message",
-        description: "Remove some text or an attachment, then paste again.",
+        title: "Textul lipit e prea mare pentru acest mesaj",
+        description: "Elimină o parte din text sau un atașament, apoi lipește din nou.",
         data: { hideCopyButton: true },
       });
       return true;
@@ -422,8 +422,8 @@ export function useComposerAttachmentIntake(input: {
       if (!wouldExceedInputLimit) return false;
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large to attach",
-        description: "Reduce the clipboard contents or save a smaller excerpt as a file.",
+        title: "Textul lipit e prea mare pentru atașare",
+        description: "Redu conținutul clipboard-ului sau salvează un fragment mai mic ca fișier.",
         data: { hideCopyButton: true },
       });
       return true;

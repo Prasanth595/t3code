@@ -10,8 +10,8 @@ import * as Order from "effect/Order";
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = "Changes";
-const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
+const CHANGES_TITLE = "Modificări";
+const UNCOMMITTED_SUBTITLE = "Fișiere staged, unstaged și neurmărite";
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -103,7 +103,7 @@ export type ReviewParsedDiff =
     };
 
 function checkpointTitle(checkpoint: ThreadCheckpointSummary): string {
-  return `Turn ${checkpoint.checkpointTurnCount}`;
+  return `Runda ${checkpoint.checkpointTurnCount}`;
 }
 
 function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
@@ -111,7 +111,7 @@ function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
   if (checkpoint.status !== "ready") {
     return `Diff ${checkpoint.status}`;
   }
-  return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+  return `${fileCount} ${fileCount === 1 ? "fișier modificat" : "fișiere modificate"}`;
 }
 
 function compareCheckpointTurnCountDescending(
@@ -136,7 +136,7 @@ function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
   }
-  return "Base branch unavailable";
+  return "Branch-ul de bază nu e disponibil";
 }
 
 function stripTrailingNewline(value: string): string {
@@ -267,8 +267,8 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "non-text",
-      title: "Non-text file",
-      message: "Diff preview is not available for this file format.",
+      title: "Fișier non-text",
+      message: "Previzualizarea diff-ului nu e disponibilă pentru acest format.",
       actionLabel: null,
     };
   }
@@ -279,9 +279,9 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "large",
-      title: "Large diff",
-      message: "Large diffs are not rendered by default.",
-      actionLabel: "Load diff",
+      title: "Diff mare",
+      message: "Diff-urile mari nu sunt afișate implicit.",
+      actionLabel: "Încarcă diff-ul",
     };
   }
 
@@ -570,7 +570,7 @@ export function buildReviewParsedDiff(
   }
 
   const notice = truncated
-    ? "Diff output hit the server size cap. Showing the available excerpt."
+    ? "Diff-ul a atins limita de mărime a serverului. Se arată fragmentul disponibil."
     : null;
 
   try {
@@ -603,8 +603,8 @@ export function buildReviewParsedDiff(
         kind: "raw",
         text,
         reason: truncated
-          ? "Diff was truncated before it could be parsed completely. Showing the raw excerpt."
-          : "Unsupported diff format. Showing raw patch.",
+          ? "Diff-ul a fost trunchiat înainte de a fi analizat complet. Se arată fragmentul brut."
+          : "Format de diff nesuportat. Se arată patch-ul brut.",
         notice,
       };
     }
@@ -622,8 +622,8 @@ export function buildReviewParsedDiff(
       kind: "raw",
       text,
       reason: truncated
-        ? "Diff was truncated before it could be parsed completely. Showing the raw excerpt."
-        : "Failed to parse patch. Showing raw patch.",
+        ? "Diff-ul a fost trunchiat înainte de a fi analizat complet. Se arată fragmentul brut."
+        : "Patch-ul nu a putut fi analizat. Se arată patch-ul brut.",
       notice,
     };
   }
@@ -635,7 +635,7 @@ export function applyReviewDiffMetadata(
 ): ReviewParsedDiff {
   if (previewDiff.kind === "empty") return previewDiff;
   const notice = selectedSection?.truncated
-    ? `This preview exceeds the size limit. Changes shown are incomplete.${selectedSection.files ? " Counts include all changes." : ""}`
+    ? `Previzualizarea depășește limita de mărime. Modificările afișate sunt incomplete.${selectedSection.files ? " Totalurile includ toate modificările." : ""}`
     : previewDiff.notice;
   if (previewDiff.kind !== "files" || !selectedSection?.files) return { ...previewDiff, notice };
   const totals = selectedSection.files.reduce(

@@ -36,7 +36,7 @@ export async function prepareQueuedEditAttachments(input: {
 }) {
   const files = input.files.length === 0 ? [] : await input.uploadFiles(input.files);
   if (files.length !== input.files.length)
-    throw new Error("Retry or remove failed uploads before saving.");
+    throw new Error("Reîncearcă sau elimină încărcările eșuate înainte de salvare.");
   const images = await Promise.all(
     input.images.map(async (image) => ({
       type: "image" as const,

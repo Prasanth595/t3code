@@ -321,42 +321,42 @@ export function ThreadDetailsPrRow({
   const trailingAction =
     rowAction === "resolve"
       ? {
-          label: "Resolve",
-          pendingLabel: "Preparing...",
+          label: "Rezolvă",
+          pendingLabel: "Se pregătește...",
           pending: handoff === "conflicts",
           destructive: true,
           suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          tooltip: "Comută pe branch și rezolvă conflictele într-o conversație nouă",
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
         ? {
-            label: "Ready",
-            pendingLabel: "Marking...",
+            label: "Gata",
+            pendingLabel: "Se marchează...",
             pending: actionPending,
             destructive: false,
             suffix: null,
-            tooltip: `Mark this ${terminology.singular} as ready for review`,
+            tooltip: `Marchează acest ${terminology.singular} ca gata de revizuire`,
             onClick: () => void perform("ready"),
           }
         : rowAction === "fix"
           ? {
-              label: "Fix",
-              pendingLabel: "Preparing...",
+              label: "Repară",
+              pendingLabel: "Se pregătește...",
               pending: handoff === "findings",
               destructive: true,
               suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              tooltip: "Repară verificările eșuate într-o conversație nouă",
               onClick: startFixChecks,
             }
           : rowAction === "merge"
             ? {
                 label: "Merge",
-                pendingLabel: "Merging...",
+                pendingLabel: "Se face merge...",
                 pending: actionPending,
                 destructive: false,
                 suffix: null,
-                tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
+                tooltip: `Merge pentru acest ${terminology.singular} (${selectedMergeMethod})`,
                 onClick: () => setConfirmingMerge(true),
               }
             : null;
@@ -374,7 +374,7 @@ export function ThreadDetailsPrRow({
               size="sm"
               part={part}
               className="group/watch"
-              aria-label={`Stop watching #${number}`}
+              aria-label={`Nu mai urmări #${number}`}
               onClick={onStopWatching}
             />
           }
@@ -392,8 +392,8 @@ export function ThreadDetailsPrRow({
           />
         </TooltipTrigger>
         <TooltipPopup side="top">
-          Watching: the agent wakes when checks finish, someone comments, or the branch conflicts.
-          Click to stop.
+          Urmărire: agentul se activează când se termină verificările, comentează cineva sau apar
+          conflicte. Apasă ca să oprești.
         </TooltipPopup>
       </Tooltip>
     ) : null;

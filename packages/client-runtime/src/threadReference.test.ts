@@ -37,7 +37,7 @@ describe("resolveThreadReferenceCopyTarget", () => {
     ).toMatchObject({
       kind: "pull-request",
       value: "https://github.com/t3/pr/14",
-      successTitle: "PR link copied",
+      successTitle: "Link-ul PR a fost copiat",
     });
   });
 

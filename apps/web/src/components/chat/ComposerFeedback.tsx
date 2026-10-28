@@ -32,18 +32,18 @@ export function feedbackBannerItem(
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy thread ID",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "ID-ul conversației nu a putut fi copiat",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 });
               },
             );
           }}
         >
-          Copy ID
+          Copiază ID-ul
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"
-      ? { dismissLabel: "Dismiss feedback notice", onDismiss }
+      ? { dismissLabel: "Închide notificarea", onDismiss }
       : {}),
   };
 }

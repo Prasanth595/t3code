@@ -19,7 +19,7 @@ export function PullRequestReadStatus(props: {
     <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
   ) : props.error ? (
     <EmptyState
-      title={`Couldn't load this ${props.terminology.singular}`}
+      title={`${props.terminology.singular} nu a putut fi încărcat`}
       detail={props.error}
       variant="plain"
     />

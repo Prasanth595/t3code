@@ -58,13 +58,13 @@ function useDeviceRegistered(): boolean {
 export function SettingsNotificationsRouteScreen() {
   if (!hasCloudPublicConfig()) {
     return (
-      <SettingsScreen title="Notifications">
+      <SettingsScreen title="Notificări">
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerClassName="px-5 pt-4"
         >
           <Text className="text-base text-foreground-muted">
-            Notifications require T3 Connect in this app build.
+            Notificările necesită contul Mira în această versiune a aplicației.
           </Text>
         </ScrollView>
       </SettingsScreen>
@@ -81,7 +81,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
   const agentAwarenessSubtitle =
     Platform.OS === "android" && !agentAwarenessPushAvailable
-      ? "Install a newer app build to enable notifications"
+      ? "Instalează o versiune mai nouă a aplicației ca să activezi notificările"
       : agentAwarenessPlatform.subtitle;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -160,8 +160,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Notifications unavailable",
-          error instanceof Error ? error.message : "Could not request notification permission.",
+          "Notificări indisponibile",
+          error instanceof Error
+            ? error.message
+            : "Nu am putut cere permisiunea pentru notificări.",
         );
       }
       return;
@@ -169,11 +171,14 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
       if (getAgentAwarenessRegistrationStatus() === "registered") {
-        Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
+        Dialog.alert(
+          "Notificări activate",
+          "Notificările agentului sunt activate pe acest dispozitiv.",
+        );
       } else {
         Dialog.alert(
-          "Couldn't finish enabling notifications",
-          "Notification access was granted, but this device could not be registered with T3 Connect. Notifications will start once registration succeeds.",
+          "Activarea notificărilor nu s-a putut finaliza",
+          "Accesul la notificări a fost acordat, dar dispozitivul nu a putut fi înregistrat în T3 Connect. Notificările vor porni după ce înregistrarea reușește.",
         );
       }
       return;
@@ -181,34 +186,34 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     if (result.value.type === "unsupported") {
       setNotificationStatus("unsupported");
       Dialog.alert(
-        "Notifications unavailable",
-        "Agent notifications are unavailable on this platform.",
+        "Notificări indisponibile",
+        "Notificările agentului nu sunt disponibile pe această platformă.",
       );
       return;
     }
     setNotificationStatus("disabled");
     if (result.value.canAskAgain) {
-      Dialog.alert("Notifications disabled", "Notifications were not enabled.");
+      Dialog.alert("Notificări dezactivate", "Notificările nu au fost activate.");
       return;
     }
     Dialog.alert(
-      "Notifications disabled",
-      "Notifications were denied for this app. Open Settings to enable them.",
+      "Notificări dezactivate",
+      "Notificările au fost refuzate pentru această aplicație. Deschide Setările ca să le activezi.",
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: "Anulează", style: "cancel" },
+        { text: "Deschide Setările", onPress: () => void Linking.openSettings() },
       ],
     );
   };
 
   const promptSignIn = () => {
     Dialog.alert(
-      "Sign in to T3 Connect",
-      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
+      "Autentifică-te în T3 Connect",
+      "Actualizările Live Activity necesită T3 Connect ca relay-ul să trimită actualizări pe acest dispozitiv.",
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "Anulează", style: "cancel" },
         {
-          text: "Continue",
+          text: "Continuă",
           onPress: () => navigation.navigate("SettingsAuth"),
         },
       ],
@@ -230,19 +235,19 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         setLiveActivityStatus("disabled");
         const error = squashAtomCommandFailure(permission);
         Dialog.alert(
-          "Ongoing activity unavailable",
-          error instanceof Error ? error.message : "Could not enable agent notifications.",
+          "Activitatea în curs nu e disponibilă",
+          error instanceof Error ? error.message : "Nu am putut activa notificările agentului.",
         );
         return;
       }
       if (permission.value.type !== "granted") {
         setLiveActivityStatus("disabled");
         Dialog.alert(
-          "Notification permission needed",
-          "Enable notifications in system Settings to show ongoing agent activity.",
+          "E nevoie de permisiunea pentru notificări",
+          "Activează notificările din Setările sistemului ca să vezi activitatea agentului.",
           [
-            { text: "Cancel", style: "cancel" },
-            { text: "Open Settings", onPress: () => void Linking.openSettings() },
+            { text: "Anulează", style: "cancel" },
+            { text: "Deschide Setările", onPress: () => void Linking.openSettings() },
           ],
         );
         return;
@@ -254,8 +259,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       setLiveActivityStatus("disabled");
       const error = squashAtomCommandFailure(tokenResult);
       Dialog.alert(
-        Platform.OS === "android" ? "Ongoing activity unavailable" : "Live Activities unavailable",
-        error instanceof Error ? error.message : "Could not enable agent activity updates.",
+        Platform.OS === "android"
+          ? "Activitatea în curs nu e disponibilă"
+          : "Live Activities indisponibile",
+        error instanceof Error
+          ? error.message
+          : "Nu am putut activa actualizările de activitate ale agentului.",
       );
       return;
     }
@@ -283,9 +292,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         const error = squashAtomCommandFailure(updateResult);
         Dialog.alert(
           Platform.OS === "android"
-            ? "Ongoing activity unavailable"
-            : "Live Activities unavailable",
-          error instanceof Error ? error.message : "Could not enable agent activity updates.",
+            ? "Activitatea în curs nu e disponibilă"
+            : "Live Activities indisponibile",
+          error instanceof Error
+            ? error.message
+            : "Nu am putut activa actualizările de activitate ale agentului.",
         );
       }
       return;
@@ -297,15 +308,15 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     // Environment linking can precede device registration; only registered devices can receive Live Activities.
     if (getAgentAwarenessRegistrationStatus() === "registered") {
       Dialog.alert(
-        Platform.OS === "android" ? "Ongoing activity enabled" : "Live Activities enabled",
+        Platform.OS === "android" ? "Activitate în curs activată" : "Live Activities activate",
         environmentCount > 0
-          ? "Agent activity updates are enabled for environments this connection can configure."
-          : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+          ? "Actualizările de activitate sunt activate pentru mediile pe care le poate configura această conexiune."
+          : "Actualizările de activitate sunt activate. Adaugă un mediu ca să începi să le primești.",
       );
     } else {
       Dialog.alert(
-        "Couldn't finish enabling activity updates",
-        "This device could not be registered with T3 Connect, so activity updates won't appear yet. They'll start once registration succeeds.",
+        "Activarea actualizărilor nu s-a putut finaliza",
+        "Dispozitivul nu a putut fi înregistrat în T3 Connect, așa că actualizările nu apar încă. Vor porni după ce înregistrarea reușește.",
       );
     }
   };
@@ -321,11 +332,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
 
     Dialog.alert(
-      "Disable notifications",
-      "Open system Settings to disable notifications for Mira.",
+      "Dezactivează notificările",
+      "Deschide Setările sistemului ca să dezactivezi notificările pentru Mira.",
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: "Anulează", style: "cancel" },
+        { text: "Deschide Setările", onPress: () => void Linking.openSettings() },
       ],
     );
   };
@@ -390,7 +401,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   };
 
   return (
-    <SettingsScreen title="Notifications">
+    <SettingsScreen title="Notificări">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -400,10 +411,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
-        <SettingsSection title="Agent activity">
+        <SettingsSection title="Activitatea agentului">
           <SettingsSwitchRow
             icon="bell.badge"
-            label="Device Notifications"
+            label="Notificări pe dispozitiv"
             disabled={
               !agentAwarenessPlatform.supported ||
               !agentAwarenessPushAvailable ||
@@ -428,9 +439,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             label={
               Platform.OS === "android"
                 ? supportsAndroidLiveUpdateSettings()
-                  ? "Agent Live Updates"
-                  : "Ongoing Agent Activity"
-                : "Live Activity Updates"
+                  ? "Actualizări live ale agentului"
+                  : "Activitatea agentului în curs"
+                : "Actualizări Live Activity"
             }
             subtitle={agentAwarenessSubtitle}
             value={
@@ -443,19 +454,19 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           {liveActivityStatus === "signed-out" && canClearLiveActivitiesPreference ? (
             <SettingsRow
               icon="bolt.circle"
-              label="Turn off Live Activity preference"
+              label="Oprește preferința Live Activity"
               onPress={() => void handleLiveActivitiesChange(false)}
             />
           ) : null}
           {supportsAndroidLiveUpdateSettings() ? (
             <SettingsRow
               icon="bolt.circle"
-              label="Live Update Settings"
+              label="Setări actualizări live"
               onPress={() => {
                 void openAndroidLiveUpdateSettings().catch(() => {
                   Dialog.alert(
-                    "Couldn't open Settings",
-                    "Open Android Settings, select Mira, then enable Live Updates in Notifications.",
+                    "Setările nu au putut fi deschise",
+                    "Deschide Setările Android, alege Mira, apoi activează Actualizările live din Notificări.",
                   );
                 });
               }}

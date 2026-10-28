@@ -133,16 +133,16 @@ function EnvironmentNotifications({
     const { thread, status } = entry;
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? "Conversație terminată"
         : status === "approval"
-          ? "Approval needed"
+          ? "E nevoie de aprobare"
           : status === "limited"
-            ? "Usage limit reached"
+            ? "Limita de utilizare a fost atinsă"
             : status === "failed"
-              ? "Thread failed"
+              ? "Conversația a eșuat"
               : status === "request"
-                ? "Guest request"
-                : "Input needed";
+                ? "Cerere de la invitat"
+                : "E nevoie de răspunsul tău";
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -172,7 +172,7 @@ function EnvironmentNotifications({
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: "Deschide conversația",
           onClick: () => {
             toastManager.close(toastId);
             void navigate({

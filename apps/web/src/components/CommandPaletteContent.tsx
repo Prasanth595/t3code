@@ -18,7 +18,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
 
 export function CommandPaletteContent({
   children,
-  escapeLabel = "Close",
+  escapeLabel = "Închide",
   footerActionLabel,
   footerTrailing,
   inputAccessory,
@@ -63,7 +63,7 @@ export function CommandPaletteContent({
               <Kbd>
                 <ArrowDownIcon />
               </Kbd>
-              <span>Navigate</span>
+              <span>Navighează</span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
               <KbdGroup>
@@ -74,7 +74,7 @@ export function CommandPaletteContent({
             {showBackHint ? (
               <KbdGroup>
                 <Kbd>Backspace</Kbd>
-                <span>Back</span>
+                <span>Înapoi</span>
               </KbdGroup>
             ) : null}
             <KbdGroup>

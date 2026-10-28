@@ -170,7 +170,7 @@ describe("IncomingShareInbox", () => {
         environmentId: "environment-1",
         projectId: "project-2",
       }),
-    ).rejects.toThrow("already reserved");
+    ).rejects.toThrow("deja rezervat");
     expect(persisted.get("share-stable")?.destination?.projectId).toBe("project-1");
   });
 
@@ -209,7 +209,7 @@ describe("IncomingShareInbox", () => {
         environmentId: "environment-1",
         projectId: "project-1",
       }),
-    ).rejects.toThrow("reservation changed");
+    ).rejects.toThrow("s-a schimbat");
     expect(persisted.get("share-stable")?.destination?.projectId).toBe("project-2");
   });
 

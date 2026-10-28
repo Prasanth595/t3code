@@ -110,13 +110,13 @@ export function QuestionAttachments(props: {
           (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
         ) {
           if (append(key, images) > 0)
-            Dialog.alert("Could not paste image", "Too many attachments.");
+            Dialog.alert("Imaginea nu a putut fi lipită", "Prea multe atașamente.");
         } else await releaseUnusedComposerAttachmentFiles(images);
       })
       .catch((error) =>
         Dialog.alert(
-          "Could not paste image",
-          error instanceof Error ? error.message : "Try again.",
+          "Imaginea nu a putut fi lipită",
+          error instanceof Error ? error.message : "Încearcă din nou.",
         ),
       )
       .finally(() => changeQuestionAttachmentPreparation(key, -1));
@@ -158,12 +158,15 @@ export function QuestionAttachments(props: {
       }
       const rejected = append(key, picked);
       if (result.error || rejected > 0)
-        Dialog.alert("Could not attach file", result.error ?? "Too many attachments.");
+        Dialog.alert("Fișierul nu a putut fi atașat", result.error ?? "Prea multe atașamente.");
     });
     changeQuestionAttachmentPreparation(key, -1);
     if (AsyncResult.isFailure(picked)) {
       const error = squashAtomCommandFailure(picked);
-      Dialog.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        "Fișierul nu a putut fi atașat",
+        error instanceof Error ? error.message : "Încearcă din nou.",
+      );
     }
   };
   return (
@@ -215,7 +218,7 @@ export function QuestionAttachments(props: {
             focusedRef.current = false;
             onInputFocusChange?.(false);
           }}
-          placeholder="Or type a custom answer"
+          placeholder="Sau scrie alt răspuns"
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
       </TextInputWrapper>

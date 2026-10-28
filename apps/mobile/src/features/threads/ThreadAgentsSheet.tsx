@@ -72,7 +72,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
     >
       {subagents.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          No agents in this turn.
+          Niciun agent în această rundă.
         </Text>
       ) : (
         subagents.map((subagent) => (
@@ -107,7 +107,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
               tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
-              title="Agents"
+              title="Agenți"
               titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
@@ -122,7 +122,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title="Agents" onBack={() => navigation.goBack()} />
+      <AndroidSheetHeader title="Agenți" onBack={() => navigation.goBack()} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );
@@ -151,7 +151,7 @@ function AgentRow(props: {
     return (
       <View
         accessible
-        accessibilityHint="Provider-managed agent. Its work appears in the transcript."
+        accessibilityHint="Agent gestionat de furnizor. Munca lui apare în conversație."
       >
         {row}
       </View>
@@ -161,7 +161,7 @@ function AgentRow(props: {
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityHint="Opens this agent's thread"
+      accessibilityHint="Deschide conversația acestui agent"
       onPress={() => props.onOpen(childThreadId)}
       className="active:opacity-70"
     >

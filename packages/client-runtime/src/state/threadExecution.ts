@@ -178,22 +178,22 @@ export function formatModelSelectionEffort(
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
-  idle: "Idle",
-  pending: "Working",
-  running: "Working",
-  waiting: "Waiting",
-  completed: "Completed",
-  interrupted: "Interrupted",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  rolled_back: "Cancelled",
+  idle: "Inactiv",
+  pending: "Lucrează",
+  running: "Lucrează",
+  waiting: "Așteaptă",
+  completed: "Terminat",
+  interrupted: "Întrerupt",
+  failed: "Eșuat",
+  cancelled: "Anulat",
+  rolled_back: "Anulat",
 };
 
 export function formatProviderSubagentStatus(
   status: ProviderSubagentStatus | null,
   nowMs: number,
 ): string {
-  if (status === null) return "Starting";
+  if (status === null) return "Pornește";
   const label = SUBAGENT_STATUS_LABELS[status.status];
   const live = isOrchestrationV2WorkActive(status.status);
   if (!live && status.status !== "completed") return label;
@@ -287,10 +287,10 @@ const BACKGROUND_WORK_KINDS: Record<
   BackgroundWorkKind,
   { readonly order: number; readonly singular: string; readonly plural: string }
 > = {
-  subagent: { order: 0, singular: "subagent", plural: "subagents" },
-  command: { order: 1, singular: "command", plural: "commands" },
-  monitor: { order: 2, singular: "monitor", plural: "monitors" },
-  background_task: { order: 3, singular: "background task", plural: "background tasks" },
+  subagent: { order: 0, singular: "subagent", plural: "subagenți" },
+  command: { order: 1, singular: "comandă", plural: "comenzi" },
+  monitor: { order: 2, singular: "monitorizare", plural: "monitorizări" },
+  background_task: { order: 3, singular: "sarcină în fundal", plural: "sarcini în fundal" },
 };
 
 export interface PendingBackgroundWorkItem {
@@ -344,11 +344,11 @@ export function presentPendingBackgroundWork(
     const named = only.label !== noun;
     const title = waiting
       ? named
-        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
+        ? `${only.kind === "monitor" ? "" : `Așteaptă ${noun} `}${only.label}`
+        : `Așteaptă: ${noun}`
       : named
-        ? `Running: ${only.label}`
-        : `Running a ${noun}`;
+        ? `Rulează: ${only.label}`
+        : `Rulează: ${noun}`;
     return { title, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
@@ -357,7 +357,7 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  return { title: `${waiting ? "Așteaptă" : "Rulează"} ${joinWithAnd(groups)}`, items, waiting };
 }
 
 export interface ProviderGoalPresentation {
@@ -368,12 +368,12 @@ export interface ProviderGoalPresentation {
 }
 
 const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string> = {
-  active: "Pursuing goal",
-  paused: "Goal paused",
-  blocked: "Goal blocked",
-  usage_limited: "Goal hit a usage limit",
-  budget_limited: "Goal reached its token budget",
-  complete: "Goal complete",
+  active: "Urmărește obiectivul",
+  paused: "Obiectiv pus pe pauză",
+  blocked: "Obiectiv blocat",
+  usage_limited: "Obiectivul a atins o limită de utilizare",
+  budget_limited: "Obiectivul a atins bugetul de tokeni",
+  complete: "Obiectiv atins",
 };
 
 function formatGoalTokens(tokens: number): string {
@@ -390,8 +390,8 @@ export function presentProviderGoal(
   if (goal.tokensUsed !== undefined && goal.tokensUsed > 0) {
     usage.push(
       goal.tokenBudget == null
-        ? `${formatGoalTokens(goal.tokensUsed)} tokens`
-        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} tokens`,
+        ? `${formatGoalTokens(goal.tokensUsed)} tokeni`
+        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} tokeni`,
     );
   }
   if (goal.timeUsedSeconds !== undefined && goal.timeUsedSeconds >= 60) {
@@ -401,7 +401,8 @@ export function presentProviderGoal(
     usage.push(`${goal.checks} ${goal.checks === 1 ? "check" : "checks"}`);
   }
   return {
-    title: goal.status === "active" && !working ? "Goal set" : PROVIDER_GOAL_TITLES[goal.status],
+    title:
+      goal.status === "active" && !working ? "Obiectiv setat" : PROVIDER_GOAL_TITLES[goal.status],
     objective: goal.objective,
     usage: usage.length === 0 ? null : usage.join(" · "),
     canResume: goal.status !== "active" && goal.status !== "complete",

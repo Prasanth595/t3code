@@ -91,7 +91,7 @@ export function retryFailedUpdateRunServers(
           ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
-            : "Could not start the update",
+            : "Actualizarea nu a putut porni",
         { serverUpdated: outcome.status === "updated" },
       ),
     );
@@ -326,8 +326,8 @@ export function DesktopUpdateLaunchNotice() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Update did not apply",
-        description: `Mira is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+        title: "Actualizarea nu s-a aplicat",
+        description: `Mira e încă pe ${APP_VERSION}. Instalează din nou ${notAppliedVersion} din butonul de actualizare.`,
       }),
     );
   }, [notAppliedVersion]);

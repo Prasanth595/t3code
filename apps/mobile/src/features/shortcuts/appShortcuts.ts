@@ -56,7 +56,7 @@ export function activeThreadRef(state: NavigationState): ScopedThreadRef | null 
 
 function threadShortcutLabel(thread: RecentThreadShortcut): string {
   const title = thread.title.trim();
-  return title.length > 0 ? title : "Thread";
+  return title.length > 0 ? title : "Conversație";
 }
 
 /** Launcher shortcuts survive updates; allowlist destinations so malformed or stale paths cannot navigate. */
@@ -92,7 +92,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
   return [
     {
       id: NEW_TASK_SHORTCUT_ID,
-      title: "New task",
+      title: "Sarcină nouă",
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },

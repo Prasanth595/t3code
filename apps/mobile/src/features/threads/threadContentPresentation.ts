@@ -21,14 +21,14 @@ export function projectThreadContentPresentation(input: {
   if (input.detailDeleted) {
     return {
       kind: "unavailable",
-      title: "Thread unavailable",
-      detail: "This thread was deleted or is no longer available.",
+      title: "Conversație indisponibilă",
+      detail: "Conversația a fost ștearsă sau nu mai e disponibilă.",
     };
   }
   if (input.detailError !== null) {
     return {
       kind: "unavailable",
-      title: "Could not load conversation",
+      title: "Conversația nu a putut fi încărcată",
       detail: input.detailError,
     };
   }
@@ -41,7 +41,7 @@ export function projectThreadContentPresentation(input: {
   }
   return {
     kind: "unavailable",
-    title: "Messages not cached",
-    detail: "Reconnect this environment to load the conversation.",
+    title: "Mesajele nu sunt salvate local",
+    detail: "Reconectează mediul ca să încarci conversația.",
   };
 }

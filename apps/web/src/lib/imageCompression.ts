@@ -126,10 +126,10 @@ export function readFileAsDataUrl(file: Blob): Promise<string> {
         resolve(reader.result);
         return;
       }
-      reject(new Error("Could not read image data."));
+      reject(new Error("Datele imaginii nu au putut fi citite."));
     });
     reader.addEventListener("error", () => {
-      reject(reader.error ?? new Error("Failed to read image."));
+      reject(reader.error ?? new Error("Imaginea nu a putut fi citită."));
     });
     reader.readAsDataURL(file);
   });

@@ -21,7 +21,7 @@ export function reviewPosition(row: NativeReviewDiffRow): PullRequestReviewPosit
 export function reviewPositionLabel(position: PullRequestReviewPosition) {
   const oldSide =
     position.kind === "deleted" || (position.kind === "context" && position.side === "left");
-  return `${oldSide ? "Old line" : "Line"} ${reviewLine(position)}`;
+  return `${oldSide ? "Linia veche" : "Linia"} ${reviewLine(position)}`;
 }
 function reviewLine(position: PullRequestReviewPosition) {
   if (position.kind === "deleted" || (position.kind === "context" && position.side === "left"))
@@ -79,7 +79,7 @@ export function annotatePullRequestDiff(
     attach(
       anchor,
       `discussion:${thread.id}`,
-      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${first?.body ?? ""}\n${thread.commentCount ?? thread.comments.length} comments · Tap to open`,
+      `${first?.author?.login ?? "Discuție"}${thread.isResolved ? " · Rezolvată" : ""}\n${first?.body ?? ""}\n${thread.commentCount ?? thread.comments.length} comentarii · Atinge pentru a deschide`,
       thread.line === null ? "file" : String(thread.line),
     );
   }
@@ -95,7 +95,7 @@ export function annotatePullRequestDiff(
     attach(
       lines.get(JSON.stringify([draft.path, side, line])),
       `draft:${draft.id}`,
-      `Pending review · Tap to edit\n${draft.body}`,
+      `Revizuire în așteptare · Atinge pentru a edita\n${draft.body}`,
       String(line),
     );
   }

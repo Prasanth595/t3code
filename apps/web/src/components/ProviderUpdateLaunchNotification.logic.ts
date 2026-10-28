@@ -81,14 +81,14 @@ function dedupeProvidersByDriver<T extends ServerProvider>(providers: ReadonlyAr
 function getProviderUpdatedTitle(provider: Pick<ServerProvider, "driver" | "version">): string {
   const providerName = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
   return provider.version
-    ? `${providerName} updated: ${formatVersion(provider.version)}`
-    : `${providerName} updated`;
+    ? `${providerName} a fost actualizat: ${formatVersion(provider.version)}`
+    : `${providerName} a fost actualizat`;
 }
 
 function getProviderUpdatedDescription(providerCount: number): string {
   return providerCount === 1
-    ? "New sessions will use the updated provider."
-    : "New sessions will use the updated providers.";
+    ? "Sesiunile noi vor folosi furnizorul actualizat."
+    : "Sesiunile noi vor folosi furnizorii actualizați.";
 }
 
 function getProviderFailedUpdateTitle(
@@ -97,8 +97,8 @@ function getProviderFailedUpdateTitle(
   const providerName = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
   const attemptedVersion = provider.versionAdvisory?.latestVersion;
   return attemptedVersion
-    ? `${providerName} ${formatVersion(attemptedVersion)} update failed`
-    : `${providerName} update failed`;
+    ? `${providerName} ${formatVersion(attemptedVersion)} nu a putut fi actualizat`
+    : `${providerName} nu a putut fi actualizat`;
 }
 
 export function isProviderUpdateCandidate(
@@ -239,7 +239,8 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
   if (failureLines.length === 0) {
     return {
       type: "success",
-      title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
+      title:
+        settled.length === 1 ? "Furnizor actualizat" : `${settled.length} furnizori actualizați`,
       description: getProviderUpdatedDescription(settled.length),
     };
   }
@@ -247,10 +248,10 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
     type: "error",
     title:
       failureLines.length < settled.length
-        ? `${failureLines.length} of ${settled.length} provider updates failed`
+        ? `${failureLines.length} din ${settled.length} actualizări de furnizori au eșuat`
         : settled.length === 1
-          ? "Provider update failed"
-          : "Provider updates failed",
+          ? "Actualizarea furnizorului a eșuat"
+          : "Actualizările furnizorilor au eșuat",
     description: failureLines.join("\n"),
   };
 }
@@ -316,12 +317,12 @@ export function getProviderUpdateSidebarPillView(
       tone: "loading",
       title:
         activeProviders.length === 1
-          ? `Updating ${activeProviderName}`
-          : `Updating ${activeProviders.length} providers`,
+          ? `Se actualizează ${activeProviderName}`
+          : `Se actualizează ${activeProviders.length} furnizori`,
       description:
         activeProviders.length === 1
-          ? `${formatProviderList(activeProviders)} update in progress.`
-          : `${formatProviderList(activeProviders)} updates are in progress.`,
+          ? `Actualizare în curs: ${formatProviderList(activeProviders)}.`
+          : `Actualizări în curs: ${formatProviderList(activeProviders)}.`,
     };
   }
 
@@ -347,7 +348,7 @@ export function getProviderUpdateSidebarPillView(
       title:
         failedProviders.length === 1
           ? getProviderFailedUpdateTitle(failedProvider)
-          : `${failedProviders.length} provider updates failed`,
+          : `${failedProviders.length} actualizări de furnizori au eșuat`,
       description: getFailedProviderUpdateDescription(failedProviders),
       dismissible: true,
     });
@@ -371,8 +372,8 @@ export function getProviderUpdateSidebarPillView(
       tone: "warning",
       title:
         unchangedProviders.length === 1
-          ? `${unchangedProviderName} still needs an update`
-          : `${unchangedProviders.length} providers still need updates`,
+          ? `${unchangedProviderName} încă are nevoie de actualizare`
+          : `${unchangedProviders.length} furnizori încă au nevoie de actualizare`,
       description: `${formatProviderList(unchangedProviders)} ${
         unchangedProviders.length === 1 ? "still appears" : "still appear"
       } outdated. Review provider settings for details.`,
@@ -397,7 +398,7 @@ export function getProviderUpdateSidebarPillView(
       title:
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider)
-          : `${succeededProviders.length} providers updated`,
+          : `${succeededProviders.length} furnizori actualizați`,
       description: getProviderUpdatedDescription(succeededProviders.length),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });
@@ -433,5 +434,5 @@ function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvi
       return provider.updateState.message;
     }
   }
-  return `${formatProviderList(providers)} failed to update. Check provider settings for details.`;
+  return `${formatProviderList(providers)} nu s-a putut actualiza. Verifică setările furnizorului pentru detalii.`;
 }

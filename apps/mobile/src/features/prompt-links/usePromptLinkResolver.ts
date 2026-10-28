@@ -152,8 +152,8 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       await waitForComposerDraftsLoaded();
     } catch {
       Dialog.alert(
-        "Could not open link",
-        "Drafts could not be loaded, so the prompt was not added.",
+        "Link-ul nu a putut fi deschis",
+        "Ciornele nu au putut fi încărcate, așa că promptul nu a fost adăugat.",
       );
       return;
     }
@@ -220,8 +220,8 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     );
     if (environmentId === null) {
       Dialog.alert(
-        "Could not start without a project",
-        "No connected environment offers threads without a project.",
+        "Nu am putut porni fără proiect",
+        "Niciun mediu conectat nu permite conversații fără proiect.",
       );
       return;
     }
@@ -230,10 +230,10 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not start without a project",
+          "Nu am putut porni fără proiect",
           error instanceof Error
             ? error.message
-            : "The folder for threads without a project could not be created.",
+            : "Dosarul pentru conversațiile fără proiect nu a putut fi creat.",
         );
       }
       return;
@@ -245,7 +245,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     const environmentId =
       flow.selectedEnvironmentId ?? connectedEnvironments[0]?.environmentId ?? null;
     if (environmentId === null) {
-      Dialog.alert("Could not clone", "Connect an environment first.");
+      Dialog.alert("Clonarea a eșuat", "Conectează mai întâi un mediu.");
       return;
     }
     const prompt =
@@ -271,8 +271,8 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
           modelUnavailable: prompt !== null && request.provider !== null,
         }),
         prompt
-          ? "The prompt opens in a new task once the clone starts."
-          : "Open the link again after the clone to get the prompt.",
+          ? "Promptul se deschide într-o sarcină nouă după ce pornește clonarea."
+          : "Deschide din nou link-ul după clonare ca să primești promptul.",
       ].join("\n\n"),
     );
   };
@@ -280,7 +280,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   const resolveLink = useEffectEvent((linkSearch: string) => {
     const parsed = parseNewThreadLink(linkSearch);
     if (!parsed.ok) {
-      Dialog.alert("Could not open link", parsed.error);
+      Dialog.alert("Link-ul nu a putut fi deschis", parsed.error);
       return;
     }
     const link = parsed.value;
@@ -325,12 +325,12 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       })();
       return;
     }
-    Dialog.alert(`You don't have ${promptLinkRepositoryName(repository)}`, undefined, [
-      { text: "Cancel", style: "cancel" },
+    Dialog.alert(`Nu ai ${promptLinkRepositoryName(repository)}`, undefined, [
+      { text: "Anulează", style: "cancel" },
       ...(request.prompt
-        ? [{ text: "Use without project", onPress: () => void openScratchDraft(request) }]
+        ? [{ text: "Folosește fără proiect", onPress: () => void openScratchDraft(request) }]
         : []),
-      { text: "Clone", onPress: () => cloneRepository(repository, request) },
+      { text: "Clonează", onPress: () => cloneRepository(repository, request) },
     ]);
   });
 

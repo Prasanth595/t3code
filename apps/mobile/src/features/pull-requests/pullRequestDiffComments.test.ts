@@ -111,6 +111,6 @@ describe("PR comments in continuous native diffs", () => {
       "abc",
     );
     expect(annotated.rows.at(-1)?.id).toBe("draft:left");
-    expect(reviewPositionLabel(position)).toBe("Old line 7");
+    expect(reviewPositionLabel(position)).toBe("Linia veche 7");
   });
 });

@@ -8,9 +8,9 @@ export type SecretRequestItem = Extract<
 /** A `file` request lets the agent's commands read the value, so its card must not promise more. */
 export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
   item.delivery === "file"
-    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
-    : "Stored securely, never shown to the agent";
-export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+    ? "Ținut în afara conversației, într-un fișier privat pe care comenzile agentului îl pot citi 24 de ore"
+    : "Stocat în siguranță, nu e arătat niciodată agentului";
+export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Lipește secretul";
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
@@ -24,22 +24,22 @@ export type SecretRequestDisplay =
 const SAVED_DISPLAY: SecretRequestDisplay = {
   kind: "answered",
   outcome: "saved",
-  label: "Saved securely and kept private",
+  label: "Salvat în siguranță și păstrat privat",
 };
 const DECLINED_DISPLAY: SecretRequestDisplay = {
   kind: "answered",
   outcome: "declined",
-  label: "Declined",
+  label: "Refuzat",
 };
 const ENDED_DISPLAY: SecretRequestDisplay = {
   kind: "answered",
   outcome: "ended",
-  label: "Request ended",
+  label: "Cerere încheiată",
 };
 const PENDING_DISPLAY: SecretRequestDisplay = { kind: "pending" };
 const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
   kind: "pending-elsewhere",
-  label: "Waiting for an answer in the original thread",
+  label: "Se așteaptă răspunsul în conversația originală",
 };
 
 /**
@@ -93,5 +93,5 @@ export function secretRequestFailureMessage(failure: unknown): string {
   ) {
     return failure.message;
   }
-  return "Could not answer the request. Try again.";
+  return "Nu am putut răspunde la cerere. Încearcă din nou.";
 }

@@ -35,7 +35,7 @@ export function MiraAccountSettings() {
     let cancelled = false;
     fetchMiraAccount().then((next) => {
       if (!cancelled) setAccount(next);
-    }, reportFailure("Could not load your Mira plan"));
+    }, reportFailure("Planul Mira nu a putut fi încărcat"));
     return () => {
       cancelled = true;
     };
@@ -54,11 +54,11 @@ export function MiraAccountSettings() {
     return (
       <SettingsSection title="Mira account" icon={<CloudIcon aria-hidden className="size-4" />}>
         <SettingsRow
-          title="Not signed in"
-          description="Chat works without an account for a few messages a day. Sign in for unlimited chat and to reach your computers remotely."
+          title="Neautentificat"
+          description="Chat-ul merge fără cont pentru câteva mesaje pe zi. Autentifică-te pentru chat nelimitat și ca să-ți accesezi calculatoarele de la distanță."
           control={
             <Button size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
-              Sign in
+              Autentifică-te
             </Button>
           }
         />
@@ -71,7 +71,7 @@ export function MiraAccountSettings() {
   return (
     <SettingsSection title="Mira account" icon={<CloudIcon aria-hidden className="size-4" />}>
       <SettingsRow
-        title={account ? `${account.plan.name} plan` : "Loading plan…"}
+        title={account ? `Planul ${account.plan.name}` : "Se încarcă planul…"}
         description={account?.email ?? undefined}
         control={
           isPaid ? (
@@ -79,16 +79,16 @@ export function MiraAccountSettings() {
               size="xs"
               variant="outline"
               disabled={busy}
-              onClick={() => run("Could not open billing", openMiraBillingPortal)}
+              onClick={() => run("Facturarea nu a putut fi deschisă", openMiraBillingPortal)}
             >
-              Manage billing
+              Gestionează facturarea
             </Button>
           ) : (
             <Button
               size="xs"
               disabled={busy || account === null}
               onClick={() =>
-                run("Could not start the upgrade", () => openMiraCheckout(MIRA_UPGRADE_PLAN_ID))
+                run("Upgrade-ul nu a putut porni", () => openMiraCheckout(MIRA_UPGRADE_PLAN_ID))
               }
             >
               Upgrade
@@ -101,18 +101,18 @@ export function MiraAccountSettings() {
           title="Chat"
           description={
             account.chat.dailyLimit === null
-              ? "Unlimited."
-              : `${account.chat.messagesToday} of ${account.chat.dailyLimit} messages today. Resets at midnight UTC.`
+              ? "Nelimitat."
+              : `${account.chat.messagesToday} din ${account.chat.dailyLimit} mesaje azi. Se resetează la miezul nopții UTC.`
           }
         />
       ) : null}
       {account ? (
         <SettingsRow
-          title="Agentic mode"
+          title="Mod agent"
           description={
             account.plan.agenticEnabled
-              ? `${formatMiraTokens(used)} of ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokens this month. Resets on the 1st, in UTC.`
-              : "Available with Pro: Mira works on your computer, editing files and running commands."
+              ? `${formatMiraTokens(used)} din ${formatMiraTokens(account.plan.monthlyTokenLimit)} tokeni luna aceasta. Se resetează pe 1 ale lunii, UTC.`
+              : "Disponibil cu Pro: Mira lucrează pe calculatorul tău, editează fișiere și rulează comenzi."
           }
         />
       ) : null}

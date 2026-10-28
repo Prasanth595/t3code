@@ -66,25 +66,25 @@ export function PullRequestMergeControls(props: {
     permissions.connected && stack.supportsStackActions && !stack.isFresh && !stack.error;
   const reason =
     (!permissions.connected
-      ? "Reconnect to merge."
+      ? "Reconectează-te ca să faci merge."
       : mergeUnavailableReason(pr, permissions.canWrite, terminology)) ??
     (stack.stack
       ? !stack.supportsStackActions
-        ? "This environment can display stacks but cannot merge them."
+        ? "Acest mediu poate afișa stack-uri, dar nu le poate îmbina."
         : !stack.isFresh
-          ? "Refresh the stack before merging."
+          ? "Reîmprospătează stack-ul înainte de merge."
           : scope?.reason
       : !canMergeSingle
         ? stack.error
-          ? "Couldn't check stack membership. Refresh before merging."
-          : "Checking stack membership…"
+          ? "Stack-ul nu a putut fi verificat. Reîmprospătează înainte de merge."
+          : "Se verifică stack-ul…"
         : null);
   const canMerge = !busy && method !== undefined && !reason;
   const label = method
     ? scope && scope.layers.length > 1
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
       : MERGE_METHODS[method].title
-    : "Merge unavailable";
+    : "Merge indisponibil";
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
@@ -119,7 +119,9 @@ export function PullRequestMergeControls(props: {
                     !canPerformPullRequestAction(fresh, "merge") ||
                     !allowedMergeMethods(fresh).includes(method)
                   )
-                    throw new Error(`The ${terminology.singular} changed. Refresh before merging.`);
+                    throw new Error(
+                      `${terminology.singular} s-a schimbat. Reîmprospătează înainte de merge.`,
+                    );
                   return method;
                 },
               }
@@ -137,8 +139,8 @@ export function PullRequestMergeControls(props: {
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Couldn't complete the merge action",
-        cause instanceof Error ? cause.message : "Try again.",
+        "Acțiunea de merge nu a putut fi finalizată",
+        cause instanceof Error ? cause.message : "Încearcă din nou.",
       );
     }
   };
@@ -146,21 +148,21 @@ export function PullRequestMergeControls(props: {
     const title =
       action === "merge"
         ? scope && scope.layers.length > 1
-          ? `Merge ${scope.layers.length} stack layers?`
+          ? `Faci merge la ${scope.layers.length} straturi din stack?`
           : `${pullRequestActionLabel("merge", terminology)}?`
         : action === "enable-auto-merge"
-          ? "Enable auto-merge?"
-          : "Disable auto-merge?";
+          ? "Activezi auto-merge?"
+          : "Dezactivezi auto-merge?";
     const message =
       action === "merge" && scope
-        ? `Merge ${scope.layers.map((layer) => `#${layer.number}`).join(" → ")} into ${stack.stack?.base} using ${method}. Layers above #${pr.number} stay open.`
+        ? `Merge ${scope.layers.map((layer) => `#${layer.number}`).join(" → ")} în ${stack.stack?.base} folosind ${method}. Straturile de deasupra #${pr.number} rămân deschise.`
         : action === "enable-auto-merge"
-          ? `Merge #${pr.number} using ${method} when its requirements are met. This may happen immediately.`
+          ? `Merge #${pr.number} folosind ${method} când cerințele sunt îndeplinite. Se poate întâmpla imediat.`
           : action === "disable-auto-merge"
-            ? `Stop the provider from automatically merging this ${terminology.singular}.`
-            : `Merge #${pr.number} into ${pr.baseBranch} using ${method}.`;
+            ? `Oprește furnizorul să facă automat merge la acest ${terminology.singular}.`
+            : `Merge #${pr.number} în ${pr.baseBranch} folosind ${method}.`;
     Dialog.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
+      { text: "Anulează", style: "cancel" },
       {
         text: action === "merge" ? label : title.replace("?", ""),
         onPress: () => void perform(action),
@@ -179,7 +181,13 @@ export function PullRequestMergeControls(props: {
         {Platform.OS === "android" ? (
           <View className="min-w-0 flex-1">
             <Button
-              label={busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
+              label={
+                busy
+                  ? "Se lucrează…"
+                  : !permissions.connected
+                    ? "Reconectează-te pentru merge"
+                    : label
+              }
               tone="primary"
               fullWidth
               disabled={!canMerge}
@@ -191,7 +199,7 @@ export function PullRequestMergeControls(props: {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={
-              scope ? `${label}, ${scope.layers.length} stack layers through #${pr.number}` : label
+              scope ? `${label}, ${scope.layers.length} straturi până la #${pr.number}` : label
             }
             accessibilityState={{ disabled: !canMerge, busy: busy || checkingStack }}
             disabled={!canMerge}
@@ -212,13 +220,17 @@ export function PullRequestMergeControls(props: {
             <Text
               className={`shrink text-center text-sm font-t3-semibold ${canMerge ? "text-prominent-action-foreground" : "text-foreground-muted"}`}
             >
-              {busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
+              {busy
+                ? "Se lucrează…"
+                : !permissions.connected
+                  ? "Reconectează-te pentru merge"
+                  : label}
             </Text>
           </Pressable>
         )}
         {methods.length > 0 || canAutoMerge ? (
           <Menu
-            title="Merge options"
+            title="Opțiuni merge"
             actions={[
               ...methods.map((id) => ({
                 id,
@@ -230,7 +242,9 @@ export function PullRequestMergeControls(props: {
                 ? [
                     {
                       id: autoAction,
-                      title: pr.autoMergeEnabled ? "Disable auto-merge" : "Enable auto-merge",
+                      title: pr.autoMergeEnabled
+                        ? "Dezactivează auto-merge"
+                        : "Activează auto-merge",
                       image: "clock",
                     },
                   ]
@@ -247,7 +261,7 @@ export function PullRequestMergeControls(props: {
             {Platform.OS === "android" ? (
               <View pointerEvents="none">
                 <IconButton
-                  accessibilityLabel="Merge options"
+                  accessibilityLabel="Opțiuni merge"
                   icon="chevron.down"
                   variant="tonal"
                 />
@@ -255,7 +269,7 @@ export function PullRequestMergeControls(props: {
             ) : (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Merge options"
+                accessibilityLabel="Opțiuni merge"
                 className="min-h-11 w-11 items-center justify-center border-l border-border-subtle"
               >
                 <SymbolView
@@ -274,16 +288,16 @@ export function PullRequestMergeControls(props: {
       reason &&
       reason !== MERGE_CONFLICT_REASON &&
       reason !== "Checking stack membership…" &&
-      !(checkingStack && reason === "Refresh the stack before merging.") ? (
+      !(checkingStack && reason === "Reîmprospătează stack-ul înainte de merge.") ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
       ) : null}
       {pr.autoMergeEnabled ? (
         <Text className="px-1 text-xs text-foreground-muted">
-          Auto-merge is enabled{pr.autoMergeMethod ? ` · ${pr.autoMergeMethod}` : ""}
+          Auto-merge e activ{pr.autoMergeMethod ? ` · ${pr.autoMergeMethod}` : ""}
         </Text>
       ) : null}
       {stack.error && stack.supportsStackActions ? (
-        <Button label="Retry stack lookup" tone="text" onPress={stack.refresh} />
+        <Button label="Reîncearcă verificarea stack-ului" tone="text" onPress={stack.refresh} />
       ) : null}
     </View>
   );

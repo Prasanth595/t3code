@@ -15,31 +15,31 @@ export function presentSavedCloudEnvironmentConnection(
   switch (connection.phase) {
     case "connected":
       return {
-        buttonLabel: "Connected",
+        buttonLabel: "Conectat",
         statusText: connectionStatusText(connection),
         tone: "connected",
       };
     case "connecting":
       return {
-        buttonLabel: "Connecting…",
+        buttonLabel: "Se conectează…",
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
     case "reconnecting":
       return {
-        buttonLabel: "Reconnecting…",
+        buttonLabel: "Se reconectează…",
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
     case "unsupported":
       return {
-        buttonLabel: "Client not supported",
+        buttonLabel: "Client nesuportat",
         statusText: connectionStatusText(connection),
         tone: "idle",
       };
     case "error":
       return {
-        buttonLabel: "Connection failed",
+        buttonLabel: "Conectare eșuată",
         statusText: connectionStatusText(connection),
         tone: "error",
       };
@@ -51,7 +51,7 @@ export function presentSavedCloudEnvironmentConnection(
       };
     case "available":
       return {
-        buttonLabel: "Not connected",
+        buttonLabel: "Neconectat",
         statusText: connectionStatusText(connection),
         tone: "idle",
       };

@@ -67,13 +67,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy plan",
-          description: error instanceof Error ? error.message : "An error occurred while copying.",
+          title: "Planul nu a putut fi copiat",
+          description: error instanceof Error ? error.message : "A apărut o eroare la copiere.",
         }),
       );
     },
   });
-  const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
+  const title = proposedPlanTitle(planMarkdown) ?? "Plan propus";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
@@ -101,8 +101,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Workspace path is unavailable",
-          description: "This thread does not have a workspace path to save into.",
+          title: "Calea spațiului de lucru nu e disponibilă",
+          description: "Conversația nu are o cale în spațiul de lucru unde să salveze.",
         }),
       );
       return;
@@ -118,7 +118,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     if (!relativePath) {
       toastManager.add({
         type: "warning",
-        title: "Enter a workspace path",
+        title: "Introdu o cale din spațiul de lucru",
       });
       return;
     }
@@ -139,7 +139,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
-          title: "Plan saved to workspace",
+          title: "Planul a fost salvat",
           description: result.value.relativePath,
         });
         return;
@@ -149,8 +149,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not save plan",
-            description: error instanceof Error ? error.message : "An error occurred while saving.",
+            title: "Planul nu a putut fi salvat",
+            description: error instanceof Error ? error.message : "A apărut o eroare la salvare.",
           }),
         );
       }
@@ -169,20 +169,20 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </div>
         <Menu>
           <MenuTrigger
-            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+            render={<Button aria-label="Acțiuni plan" size="icon-xs" variant="outline" />}
           >
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={handleCopyPlan}>
-              {isCopied ? "Copied!" : "Copy to clipboard"}
+              {isCopied ? "Copiat!" : "Copiază în clipboard"}
             </MenuItem>
-            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            <MenuItem onClick={handleDownload}>Descarcă ca markdown</MenuItem>
             <MenuItem
               onClick={openSaveDialog}
               disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
             >
-              Save to workspace
+              Salvează în spațiul de lucru
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -225,7 +225,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? "Collapse plan" : "Expand plan"}
+              {expanded ? "Restrânge planul" : "Extinde planul"}
             </Button>
           </div>
         ) : null}
@@ -277,14 +277,14 @@ function SavePlanToWorkspaceForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Save plan to workspace</DialogTitle>
+        <DialogTitle>Salvează planul în spațiul de lucru</DialogTitle>
         <DialogDescription>
-          Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+          Introdu o cale relativă la <code>{workspaceRoot ?? "spațiul de lucru"}</code>.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <label htmlFor={savePathInputId} className="grid gap-1.5">
-          <span className="text-xs font-medium text-foreground">Workspace path</span>
+          <span className="text-xs font-medium text-foreground">Cale în spațiul de lucru</span>
           <Input
             id={savePathInputId}
             value={savePath}
@@ -300,7 +300,7 @@ function SavePlanToWorkspaceForm({
           Cancel
         </Button>
         <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>
-          {saving ? "Saving..." : "Save"}
+          {saving ? "Se salvează..." : "Salvează"}
         </Button>
       </DialogFooter>
     </>

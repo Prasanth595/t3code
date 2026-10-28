@@ -124,7 +124,7 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>Versiune Intel pe Apple Silicon</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -149,12 +149,12 @@ async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) reportError("Actualizarea nu a putut fi descărcată", actionError);
     return result.completed;
   } catch (error) {
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      "Descărcarea actualizării nu a putut porni",
+      error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
     );
     return false;
   }
@@ -174,12 +174,12 @@ async function installLocalUpdate(
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    reportError("Could not install update", actionError);
+    reportError("Actualizarea nu a putut fi instalată", actionError);
     return false;
   } catch (error) {
     reportError(
-      "Could not install update",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      "Actualizarea nu a putut fi instalată",
+      error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
     );
     return false;
   }
@@ -244,10 +244,10 @@ function SidebarUpdateControl() {
     : showUpdateDetails
       ? state
         ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
+        : "Actualizare disponibilă"
       : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+        ? "Se caută actualizări…"
+        : (idleTooltip?.title ?? "Verifică actualizările");
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -301,8 +301,9 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: "Actualizarea nu a putut fi confirmată",
+            description:
+              error instanceof Error ? error.message : "Confirmarea actualizării a eșuat.",
           }),
         );
         return;
@@ -326,9 +327,10 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: "Nu am putut verifica actualizările",
             description:
-              result.state.message ?? "Automatic updates are not available in this build.",
+              result.state.message ??
+              "Actualizările automate nu sunt disponibile în această versiune.",
           }),
         );
       })
@@ -336,8 +338,9 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: "Nu am putut verifica actualizările",
+            description:
+              error instanceof Error ? error.message : "Verificarea actualizărilor a eșuat.",
           }),
         );
       })
@@ -366,8 +369,8 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: "Nu s-a putut actualiza tot",
+          description: error instanceof Error ? error.message : "A apărut o eroare neașteptată.",
         }),
       );
     }
@@ -537,7 +540,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label="Noutățile versiunii nightly"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

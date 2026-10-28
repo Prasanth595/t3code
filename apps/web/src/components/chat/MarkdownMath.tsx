@@ -31,8 +31,8 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
         props.focusable === false
           ? undefined
           : props.display
-            ? "Display equation"
-            : "Inline equation"
+            ? "Ecuație afișată"
+            : "Ecuație în text"
       }
     >
       <span
@@ -42,8 +42,8 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
           props.focusable === false
             ? undefined
             : props.display
-              ? "Scroll display equation"
-              : "Scroll inline equation"
+              ? "Derulează ecuația"
+              : "Derulează ecuația din text"
         }
       >
         <span className={props.display ? "inline-block w-max min-w-full" : "inline-block w-max"}>

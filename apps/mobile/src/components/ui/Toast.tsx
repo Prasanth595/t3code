@@ -55,7 +55,7 @@ export function Toast(props: ToastProps) {
         </View>
         {inlineAction ? action : null}
         {props.onDismiss ? (
-          <IconButton accessibilityLabel="Dismiss message" icon="xmark" onPress={props.onDismiss} />
+          <IconButton accessibilityLabel="Închide mesajul" icon="xmark" onPress={props.onDismiss} />
         ) : null}
       </View>
       {action && !inlineAction ? <View className="mt-2 self-end">{action}</View> : null}

@@ -36,21 +36,21 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
     }
     case "run_interrupt_request":
       return {
-        label: "Interrupt requested",
+        label: "Întrerupere cerută",
         detail: item.message,
         tone: "warning",
         icon: CircleAlertIcon,
       };
     case "run_interrupt_result":
       return {
-        label: "Run interrupted",
+        label: "Rulare întreruptă",
         detail: item.message,
         tone: "danger",
         icon: XIcon,
       };
     case "handoff":
       return {
-        label: "Context handoff",
+        label: "Transfer de context",
         detail:
           item.summary ??
           `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`,
@@ -59,8 +59,8 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
       };
     case "fork":
       return {
-        label: "Conversation fork",
-        detail: `Continues in ${item.targetThreadId}`,
+        label: "Ramificare conversație",
+        detail: `Continuă în ${item.targetThreadId}`,
         tone: "muted",
         icon: GitForkIcon,
       };
@@ -68,9 +68,9 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
       const tokenSummary =
         item.beforeTokenCount === undefined && item.afterTokenCount === undefined
           ? null
-          : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
+          : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokeni`;
       return {
-        label: "Context compacted",
+        label: "Context compactat",
         detail: item.summary ?? tokenSummary,
         tone: item.status === "failed" ? "danger" : "muted",
         icon: MinusIcon,
@@ -79,7 +79,7 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
     case "todo_list": {
       const steps = item.steps.map((step) => `${step.status}: ${step.text}`).join("\n");
       return {
-        label: "Plan updated",
+        label: "Plan actualizat",
         detail: [item.explanation, steps].filter(Boolean).join("\n\n") || null,
         tone: item.status === "failed" ? "danger" : "success",
         icon: CheckIcon,

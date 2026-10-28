@@ -101,26 +101,27 @@ export function webhookDraftErrors(draft: DraftState) {
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
       {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+        title: "Limită de vechime invalidă",
+        description: `Introdu un număr întreg de minute între 1 și ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES} sau lasă gol.`,
       },
     ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
-    ["Replay key", draft.replayKey],
-    ["Coalesce key", draft.coalesceKey],
+    ["Cheia de repetare", draft.replayKey],
+    ["Cheia de comasare", draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
       errors.push({
-        title: "Invalid webhook settings",
-        description: `${label} must contain a valid request placeholder.`,
+        title: "Setări webhook invalide",
+        description: `${label} trebuie să conțină un placeholder valid.`,
       });
   }
   const window = draft.coalesceWindowSeconds.trim();
   if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
     errors.push({
-      title: "Invalid webhook settings",
-      description: "Coalesce window must be whole seconds from 10 to 3600.",
+      title: "Setări webhook invalide",
+      description:
+        "Fereastra de comasare trebuie să fie un număr întreg de secunde între 10 și 3600.",
     });
   return errors;
 }
@@ -129,16 +130,17 @@ export function webhookDeliveryLabel(delivery: {
   readonly outcome: string;
   readonly pendingWindow?: boolean | undefined;
 }) {
-  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
+  if (delivery.outcome === "accepted")
+    return delivery.pendingWindow ? "Fereastră deschisă" : "A rulat";
   const labels: Record<string, string> = {
-    dispatch_failed: "Run failed",
-    duplicate: "Duplicate",
-    coalesced: "Coalesced",
-    filtered: "Filtered",
-    rejected_signature: "Bad signature",
-    disabled: "Task paused",
-    rate_limited: "Rate limited",
-    expired: "Too old",
+    dispatch_failed: "Rulare eșuată",
+    duplicate: "Duplicat",
+    coalesced: "Comasat",
+    filtered: "Filtrat",
+    rejected_signature: "Semnătură invalidă",
+    disabled: "Sarcină pe pauză",
+    rate_limited: "Limitat",
+    expired: "Prea vechi",
   };
   return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
 }

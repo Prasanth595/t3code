@@ -137,7 +137,7 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron}>
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{chat?.title ?? "New chat"}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{chat?.title ?? "Chat nou"}</h1>
         <ChatModeSwitch
           mode="chat"
           onAgentic={() => {
@@ -150,7 +150,7 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
         <div className="m-auto flex max-w-md flex-col items-center gap-2 px-6 text-center">
           <p className="text-2xl font-medium">What can I help with?</p>
           <p className="text-sm text-muted-foreground">
-            Ask anything. Chat works without a connected computer.
+            Întreabă orice. Chat-ul merge și fără un calculator conectat.
           </p>
         </div>
       ) : (
@@ -166,7 +166,7 @@ export function ChatModeView({ chatId }: { readonly chatId: string | null }) {
           />
         ) : searching ? (
           <p className="mx-auto mb-2 w-full max-w-(--chat-content-max-width) px-1 text-muted-foreground text-xs">
-            Searching the web…
+            Caut pe internet…
           </p>
         ) : null}
         <ChatModeComposer
@@ -281,13 +281,13 @@ function ChatReplyErrorNotice({
       ? onSignIn === null
         ? null
         : {
-            label: error.code === "session_expired" ? "Sign in" : "Create free account",
+            label: error.code === "session_expired" ? "Autentifică-te" : "Creează cont gratuit",
             run: onSignIn,
           }
       : error.code === "daily_limit"
-        ? { label: "Upgrade to Pro", run: onUpgrade }
+        ? { label: "Treci la Pro", run: onUpgrade }
         : isRetryable(error)
-          ? { label: "Try again", run: onRetry }
+          ? { label: "Încearcă din nou", run: onRetry }
           : null;
   return (
     <div
@@ -413,7 +413,7 @@ function ChatModeComposer({
                       <span className="truncate">{file.name}</span>
                       <button
                         type="button"
-                        aria-label={`Remove ${file.name}`}
+                        aria-label={`Elimină ${file.name}`}
                         className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
                         onClick={() =>
                           setFiles((current) => current.filter((item) => item.id !== file.id))
@@ -427,8 +427,8 @@ function ChatModeComposer({
               ) : null}
               <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
                 <textarea
-                  aria-label="Message"
-                  placeholder="Ask anything..."
+                  aria-label="Mesaj"
+                  placeholder="Întreabă orice..."
                   autoFocus
                   value={text}
                   onChange={(event) => setText(event.target.value)}
@@ -455,7 +455,7 @@ function ChatModeComposer({
                 />
                 <button
                   type="button"
-                  aria-label="Add photos and files"
+                  aria-label="Adaugă poze și fișiere"
                   className="flex size-8 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
                   onClick={() => fileInput.current?.click()}
                 >
@@ -464,7 +464,7 @@ function ChatModeComposer({
                 {replying ? (
                   <button
                     type="button"
-                    aria-label="Stop answer"
+                    aria-label="Oprește răspunsul"
                     onClick={onStop}
                     className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 sm:h-8 sm:w-8"
                   >
@@ -473,7 +473,7 @@ function ChatModeComposer({
                 ) : (
                   <button
                     type="submit"
-                    aria-label="Send message"
+                    aria-label="Trimite mesajul"
                     disabled={!canSend}
                     className="relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:shadow-message-action/24 enabled:inset-shadow-control-highlight hover:scale-105 hover:bg-message-action-hover active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none"
                   >

@@ -30,8 +30,8 @@ export function DatabaseStorageNotice({
   if (visible.length === 0) return null;
   return (
     <SettingsSection
-      title="Reclaim database space"
-      footer="Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment."
+      title="Recuperează spațiul bazei de date"
+      footer="Istoricul vechi se curăță automat, dar bazele de date încă păstrează spațiul eliberat. Rulează comanda pe fiecare calculator ca să-l eliberezi pe disc; serviciul din fundal se oprește și repornește. Închide mai întâi aplicația desktop dacă găzduiește mediul."
     >
       {visible.map(({ environmentId, status }) => (
         <SettingsActionRow
@@ -45,7 +45,7 @@ export function DatabaseStorageNotice({
       ))}
       <SettingsActionRow
         icon="xmark"
-        label="Dismiss"
+        label="Închide"
         onPress={() =>
           updatePreferences({
             transform: (current) => ({

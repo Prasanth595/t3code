@@ -38,7 +38,7 @@ export function OpenMediaLink(props: {
       }
     >
       {isBlob ? <DownloadIcon /> : <ExternalLinkIcon />}
-      {originalUrl ? "Open original" : isBlob ? "Download video" : "Open in browser"}
+      {originalUrl ? "Deschide originalul" : isBlob ? "Descarcă video-ul" : "Deschide în browser"}
     </Button>
   );
 }

@@ -24,7 +24,7 @@ export function draftThreadShell(input: {
   return presentThreadShell(input.environmentId, {
     id: input.threadId,
     projectId: input.projectId,
-    title: "New thread",
+    title: "Conversație nouă",
     providerInstanceId: input.modelSelection.instanceId,
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode,

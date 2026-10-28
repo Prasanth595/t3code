@@ -156,8 +156,8 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch branch",
-        error instanceof Error ? error.message : "The branch could not be checked out.",
+        "Branch-ul nu a putut fi schimbat",
+        error instanceof Error ? error.message : "Branch-ul nu a putut fi activat.",
       );
     }
     navigation.goBack();
@@ -185,9 +185,9 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     <>
       {preparingBranch ? (
         <ThreadScreenFallback>
-          <NativeStackScreenOptions options={{ title: "New thread" }} />
+          <NativeStackScreenOptions options={{ title: "Conversație nouă" }} />
           <View className="flex-1 items-center justify-center bg-screen">
-            <Text className="text-foreground">Switching branch...</Text>
+            <Text className="text-foreground">Se schimbă branch-ul...</Text>
           </View>
         </ThreadScreenFallback>
       ) : (

@@ -225,7 +225,7 @@ export function V5StackHeader(props: {
     const compose: HeaderItem = {
       type: "item",
       id: "workspace-compose",
-      title: "New task",
+      title: "Sarcină nouă",
       icon: { type: "sfSymbol", name: "square.and.pencil" },
       onPress: props.onCompose,
     };
@@ -246,7 +246,7 @@ export function V5StackHeader(props: {
       {
         type: "item",
         id: "dismiss-keyboard",
-        title: "Dismiss keyboard",
+        title: "Ascunde tastatura",
         icon: { type: "sfSymbol", name: "keyboard.chevron.compact.down" },
         onPress: () => void KeyboardController.dismiss(),
         // The folded bar is short; keep this out of the overflow menu.
@@ -316,7 +316,7 @@ export function V5StackHeader(props: {
               hideWhenScrolling={false}
               allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
               placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
-              placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
+              placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Caută"}
               onFocus={(event) => {
                 searchOptions?.onFocus?.(event);
               }}

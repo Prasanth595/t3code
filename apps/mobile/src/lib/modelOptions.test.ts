@@ -653,7 +653,7 @@ describe("mobile model options", () => {
       expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
       expect(
         describeUnavailableModelSelection(configWith(settings), selection, projectId).title,
-      ).toBe("Model turned off for this project");
+      ).toBe("Model dezactivat pentru acest proiect");
       expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(true);
     });
 

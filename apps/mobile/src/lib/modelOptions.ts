@@ -170,12 +170,12 @@ export function describeUnavailableModelSelection(
   );
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: "Model dezactivat pentru acest proiect",
+        detail: "Reactivează-l de pe web sau desktop, ori alege alt model.",
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: "Model Antigravity indisponibil",
+        detail: "Configurează Antigravity pe web sau desktop, ori alege alt model.",
       };
 }
 
@@ -479,7 +479,7 @@ export function buildModelMenuActions(
         ? [
             {
               id: `legacy-models:${group.providerKey}`,
-              title: `${group.providerLabel} legacy models`,
+              title: `Modele vechi ${group.providerLabel}`,
               subtitle: selected?.isLegacy ? selected.label : undefined,
               subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
             },

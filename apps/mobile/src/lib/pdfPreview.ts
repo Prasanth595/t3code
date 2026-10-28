@@ -40,7 +40,7 @@ export async function preparePdfPreview(uri: string, signal: AbortSignal) {
     try {
       const header = await handle.readBytes(5);
       if (String.fromCharCode(...header) !== "%PDF-") {
-        throw new Error("The server did not return a PDF. Check the connection and try again.");
+        throw new Error("Serverul nu a returnat un PDF. Verifică conexiunea și încearcă din nou.");
       }
     } finally {
       handle.close();

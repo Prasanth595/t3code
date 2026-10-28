@@ -30,7 +30,7 @@ export function useEnvironmentLookups() {
         environment.environmentId,
         {
           kind: isLocal ? "local" : "remote",
-          label: isPrimary ? "Local" : isLocal ? `${environment.label} (Local)` : environment.label,
+          label: isPrimary ? "Local" : isLocal ? `${environment.label} (local)` : environment.label,
           machine: resolveEnvironmentMachineKind(environment.serverConfig),
         },
       ] as const;

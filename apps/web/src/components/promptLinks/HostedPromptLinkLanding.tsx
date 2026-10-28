@@ -34,7 +34,10 @@ function summarize(
   if (url.pathname !== "/new") {
     const prompt = parseThreadLinkPrompt(url.search);
     return prompt.ok
-      ? { ok: true, value: { prompt: prompt.value, details: ["Opens one of your threads."] } }
+      ? {
+          ok: true,
+          value: { prompt: prompt.value, details: ["Deschide una din conversațiile tale."] },
+        }
       : prompt;
   }
   const link = parseNewThreadLink(url.search);
@@ -52,7 +55,7 @@ function summarize(
     value: {
       prompt: link.value.prompt,
       details: [
-        repository ? `Repository ${repository.owner}/${repository.name}` : "No project",
+        repository ? `Repository ${repository.owner}/${repository.name}` : "Fără proiect",
         ...(provider ? [`Model ${model ? `${provider} ${model}` : provider}`] : []),
       ],
     },
@@ -115,7 +118,7 @@ function HostedPromptLinkLanding({
       <StandalonePage tone="error">
         <StandalonePageHeader
           eyebrow={APP_DISPLAY_NAME}
-          title="Could not open the link"
+          title="Link-ul nu a putut fi deschis"
           description={summary.error}
         />
       </StandalonePage>
@@ -127,12 +130,12 @@ function HostedPromptLinkLanding({
     <StandalonePage tone="brand">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
+        title="Deschide acest prompt"
+        description="Se deschide ca ciornă. Nu rulează nimic până nu apeși Trimite."
       />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">
-          <AlertTitle>This prompt had hidden characters, it may be malicious</AlertTitle>
+          <AlertTitle>Promptul avea caractere ascunse, poate fi rău intenționat</AlertTitle>
           <AlertDescription>
             Mira removed {prompt.hiddenCharacters} hidden character
             {prompt.hiddenCharacters === 1 ? "" : "s"}. Read the prompt before you send it.
@@ -147,20 +150,20 @@ function HostedPromptLinkLanding({
       <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
+          {onPhone ? "Deschide în aplicație" : "Deschide în aplicația desktop"}
         </Button>
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
-            Continue here
+            Continuă aici
           </Button>
         ) : null}
         <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
-          Get Mira
+          Descarcă Mira
         </Button>
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
         <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
-        Remember my choice
+        Ține minte alegerea
       </label>
     </StandalonePage>
   );

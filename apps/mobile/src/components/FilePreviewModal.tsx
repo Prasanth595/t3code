@@ -45,7 +45,7 @@ function PreviewItemResolver(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onResolutionError = useEffectEvent((error: unknown, fallbackMessage: string) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Dialog.alert("Could not open preview", fallbackMessage);
+    else Dialog.alert("Previzualizarea nu a putut fi deschisă", fallbackMessage);
     onRequestClose();
   });
   useEffect(() => Keyboard.dismiss(), []);
@@ -56,14 +56,14 @@ function PreviewItemResolver(props: {
     void refreshAssetUrl()
       .then((url) => {
         if (cancelled) return;
-        if (!url) throw new Error("Reconnect to this environment and try again.");
+        if (!url) throw new Error("Reconectează-te la acest mediu și încearcă din nou.");
         setUri(url + (source.srcFragment ?? ""));
       })
       .catch((error: unknown) => {
         if (cancelled) return;
         onResolutionError(
           error,
-          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+          "Reconectează-te la acest mediu și încearcă din nou. Fișierul poate fi fost mutat sau șters.",
         );
       });
     return () => {
@@ -86,7 +86,7 @@ function PreviewItemResolver(props: {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        onResolutionError(error, "Attach the file again and retry.");
+        onResolutionError(error, "Atașează fișierul din nou și reîncearcă.");
       });
     return () => {
       controller.abort();

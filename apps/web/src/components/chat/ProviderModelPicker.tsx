@@ -70,9 +70,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }) ?? (activeEntry?.driverKind === "opencode" ? undefined : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel
     ? getTriggerDisplayModelName(selectedModel)
-    : props.model || "Choose model";
+    : props.model || "Alege modelul";
   const triggerLabel = selectedModel
-    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Indisponibil)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -154,20 +154,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model)}${model.isUnavailable ? " (Unavailable)" : ""}`
+        ? `${getTriggerDisplayModelName(model)}${model.isUnavailable ? " (Indisponibil)" : ""}`
         : selection.model,
     };
   });
   const multipleLabel = selectedEntries
     ? selectedEntries.length === 0
-      ? "Choose models"
+      ? "Alege modelele"
       : `${selectedEntries
           .slice(0, 2)
           .map((selection) => selection.label)
-          .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
+          .join(", ")}${selectedEntries.length > 2 ? `, încă ${selectedEntries.length - 2}` : ""}`
     : undefined;
   const allModelNames = selectedEntries
-    ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
+    ? selectedEntries.map((selection) => selection.label).join(", ") || "Alege modelele"
     : undefined;
   const triggerTooltipContent = shortcutLabel
     ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
@@ -293,7 +293,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
           getModelDisabledReason={(instanceId, model) =>
             props.disabled
-              ? "Model picker is disabled"
+              ? "Selectorul de modele e dezactivat"
               : (props.getModelDisabledReason?.(instanceId, model) ?? null)
           }
           onInstanceModelChange={handleInstanceModelChange}

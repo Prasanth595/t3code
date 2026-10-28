@@ -22,6 +22,19 @@ type UndoNotice = {
   undo: () => Promise<void>;
 };
 
+const UNDO_NOTICE_LABELS: Record<UndoOptions["action"], readonly [string, string]> = {
+  Settled: ["Conversație finalizată", "conversații finalizate"],
+  Snoozed: ["Conversație amânată", "conversații amânate"],
+  Unpinned: ["Conversație defixată", "conversații defixate"],
+  Archived: ["Conversație arhivată", "conversații arhivate"],
+  Discarded: ["Ciornă renunțată", "ciorne renunțate"],
+};
+
+export function undoNoticeSummary(action: UndoOptions["action"], count: number): string {
+  const [one, many] = UNDO_NOTICE_LABELS[action];
+  return count === 1 ? one : `${count} ${many}`;
+}
+
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
 let liveUndos: UndoOptions[] = [];
@@ -65,7 +78,7 @@ function refreshNotice() {
                 stackedThreadToast({
                   type: "error",
                   title: failureTitle,
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  description: error instanceof Error ? error.message : "A apărut o eroare.",
                 }),
               );
             };

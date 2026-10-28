@@ -46,7 +46,7 @@ export function ThreadPullRequestsSheet(
   });
   const rowInputs = useMemo(() => ({ lines, actions }), [lines, actions]);
   const { singular } = actions.terminology;
-  const title = `Linked ${actions.terminology.plural}`;
+  const title = `${actions.terminology.plural} legate`;
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
@@ -98,7 +98,7 @@ export function ThreadPullRequestsSheet(
           <Toolbar placement="right">
             <Toolbar.Button
               icon="plus"
-              accessibilityLabel={`Link ${singular}`}
+              accessibilityLabel={`Leagă ${singular}`}
               onPress={actions.promptLink}
             />
           </Toolbar>
@@ -119,7 +119,7 @@ export function ThreadPullRequestsSheet(
           actions.canLink
             ? [
                 {
-                  accessibilityLabel: `Link ${singular}`,
+                  accessibilityLabel: `Leagă ${singular}`,
                   icon: "plus",
                   onPress: actions.promptLink,
                 },

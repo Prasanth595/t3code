@@ -28,7 +28,7 @@ export function VideoAttachmentTile(props: {
       identifier={props.sourceIdentifier}
       accessible={Platform.OS === "ios"}
       accessibilityRole="button"
-      accessibilityLabel={`Play ${props.name}`}
+      accessibilityLabel={`Redă ${props.name}`}
       accessibilityState={{ disabled: props.disabled ?? false }}
       onAccessibilityTap={() => {
         if (!props.disabled) props.onPress(props.sourceIdentifier);
@@ -45,8 +45,8 @@ export function VideoAttachmentTile(props: {
       <MediaActionsMenu media={mediaActions}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Play ${props.name}`}
-          accessibilityHint={hasActions ? "Touch and hold for media actions" : undefined}
+          accessibilityLabel={`Redă ${props.name}`}
+          accessibilityHint={hasActions ? "Ține apăsat pentru acțiuni" : undefined}
           accessibilityState={{ disabled: props.disabled ?? false }}
           disabled={props.disabled}
           onPress={() => props.onPress(props.sourceIdentifier)}

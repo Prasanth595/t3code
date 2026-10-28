@@ -40,7 +40,7 @@ export function attachmentUploadBlockReason(input: {
   }
 
   if (pending > 0) {
-    return pending === 1 ? "Attachment still uploading" : "Attachments still uploading";
+    return pending === 1 ? "Atașamentul încă se încarcă" : "Atașamentele încă se încarcă";
   }
   return null;
 }

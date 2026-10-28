@@ -32,7 +32,7 @@ export function TerminalAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="terminal"
-        label="Custom font size"
+        label="Mărime font personalizată"
         onValueChange={handleToggleCustom}
         value={custom}
       />
@@ -40,7 +40,7 @@ export function TerminalAppearanceSection() {
         <FontSizeSliderRow
           disabled={!isReady}
           icon="textformat.size"
-          label="Font size"
+          label="Mărime font"
           max={MAX_TERMINAL_FONT_SIZE}
           min={MIN_TERMINAL_FONT_SIZE}
           onChange={setTerminalFontSize}

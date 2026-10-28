@@ -164,8 +164,8 @@ describe("ServerUpdateAction", () => {
       testState.updateServer.mockResolvedValue(success());
 
       await using screen = await renderAction();
-      expect(button(screen, "Update")!.disabled).toBe(!allowed);
-      await click(screen, "Update");
+      expect(button(screen, "Actualizează")!.disabled).toBe(!allowed);
+      await click(screen, "Actualizează");
 
       expect(testState.updateServer).toHaveBeenCalledTimes(allowed ? 1 : 0);
     },
@@ -175,8 +175,8 @@ describe("ServerUpdateAction", () => {
     using _state = setup();
     await using screen = await renderAction();
     await act(() => setSession(AsyncResult.success({ ...currentSession, scopes: [] })));
-    expect(button(screen, "Update")!.disabled).toBe(true);
-    await click(screen, "Update");
+    expect(button(screen, "Actualizează")!.disabled).toBe(true);
+    await click(screen, "Actualizează");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 });
@@ -215,17 +215,17 @@ describe("ServerUpdatesAction", () => {
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Download failed"))))
       .mockResolvedValueOnce(success());
     await using screen = await mount();
-    await click(screen, "Update all");
+    await click(screen, "Actualizează tot");
 
     expect(testState.updateServer).toHaveBeenCalledTimes(2);
     expect(testState.toast).toHaveBeenCalledWith({
       type: "error",
-      title: "Laptop update failed",
+      title: "Actualizarea Laptop a eșuat",
       description: "Download failed",
     });
     expect(testState.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Office updated" }),
+      expect.objectContaining({ type: "success", title: "Office a fost actualizat" }),
     );
-    expect(button(screen, "Update all")!.disabled).toBe(false);
+    expect(button(screen, "Actualizează tot")!.disabled).toBe(false);
   });
 });

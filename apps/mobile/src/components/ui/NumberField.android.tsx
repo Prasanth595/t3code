@@ -20,7 +20,7 @@ export function NumberField(props: NumberFieldProps) {
       />
       <IconButton
         icon="minus"
-        accessibilityLabel={`Decrease ${props.label}`}
+        accessibilityLabel={`Scade ${props.label}`}
         disabled={props.disabled || props.value <= props.min}
         onPress={() => adjust(-1)}
       />
@@ -35,7 +35,7 @@ export function NumberField(props: NumberFieldProps) {
       </AppText>
       <IconButton
         icon="plus"
-        accessibilityLabel={`Increase ${props.label}`}
+        accessibilityLabel={`Crește ${props.label}`}
         disabled={props.disabled || props.value >= props.max}
         onPress={() => adjust(1)}
       />

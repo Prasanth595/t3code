@@ -168,10 +168,10 @@ export function AddEnvironmentDialog({
     onOpenChange(false);
     toastManager.add({
       type: "success",
-      title: routeTarget ? "Route added" : "Environment connected",
+      title: routeTarget ? "Rută adăugată" : "Mediu conectat",
       description: routeTarget
-        ? `${routeTarget.label} can now be reached over SSH ${target.alias}.`
-        : `${target.alias} is ready over an SSH-managed tunnel.`,
+        ? `${routeTarget.label} poate fi accesat acum prin SSH ${target.alias}.`
+        : `${target.alias} e gata printr-un tunel SSH.`,
     });
     setIsAddingSavedBackend(false);
   };
@@ -203,12 +203,12 @@ export function AddEnvironmentDialog({
         pairingCode: savedBackendPairingCode,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add backend.";
+      const message = error instanceof Error ? error.message : "Serverul nu a putut fi adăugat.";
       onErrorChange(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not add backend",
+          title: "Serverul nu a putut fi adăugat",
           description: message,
         }),
       );
@@ -223,12 +223,12 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        const message = error instanceof Error ? error.message : "Serverul nu a putut fi adăugat.";
         onErrorChange(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add backend",
+            title: "Serverul nu a putut fi adăugat",
             description: message,
           }),
         );
@@ -247,13 +247,13 @@ export function AddEnvironmentDialog({
       routeTarget
         ? {
             type: "success",
-            title: "Route added",
-            description: `${routeTarget.label} now has another way to connect.`,
+            title: "Rută adăugată",
+            description: `${routeTarget.label} are acum încă o cale de conectare.`,
           }
         : {
             type: "success",
-            title: "Backend added",
-            description: "The environment is saved and will reconnect on app startup.",
+            title: "Server adăugat",
+            description: "Mediul e salvat și se va reconecta la pornirea aplicației.",
           },
     );
     setIsAddingSavedBackend(false);
@@ -402,7 +402,7 @@ export function AddEnvironmentDialog({
       </div>
       <div>
         <span className="mt-1 block text-2xs text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
+          Lipește aici adresa completă de asociere ca să se completeze automat ambele câmpuri.
         </span>
       </div>
     </div>
@@ -428,15 +428,15 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        onErrorChange(error instanceof Error ? error.message : "Could not add the route.");
+        onErrorChange(error instanceof Error ? error.message : "Ruta nu a putut fi adăugată.");
       }
       return;
     }
     onOpenChange(false);
     toastManager.add({
       type: "success",
-      title: "Route added",
-      description: `${routeTarget.label} falls back to T3 Connect when its other routes are unreachable.`,
+      title: "Rută adăugată",
+      description: `${routeTarget.label} folosește T3 Connect când celelalte rute nu sunt accesibile.`,
     });
   };
   const renderRemoteModeBody = () => (
@@ -444,7 +444,7 @@ export function AddEnvironmentDialog({
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
-            This machine is on your T3 Connect account. Use it as a fallback route.
+            Acest calculator e în contul tău T3 Connect. Folosește-l ca rută de rezervă.
           </p>
           <Button
             size="xs"
@@ -452,7 +452,7 @@ export function AddEnvironmentDialog({
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
-            Add T3 Connect
+            Adaugă T3 Connect
           </Button>
         </div>
       ) : null}
@@ -465,7 +465,7 @@ export function AddEnvironmentDialog({
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+        {isAddingSavedBackend ? "Se adaugă…" : routeTarget ? "Adaugă rută" : "Adaugă mediu"}
       </Button>
     </div>
   );
@@ -477,7 +477,7 @@ export function AddEnvironmentDialog({
             htmlFor="saved-backend-ssh-host"
             className="mb-1.5 block text-xs font-medium text-foreground"
           >
-            SSH host or alias
+            Gazdă sau alias SSH
           </label>
           <Autocomplete
             items={filteredDiscoveredSshHosts}
@@ -501,7 +501,7 @@ export function AddEnvironmentDialog({
             <AutocompleteInput
               id="saved-backend-ssh-host"
               onKeyDown={handleSavedBackendSshHostKeyDown}
-              placeholder="Search hosts or type devbox"
+              placeholder="Caută gazde sau scrie devbox"
               disabled={isAddingSavedBackend}
               spellCheck={false}
             />
@@ -542,7 +542,7 @@ export function AddEnvironmentDialog({
                   </AutocompleteList>
                 ) : (
                   <AutocompleteEmpty className="break-all">
-                    No hosts match "{savedBackendSshHost.trim()}".
+                    Nicio gazdă pentru „{savedBackendSshHost.trim()}”.
                   </AutocompleteEmpty>
                 )}
               </AutocompletePopup>
@@ -586,7 +586,7 @@ export function AddEnvironmentDialog({
           onClick={() => void handleAddSavedBackend()}
         >
           <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+          {isAddingSavedBackend ? "Se adaugă…" : routeTarget ? "Adaugă rută" : "Adaugă mediu"}
         </Button>
       </div>
     </div>
@@ -599,25 +599,25 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                <Button size="xs" variant="ghost-muted" aria-label="Adaugă mediu">
                   <PlusIcon className="size-3" />
-                  <span>Add environment</span>
+                  <span>Adaugă mediu</span>
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Add environment</TooltipPopup>
+        <TooltipPopup side="top">Adaugă mediu</TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget ? `Adaugă o rută către ${routeTarget.label}` : "Adaugă mediu"}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
-              ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              ? "Asociază din nou acest calculator printr-o altă adresă, cum ar fi numele Tailscale. Se adaugă la rutele existente în loc să creeze un al doilea calculator."
+              : "Asociază un alt mediu cu acest client."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -625,15 +625,16 @@ export function AddEnvironmentDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               {renderConnectionModeCard({
                 mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
+                title: "Link la distanță",
+                description: "Introdu gazda serverului și codul de asociere.",
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge
                 ? renderConnectionModeCard({
                     mode: "ssh",
                     title: "SSH",
-                    description: "Use local SSH config, agent, and tunnels for the backend.",
+                    description:
+                      "Folosește configurarea SSH locală, agentul și tunelurile pentru server.",
                     icon: <TerminalIcon aria-hidden className="size-4" />,
                   })
                 : null}

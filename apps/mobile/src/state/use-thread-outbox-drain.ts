@@ -416,7 +416,7 @@ export async function restoreRejectedQueuedMessage(
     if (existingAttachmentIds.size + addedAttachmentCount > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       setThreadComposerError(
         threadKey,
-        `Remove attachments from the draft before restoring this message. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        `Elimină atașamente din ciornă înainte să restaurezi mesajul. Un mesaj poate avea cel mult ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} atașamente.`,
         queuedMessage.messageId,
       );
       return "blocked";
@@ -507,7 +507,7 @@ export async function restoreRejectedQueuedMessage(
     console.warn("[thread-outbox] failed to restore an undeliverable message", error);
     setThreadComposerError(
       threadKey,
-      error instanceof Error ? error.message : "The unsent message could not be restored.",
+      error instanceof Error ? error.message : "Mesajul netrimis nu a putut fi restaurat.",
       queuedMessage.messageId,
     );
     return "retry";
@@ -679,11 +679,11 @@ export function useThreadOutboxDrain(): void {
     const load = async () => {
       if ((await threadOutboxManager.load()) || !mounted) return;
       Dialog.alert(
-        "Some queued messages could not be loaded",
-        "Unreadable records and attachment files are still saved. Other messages can still be sent.",
+        "Unele mesaje din coadă nu au putut fi încărcate",
+        "Înregistrările și fișierele care nu pot fi citite rămân salvate. Celelalte mesaje pot fi trimise în continuare.",
         [
-          { text: "Dismiss", style: "cancel" },
-          { text: "Retry", onPress: () => void load() },
+          { text: "Închide", style: "cancel" },
+          { text: "Reîncearcă", onPress: () => void load() },
         ],
       );
     };
@@ -723,7 +723,7 @@ export function useThreadOutboxDrain(): void {
       });
       return {
         action,
-        message: error instanceof Error ? error.message : "The message could not be sent.",
+        message: error instanceof Error ? error.message : "Mesajul nu a putut fi trimis.",
       };
     };
     return { reportFailure };
@@ -811,7 +811,7 @@ export function useThreadOutboxDrain(): void {
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
-            error instanceof Error ? error.message : "An attachment could not upload.",
+            error instanceof Error ? error.message : "Un atașament nu a putut fi încărcat.",
           );
         }
         return false;
@@ -954,7 +954,7 @@ export function useThreadOutboxDrain(): void {
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
-            error instanceof Error ? error.message : "An attachment could not upload.",
+            error instanceof Error ? error.message : "Un atașament nu a putut fi încărcat.",
           );
         }
         return false;
@@ -1001,7 +1001,7 @@ export function useThreadOutboxDrain(): void {
           ).changeRequest;
           return restoreQueuedMessage(
             persistedMessage,
-            `The ${shortLabel} worktree has local changes and could not update to the ${shortLabel} head. Resolve them before trying again.`,
+            `Worktree-ul ${shortLabel} are modificări locale și nu a putut fi actualizat. Rezolvă-le înainte să încerci din nou.`,
           );
         }
         workspace = {

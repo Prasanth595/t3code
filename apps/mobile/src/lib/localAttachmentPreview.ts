@@ -22,7 +22,7 @@ export async function loadLocalAttachmentPreview(
       attachment.fileUri;
     const file = new File(uri);
     if (!file.exists) {
-      throw new Error("The local attachment file is missing.");
+      throw new Error("Fișierul local al atașamentului lipsește.");
     }
     let disposed = false;
     return {
@@ -56,6 +56,6 @@ export async function loadLocalAttachmentPreview(
   } catch (cause) {
     release();
     if (signal.aborted) return null;
-    throw new Error("This attachment is no longer available. Attach the file again.", { cause });
+    throw new Error("Atașamentul nu mai e disponibil. Atașează fișierul din nou.", { cause });
   }
 }

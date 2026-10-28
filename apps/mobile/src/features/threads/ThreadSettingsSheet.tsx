@@ -165,7 +165,7 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={`${props.label}, ${props.modelCount} modele`}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60 android:min-h-12"
@@ -533,8 +533,8 @@ function ThreadSettingsSessionProvider(
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
-          "Model unavailable",
-          "Set up this provider on web or desktop, or select another model.",
+          "Model indisponibil",
+          "Configurează acest furnizor pe web sau desktop, ori alege alt model.",
         );
         return false;
       }
@@ -902,7 +902,7 @@ function ThreadSettingsOptionsItem(props: {
         <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
           <DisclosureRow
             isLast
-            label="Runtime"
+            label="Mod de rulare"
             value={
               session.runtimeModeChoices.find((choice) => choice.mode === session.runtimeMode)
                 ?.label
@@ -915,7 +915,7 @@ function ThreadSettingsOptionsItem(props: {
       <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">Catalog</Text>
       <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
         <SwitchRow
-          label="Manage hidden models"
+          label="Gestionează modelele ascunse"
           value={session.manageHidden}
           onValueChange={session.setManageHidden}
           isLast={Platform.OS === "ios" || !session.hasLegacyModels}
@@ -923,7 +923,7 @@ function ThreadSettingsOptionsItem(props: {
         {Platform.OS !== "ios" && session.hasLegacyModels ? (
           <SwitchRow
             isLast
-            label="Legacy models"
+            label="Modele vechi"
             onValueChange={session.setShowLegacy}
             value={session.showLegacy}
           />
@@ -948,7 +948,7 @@ function ThreadSettingsMainContent(props: {
     void refreshProviderCatalog(session.environmentId).then((result) => {
       setIsRefreshingProviders(false);
       const error = providerCatalogRefreshError(result);
-      if (error) Dialog.alert("Could not refresh models", error);
+      if (error) Dialog.alert("Modelele nu au putut fi reîmprospătate", error);
     });
   };
   const [animationsReady, setAnimationsReady] = useState(false);
@@ -981,10 +981,10 @@ function ThreadSettingsMainContent(props: {
           <Text className="text-center text-sm text-foreground-muted">
             {session.providerFilter === FAVORITES_PROVIDER_FILTER &&
             session.searchQuery.trim().length === 0
-              ? "No favorite models"
+              ? "Niciun model favorit"
               : hasActiveCatalogFilter
-                ? "No matching models"
-                : "No available models"}
+                ? "Niciun model găsit"
+                : "Niciun model disponibil"}
           </Text>
         </View>
       );
@@ -1046,13 +1046,13 @@ function ThreadSettingsMainContent(props: {
                   />
                 </View>
                 <TextInput
-                  accessibilityLabel="Find a model"
+                  accessibilityLabel="Caută un model"
                   autoCapitalize="none"
                   autoCorrect={false}
                   className="min-w-0 flex-1 px-2 py-0 text-base text-foreground"
                   style={{ minHeight: 56, includeFontPadding: false, textAlignVertical: "center" }}
                   onChangeText={session.setSearchQuery}
-                  placeholder="Find a model"
+                  placeholder="Caută un model"
                   placeholderTextColorClassName="accent-placeholder"
                   selectionColorClassName="accent-focus/32"
                   cursorColorClassName="accent-focus"
@@ -1061,7 +1061,7 @@ function ThreadSettingsMainContent(props: {
                 />
                 {session.searchQuery.length > 0 ? (
                   <IconButton
-                    accessibilityLabel="Clear model search"
+                    accessibilityLabel="Șterge căutarea"
                     icon="xmark"
                     onPress={() => session.setSearchQuery("")}
                   />
@@ -1137,8 +1137,8 @@ function ThreadSettingsChoiceContent(props: {
                   activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
                 ) {
                   Dialog.alert(
-                    "Reasoning controlled by prompt",
-                    'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                    "Raționamentul e controlat de prompt",
+                    'Promptul tău conține "ultrathink". Elimină-l ca să schimbi această opțiune.',
                   );
                   return;
                 }
@@ -1225,8 +1225,8 @@ function ThreadSettingsModelsScreen() {
     presentation.onClose();
   });
   const providerFilters = [
-    { id: "all-providers", title: "All providers", value: null },
-    { id: "favorites", title: "Favorites", value: FAVORITES_PROVIDER_FILTER },
+    { id: "all-providers", title: "Toți furnizorii", value: null },
+    { id: "favorites", title: "Favorite", value: FAVORITES_PROVIDER_FILTER },
     ...session.providerGroups.map((group) => ({
       id: `provider:${group.providerKey}`,
       title: group.providerLabel,
@@ -1234,11 +1234,11 @@ function ThreadSettingsModelsScreen() {
     })),
   ];
   const filterMenu = {
-    title: "Model filters",
+    title: "Filtre modele",
     items: [
       {
         type: "submenu" as const,
-        title: "Provider",
+        title: "Furnizor",
         items: providerFilters.map((filter) => ({
           type: "action" as const,
           title: filter.title,
@@ -1250,7 +1250,7 @@ function ThreadSettingsModelsScreen() {
         ? [
             {
               type: "action" as const,
-              title: "Show legacy models",
+              title: "Arată modelele vechi",
               state: session.showLegacy ? ("on" as const) : ("off" as const),
               onPress: () => session.setShowLegacy(!session.showLegacy),
             },
@@ -1266,10 +1266,10 @@ function ThreadSettingsModelsScreen() {
           trailing={
             <View className="flex-row items-center">
               <AndroidAnchoredMenu
-                title="Model filters"
+                title="Filtre modele"
                 actions={[
                   {
-                    title: "Provider",
+                    title: "Furnizor",
                     subactions: providerFilters.map((filter) => ({
                       id: filter.id,
                       title: filter.title,
@@ -1280,7 +1280,7 @@ function ThreadSettingsModelsScreen() {
                     ? [
                         {
                           id: "show-legacy",
-                          title: "Show legacy models",
+                          title: "Arată modelele vechi",
                           state: session.showLegacy ? ("on" as const) : ("off" as const),
                         },
                       ]
@@ -1297,7 +1297,7 @@ function ThreadSettingsModelsScreen() {
               >
                 {(open) => (
                   <IconButton
-                    accessibilityLabel="Filter models"
+                    accessibilityLabel="Filtrează modelele"
                     icon="line.3.horizontal.decrease"
                     selected={hasCustomCatalogFilter}
                     variant={hasCustomCatalogFilter ? "tonal" : "standard"}
@@ -1308,8 +1308,10 @@ function ThreadSettingsModelsScreen() {
             </View>
           }
           onCancel={presentation.onClose}
-          title="Thread settings"
-          confirm={session.pendingModel ? { label: "Save", onPress: commitAndClose } : undefined}
+          title="Setările conversației"
+          confirm={
+            session.pendingModel ? { label: "Salvează", onPress: commitAndClose } : undefined
+          }
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1328,7 +1330,7 @@ function ThreadSettingsModelsScreen() {
                     ? "line.3.horizontal.decrease.circle.fill"
                     : "line.3.horizontal.decrease",
                   onSearchTextChange: session.setSearchQuery,
-                  placeholder: "Find a model",
+                  placeholder: "Caută un model",
                   searchTextChangeId: "thread-settings-model-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -1344,7 +1346,7 @@ function ThreadSettingsModelsScreen() {
                   obscureBackground: false,
                   onCancelButtonPress: () => session.setSearchQuery(""),
                   onChangeText: (event) => session.setSearchQuery(event.nativeEvent.text),
-                  placeholder: "Find a model",
+                  placeholder: "Caută un model",
                 }
               : undefined,
         }}
@@ -1354,21 +1356,21 @@ function ThreadSettingsModelsScreen() {
           onOpenSubmenu={(submenu) => {
             const title =
               submenu.kind === "runtime"
-                ? "Runtime"
+                ? "Mod de rulare"
                 : (session.displayedDescriptors.find(
                     (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-                  )?.label ?? "Option");
+                  )?.label ?? "Opțiune");
             navigation.navigate("ThreadSettingsChoice", { ...submenu, title });
           }}
         />
       </ScreenContent>
       {Platform.OS === "ios" ? (
         <SheetHeader
-          title="Thread settings"
+          title="Setările conversației"
           onCancel={presentation.onClose}
-          accessibilityLabel="Cancel thread settings"
+          accessibilityLabel="Anulează setările conversației"
           confirm={{
-            label: session.pendingModel ? "Save thread settings" : "Done",
+            label: session.pendingModel ? "Salvează setările conversației" : "Gata",
             onPress: commitAndClose,
           }}
         />
@@ -1376,21 +1378,21 @@ function ThreadSettingsModelsScreen() {
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
         <Toolbar placement="bottom">
           <Toolbar.Menu
-            accessibilityLabel="Filter models"
+            accessibilityLabel="Filtrează modelele"
             icon={
               hasCustomCatalogFilter
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
-            title="Model filters"
+            title="Filtre modele"
           >
-            <Toolbar.Menu title="Provider">
-              <Toolbar.Label>Provider</Toolbar.Label>
+            <Toolbar.Menu title="Furnizor">
+              <Toolbar.Label>Furnizor</Toolbar.Label>
               <Toolbar.MenuAction
                 isOn={session.providerFilter === null}
                 onPress={() => session.setProviderFilter(null)}
               >
-                All providers
+                Toți furnizorii
               </Toolbar.MenuAction>
               <Toolbar.MenuAction
                 isOn={session.providerFilter === FAVORITES_PROVIDER_FILTER}
@@ -1413,7 +1415,7 @@ function ThreadSettingsModelsScreen() {
                 isOn={session.showLegacy}
                 onPress={() => session.setShowLegacy(!session.showLegacy)}
               >
-                Show legacy models
+                Arată modelele vechi
               </Toolbar.MenuAction>
             ) : null}
           </Toolbar.Menu>
@@ -1482,7 +1484,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsModels"
           component={ThreadSettingsModelsScreen}
-          options={{ headerBackVisible: false, title: "Thread settings" }}
+          options={{ headerBackVisible: false, title: "Setările conversației" }}
         />
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsChoice"

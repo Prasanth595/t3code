@@ -154,7 +154,9 @@ export function ThreadSubagentGroup(props: {
                 accessible
                 accessibilityRole={threadId === null ? undefined : "link"}
                 accessibilityHint={
-                  threadId === null ? "Provider-managed agent" : "Opens this agent's thread"
+                  threadId === null
+                    ? "Agent gestionat de furnizor"
+                    : "Deschide conversația acestui agent"
                 }
                 disabled={threadId === null}
                 onPress={() => {

@@ -117,7 +117,7 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label="Se încarcă fișierul"
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
         props.className,
@@ -144,7 +144,7 @@ export function FileSurfaceFailure(props: {
           onClick={props.onRetry}
           className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
-          Try again
+          Încearcă din nou
         </button>
       ) : null}
     </div>

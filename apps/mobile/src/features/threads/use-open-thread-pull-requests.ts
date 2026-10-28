@@ -28,8 +28,8 @@ export function useOpenThreadPullRequests() {
       }).then((opened) => {
         if (!opened)
           Dialog.alert(
-            `Unable to open ${pr.changeRequest.shortLabel}`,
-            `The ${pr.changeRequest.singular} could not be opened.`,
+            `${pr.changeRequest.shortLabel} nu a putut fi deschis`,
+            `${pr.changeRequest.singular} nu a putut fi deschis.`,
           );
       });
     },

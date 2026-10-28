@@ -59,15 +59,15 @@ const formatPendingPrimaryActionLabel = (input: {
   questionIndex: number;
 }) => {
   if (input.isResponding) {
-    return "Submitting...";
+    return "Se trimite...";
   }
   if (input.compact) {
-    return input.isLastQuestion ? "Submit" : "Next";
+    return input.isLastQuestion ? "Trimite" : "Următoarea";
   }
   if (!input.isLastQuestion) {
-    return "Next question";
+    return "Întrebarea următoare";
   }
-  return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
+  return input.questionIndex > 0 ? "Trimite răspunsurile" : "Trimite răspunsul";
 };
 
 const messageActionPillClassName =
@@ -137,7 +137,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             onClick={() => {
               if (canOperateThread) onInterrupt();
             }}
-            aria-label="Stop generation"
+            aria-label="Oprește generarea"
           />
         }
       >
@@ -145,7 +145,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>Întrerupe</TooltipPopup>
     </Tooltip>
   );
 
@@ -161,7 +161,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
-              aria-label="Previous question"
+              aria-label="Întrebarea anterioară"
             >
               <ChevronLeftIcon className="size-3.5" />
             </Button>
@@ -208,7 +208,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+          {isConnecting || isSendBusy ? "Se trimite..." : "Rafinează"}
         </button>
       );
     }
@@ -221,7 +221,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          {isConnecting || isSendBusy ? "Se trimite..." : "Implementează"}
         </button>
         <Menu>
           <MenuTrigger
@@ -232,7 +232,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   messageActionPillClassName,
                   "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
                 )}
-                aria-label="Implementation actions"
+                aria-label="Acțiuni de implementare"
                 onMouseDown={
                   preserveComposerFocusOnPointerDown ? (event) => event.preventDefault() : undefined
                 }
@@ -249,7 +249,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 if (canOperateThread) onImplementPlanInNewThread();
               }}
             >
-              Implement in a new thread
+              Implementează într-o conversație nouă
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -264,25 +264,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
 
   const submitLabel = showResume
-    ? "Resume thread"
+    ? "Reia conversația"
     : isEditingQueuedMessage
-      ? "Update queued message"
+      ? "Actualizează mesajul din coadă"
       : isQueuing
-        ? "Queue message"
+        ? "Pune mesajul în coadă"
         : isRunning
-          ? "Steer message"
-          : "Submit message";
+          ? "Redirecționează"
+          : "Trimite mesajul";
   const submitStatus = isEnvironmentUnavailable
-    ? "Environment disconnected"
+    ? "Mediu deconectat"
     : (sendDisabledReason ??
       (isConnecting
-        ? "Connecting"
+        ? "Se conectează"
         : isPreparingWorktree
-          ? "Preparing worktree"
+          ? "Se pregătește worktree-ul"
           : isSendBusy
             ? isEditingQueuedMessage
-              ? "Updating queued message"
-              : "Submitting message"
+              ? "Se actualizează mesajul din coadă"
+              : "Se trimite mesajul"
             : null));
   const submitTooltip =
     submitStatus ??

@@ -152,16 +152,16 @@ function deriveEmptyState(props: {
   const { catalogState } = props;
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: "Se încarcă mediile",
+      detail: "Se verifică mediile salvate pe acest dispozitiv.",
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
+      title: "Niciun mediu conectat",
+      detail: "Adaugă un mediu ca să încarci proiecte și să pornești sesiuni de lucru.",
       loading: false,
     };
   }
@@ -175,12 +175,10 @@ function deriveEmptyState(props: {
   ) {
     return {
       title:
-        catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
+        catalogState.connectionState === "unsupported" ? "Client nesuportat" : "Mediu indisponibil",
       detail:
         catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+        "Mediul salvat este offline. Verifică adresa sau pornește mediul, apoi reîncearcă.",
       loading: false,
     };
   }
@@ -191,23 +189,23 @@ function deriveEmptyState(props: {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
+      title: "Se conectează la mediu",
+      detail: "Se încarcă proiectele și conversațiile din mediul salvat.",
       loading: true,
     };
   }
 
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      title: "Niciun proiect găsit",
+      detail: "Mediul conectat nu a raportat niciun proiect.",
       loading: false,
     };
   }
 
   return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
+    title: "Nicio conversație încă",
+    detail: "Creează o sarcină ca să pornești o sesiune nouă într-unul din proiectele conectate.",
     loading: false,
   };
 }
@@ -703,12 +701,12 @@ export function HomeScreen(props: HomeScreenProps) {
             <EmptyState
               title={emptyState.title}
               detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+              actionLabel={!props.catalogState.hasReadyEnvironment ? "Adaugă mediu" : undefined}
               onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
               action={
                 Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
                   <FloatingActionButton
-                    label="Add environment"
+                    label="Adaugă mediu"
                     icon="plus"
                     variant="extended"
                     tone="primary"
@@ -750,26 +748,26 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title="Niciun rezultat"
+        detail={`Nicio conversație pentru „${props.searchQuery}”.`}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        title={`Nicio conversație în ${v2ScopedProjectGroup.title}`}
+        detail="Alege alt proiect sau creează o sarcină nouă."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
-        title={`No threads in ${selectedEnvironmentLabel}`}
-        detail="Choose another environment or create a new task."
+        title={`Nicio conversație în ${selectedEnvironmentLabel}`}
+        detail="Alege alt mediu sau creează o sarcină nouă."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
       <EmptyState
-        title="No threads yet"
-        detail="Create a task to start a new coding session."
+        title="Nicio conversație încă"
+        detail="Creează o sarcină ca să pornești o sesiune nouă."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );

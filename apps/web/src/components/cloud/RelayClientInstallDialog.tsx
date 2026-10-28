@@ -22,13 +22,13 @@ const installSteps: ReadonlyArray<{
   readonly stage: RelayClientInstallProgressStage;
   readonly label: string;
 }> = [
-  { stage: "checking", label: "Checking current installation" },
-  { stage: "waiting_for_lock", label: "Waiting for installer" },
-  { stage: "downloading", label: "Downloading relay client" },
-  { stage: "verifying", label: "Verifying download" },
-  { stage: "installing", label: "Installing relay client" },
-  { stage: "validating", label: "Validating executable" },
-  { stage: "activating", label: "Activating installation" },
+  { stage: "checking", label: "Se verifică instalarea curentă" },
+  { stage: "waiting_for_lock", label: "Se așteaptă programul de instalare" },
+  { stage: "downloading", label: "Se descarcă clientul relay" },
+  { stage: "verifying", label: "Se verifică descărcarea" },
+  { stage: "installing", label: "Se instalează clientul relay" },
+  { stage: "validating", label: "Se validează executabilul" },
+  { stage: "activating", label: "Se activează instalarea" },
 ];
 
 export function RelayClientInstallDialog() {
@@ -65,12 +65,12 @@ export function RelayClientInstallDialog() {
             <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
           </div>
           <DialogTitle>
-            {isInstalling ? "Installing relay client" : "Install relay client?"}
+            {isInstalling ? "Se instalează clientul relay" : "Instalezi clientul relay?"}
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "Mira is preparing this environment for secure access through T3 Connect."
-              : "Mira needs the relay client to make this environment available through T3 Connect."}
+              ? "Mira pregătește acest mediu pentru acces securizat prin T3 Connect."
+              : "Mira are nevoie de clientul relay ca să facă mediul disponibil prin T3 Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -85,13 +85,13 @@ export function RelayClientInstallDialog() {
                 </p>
               </div>
               <progress
-                aria-label="Relay client installation progress"
+                aria-label="Progresul instalării"
                 className="h-2 w-full appearance-none overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
                 max={installSteps.length}
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Keep Mira open while the relay client is installed.
+                Ține Mira deschisă cât se instalează clientul relay.
               </p>
             </div>
           ) : (
@@ -113,7 +113,7 @@ export function RelayClientInstallDialog() {
               Cancel
             </Button>
             <Button onClick={() => respondToRelayClientInstallConfirmation(true)}>
-              Download and install
+              Descarcă și instalează
             </Button>
           </DialogFooter>
         ) : null}

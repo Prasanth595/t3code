@@ -31,7 +31,7 @@ export function filePreviewGallery(source: FilePreviewSource, group: readonly Fi
 export function filePreviewName(source: FilePreviewItem): string {
   const uriName = "uri" in source ? source.uri.split(/[?#]/)[0]?.split("/").pop() : undefined;
   const name =
-    source.name ?? ("attachment" in source ? source.attachment.name : uriName) ?? "Preview";
+    source.name ?? ("attachment" in source ? source.attachment.name : uriName) ?? "Previzualizare";
   const extension = /\.(png|jpe?g|gif|webp|heic|heif|avif|svg|pdf|docx?|xlsx?|pptx?|txt|rtf)$/i;
   const filename =
     source.kind !== "image" || extension.test(name)

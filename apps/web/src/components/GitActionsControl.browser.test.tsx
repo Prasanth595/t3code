@@ -207,7 +207,7 @@ function setup() {
 }
 
 describe("Git action targets across thread navigation", () => {
-  const quickAction = () => button(/^Commit, push & /);
+  const quickAction = () => button(/^Commit, push și /);
 
   it("runs a retained PR toast in the thread that produced it", async () => {
     setup();

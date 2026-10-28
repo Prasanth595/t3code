@@ -7,14 +7,17 @@ import { SettingsChoiceRow } from "./SettingsChoiceRow";
 import { SettingsSection } from "./SettingsSection";
 
 const MODES = {
-  static: { label: "Static prefix", description: "Add your prefix to the generated branch name." },
+  static: {
+    label: "Prefix fix",
+    description: "Adaugă prefixul tău la numele generat al branch-ului.",
+  },
   semantic: {
-    label: "Semantic prefix",
-    description: "Let the model choose feat/, fix/, refactor/, or another prefix.",
+    label: "Prefix semantic",
+    description: "Lasă modelul să aleagă feat/, fix/, refactor/ sau alt prefix.",
   },
   custom: {
-    label: "Custom instructions",
-    description: "Generate the complete name with no added prefix or suffix.",
+    label: "Instrucțiuni personalizate",
+    description: "Generează numele complet, fără prefix sau sufix adăugat.",
   },
 } satisfies Record<BranchNamingMode, { label: string; description: string }>;
 
@@ -53,9 +56,9 @@ export function BranchNamingSettings(props: {
   useEffect(() => () => saveDrafts(), []);
   return (
     <SettingsSection
-      title="Worktree branch naming"
+      title="Denumirea branch-urilor worktree"
       trailing={
-        props.mode === null ? <Text className="text-xs text-foreground-muted">Mixed</Text> : null
+        props.mode === null ? <Text className="text-xs text-foreground-muted">Mixt</Text> : null
       }
     >
       {BranchNamingMode.literals.map((mode, index) => (
@@ -72,14 +75,14 @@ export function BranchNamingSettings(props: {
       {props.mode === "static" ? (
         <View className="gap-2 px-4 py-3">
           <Text className="text-sm text-foreground-muted">
-            Use t3 or t3/ for t3/add-search. Leave empty for no prefix.
+            Folosește t3 sau t3/ pentru t3/add-search. Lasă gol pentru fără prefix.
           </Text>
           <AppTextInput
             key={props.prefix}
-            accessibilityLabel="Branch prefix"
+            accessibilityLabel="Prefix branch"
             onChangeText={(text) => edit("branchNamePrefix", text)}
             defaultValue={props.prefix ?? ""}
-            placeholder={props.prefix === null ? "Mixed" : "No prefix"}
+            placeholder={props.prefix === null ? "Mixt" : "Fără prefix"}
             editable={!props.disabled}
             autoCapitalize="none"
             autoCorrect={false}
@@ -91,17 +94,17 @@ export function BranchNamingSettings(props: {
       {props.mode === "custom" ? (
         <View className="gap-2 px-4 py-3">
           <Text className="text-sm text-foreground-muted">
-            Append instructions to the naming prompt.
+            Adaugă instrucțiuni la promptul de denumire.
           </Text>
           <AppTextInput
             key={props.instructions}
-            accessibilityLabel="Branch naming instructions"
+            accessibilityLabel="Instrucțiuni denumire branch"
             onChangeText={(text) => edit("branchNameInstructions", text)}
             defaultValue={props.instructions ?? ""}
             placeholder={
               props.instructions === null
-                ? "Mixed. Enter instructions for all selected targets."
-                : "Use julius/ followed by the issue ID and a short description."
+                ? "Mixt. Introdu instrucțiuni pentru toate țintele selectate."
+                : "Folosește julius/ urmat de ID-ul problemei și o descriere scurtă."
             }
             editable={!props.disabled}
             multiline

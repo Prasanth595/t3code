@@ -186,7 +186,7 @@ export function ComposerEditor({
             token.type === "skill"
               ? (skillLabels.get(token.value) ?? token.value)
               : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · indisponibil"}`
                 : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           iconUri: contextChipIconUri(icon),
@@ -282,8 +282,8 @@ export function ComposerEditor({
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}
       enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
-      submitTitle={props.submitTitle ?? "Send Message"}
-      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? "Send Message"}
+      submitTitle={props.submitTitle ?? "Trimite mesajul"}
+      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? "Trimite mesajul"}
       scrollEnabled={props.scrollEnabled ?? true}
       autoFocus={props.autoFocus ?? false}
       autoCorrect={props.autoCorrect ?? true}

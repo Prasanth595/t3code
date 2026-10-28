@@ -92,7 +92,7 @@ interface BranchToolbarBranchSelectorProps {
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : "A apărut o eroare.";
 }
 
 export function BranchToolbarBranchSelector({
@@ -316,11 +316,11 @@ export function BranchToolbarBranchSelector({
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const totalBranchCount = branchRefState.data?.totalCount ?? 0;
   const branchStatusText = isInitialBranchesLoadPending
-    ? "Loading refs..."
+    ? "Se încarcă referințele..."
     : isFetchingNextPage
-      ? "Loading more refs..."
+      ? "Se încarcă mai multe referințe..."
       : hasNextPage
-        ? `Showing ${refs.length} of ${totalBranchCount} refs`
+        ? `Se arată ${refs.length} din ${totalBranchCount} referințe`
         : null;
 
   const copyBranchName = (branchName: string) => {
@@ -329,7 +329,7 @@ export function BranchToolbarBranchSelector({
         if (!didCopy) return;
         toastManager.add({
           type: "success",
-          title: "Branch name copied",
+          title: "Numele branch-ului a fost copiat",
           description: branchName,
         });
       },
@@ -337,7 +337,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy branch name",
+            title: "Numele branch-ului nu a putut fi copiat",
             description: toBranchActionErrorMessage(error),
           }),
         );
@@ -352,7 +352,7 @@ export function BranchToolbarBranchSelector({
     event.preventDefault();
     event.stopPropagation();
     const items: ContextMenuItem<"copy-branch-name">[] = [
-      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+      { id: "copy-branch-name", label: "Copiază numele branch-ului", icon: "copy" },
     ];
     void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
       if (action === "copy-branch-name") copyBranchName(branchName);
@@ -367,8 +367,8 @@ export function BranchToolbarBranchSelector({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Action unavailable",
-          description: "This connection cannot change the thread's branch.",
+          title: "Acțiune indisponibilă",
+          description: "Această conexiune nu poate schimba branch-ul conversației.",
         }),
       );
       return;
@@ -433,7 +433,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch ref.",
+            title: "Branch-ul nu a putut fi schimbat.",
             description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -470,7 +470,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to create and switch ref.",
+            title: "Branch-ul nu a putut fi creat și activat.",
             description: toBranchActionErrorMessage(squashAtomCommandFailure(createBranchResult)),
           }),
         );
@@ -748,7 +748,7 @@ export function BranchToolbarBranchSelector({
             status={displayedPrStatus}
             project={activeProject}
             label={panelPrLabel}
-            openAriaLabel={prUrl ?? `Open ${sourceControlPresentation.terminology.singular}`}
+            openAriaLabel={prUrl ?? `Deschide ${sourceControlPresentation.terminology.singular}`}
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
           />

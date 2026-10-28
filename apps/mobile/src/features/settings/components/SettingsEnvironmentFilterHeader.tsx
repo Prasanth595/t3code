@@ -47,23 +47,23 @@ export function SettingsEnvironmentFilterHeader(props: {
       options={{
         unstable_headerRightItems: () => [
           withNativeGlassHeaderItem({
-            accessibilityLabel: "Filter settings environments and projects",
+            accessibilityLabel: "Filtrează mediile și proiectele din setări",
             icon: { name: filterIcon, type: "sfSymbol" },
             label: "",
             type: "menu",
             menu: {
-              title: "Settings scope",
+              title: "Domeniul setărilor",
               items: [
                 {
                   type: "submenu",
                   label:
                     selectedIds === null
-                      ? "All environments"
-                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
+                      ? "Toate mediile"
+                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "mediu" : "medii"}`,
                   items: [
                     {
                       type: "action",
-                      label: "All connected environments",
+                      label: "Toate mediile conectate",
                       state: selectedIds === null ? "on" : undefined,
                       onPress: selectAll,
                     },
@@ -90,11 +90,11 @@ export function SettingsEnvironmentFilterHeader(props: {
                   label:
                     selectableProjectGroups.find((group) => group.key === selectedProjectKey)
                       ?.label ??
-                    (selectedProjectKey === null ? "All projects" : "Unavailable project"),
+                    (selectedProjectKey === null ? "Toate proiectele" : "Proiect indisponibil"),
                   items: [
                     {
                       type: "action",
-                      label: "All projects",
+                      label: "Toate proiectele",
                       state: selectedProjectKey === null ? "on" : undefined,
                       onPress: () => selectProject(null),
                     },
@@ -135,17 +135,17 @@ export function AndroidSettingsEnvironmentFilter() {
     <Menu
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Filter settings environments and projects"
-      title="Settings scope"
+      accessibilityLabel="Filtrează mediile și proiectele din setări"
+      title="Domeniul setărilor"
       actions={[
         {
           id: "all",
-          title: "All connected environments",
+          title: "Toate mediile conectate",
           state: selectedIds === null ? ("on" as const) : ("off" as const),
         },
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
-          title: `Environment · ${entry.label}`,
+          title: `Mediu · ${entry.label}`,
           image: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
           subtitle: entry.displayUrl ?? undefined,
           state:
@@ -155,12 +155,12 @@ export function AndroidSettingsEnvironmentFilter() {
         })),
         {
           id: "project:all",
-          title: "All projects",
+          title: "Toate proiectele",
           state: selectedProjectKey === null ? ("on" as const) : ("off" as const),
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: `Proiect · ${group.label}`,
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}
@@ -182,7 +182,7 @@ export function AndroidSettingsEnvironmentFilter() {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Filter settings environments and projects"
+        accessibilityLabel="Filtrează mediile și proiectele din setări"
         className="size-11 items-center justify-center rounded-full"
       >
         <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />

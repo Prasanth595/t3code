@@ -17,11 +17,11 @@ export function orchestrationProtocolCompatibilityError(
   return serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
     ? new ConnectionBlockedError({
         reason: "unsupported",
-        detail: `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`,
+        detail: `Acest client nu e suportat de server. Actualizează aplicația sau folosește o versiune compatibilă ca să te conectezi la ${descriptor.label}.`,
       })
     : new ConnectionBlockedError({
         reason: "unsupported",
-        detail: `This client requires a newer server. Update T3 Code on ${descriptor.label} to connect.`,
+        detail: `Acest client necesită un server mai nou. Actualizează Mira pe ${descriptor.label} ca să te conectezi.`,
         ...(canSelfUpdate(descriptor) ? { serverUpdateRequired: true } : {}),
       });
 }

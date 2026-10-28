@@ -68,14 +68,14 @@ export function contextCompactionTokenCounts(
 }
 
 export function contextCompactionLabel(item: CompactionLabelItem): string {
-  if (item.status === "failed") return "Context compaction failed";
+  if (item.status === "failed") return "Compactarea contextului a eșuat";
   if (item.status === "cancelled" || item.status === "interrupted")
-    return "Context compaction stopped";
-  if (isOrchestrationV2WorkActive(item.status)) return "Compacting context";
+    return "Compactarea contextului s-a oprit";
+  if (isOrchestrationV2WorkActive(item.status)) return "Se compactează contextul";
   const tokens = contextCompactionTokenCounts(item);
   return tokens
-    ? `Context compacted ${tokens.before} → ${tokens.after} tokens`
-    : "Context compacted";
+    ? `Context compactat ${tokens.before} → ${tokens.after} tokeni`
+    : "Context compactat";
 }
 
 export interface WorkLogPresentationEntry {
@@ -423,37 +423,37 @@ function toolGroupActionCount(
 function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   switch (action) {
     case "link-pr":
-      return `Linked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `A legat ${count} ${count === 1 ? "pull request" : "pull request-uri"}`;
     case "unlink-pr":
-      return `Unlinked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `A dezlegat ${count} ${count === 1 ? "pull request" : "pull request-uri"}`;
     case "watch-pr":
-      return `Watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Urmărește ${count} ${count === 1 ? "pull request" : "pull request-uri"}`;
     case "unwatch-pr":
-      return `Stopped watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Nu mai urmărește ${count} ${count === 1 ? "pull request" : "pull request-uri"}`;
     case "list-prs":
       return count === 1
-        ? "Checked linked pull requests"
-        : `Checked linked pull requests ${count} times`;
+        ? "A verificat pull request-urile legate"
+        : `A verificat pull request-urile legate de ${count} ori`;
     case "read":
-      return `Read ${count} ${count === 1 ? "file" : "files"}`;
+      return `A citit ${count} ${count === 1 ? "fișier" : "fișiere"}`;
     case "edit":
-      return `Changed ${count} ${count === 1 ? "file" : "files"}`;
+      return `A modificat ${count} ${count === 1 ? "fișier" : "fișiere"}`;
     case "command":
-      return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+      return `A rulat ${count} ${count === 1 ? "comandă" : "comenzi"}`;
     case "thread-create":
-      return `Created ${count} ${count === 1 ? "thread" : "threads"}`;
+      return `A creat ${count} ${count === 1 ? "conversație" : "conversații"}`;
     case "device":
-      return `Used device controls ${count} ${count === 1 ? "time" : "times"}`;
+      return `A folosit controalele dispozitivului de ${count} ${count === 1 ? "dată" : "ori"}`;
     case "browser":
-      return `Used browser ${count} ${count === 1 ? "time" : "times"}`;
+      return `A folosit browserul de ${count} ${count === 1 ? "dată" : "ori"}`;
     case "search":
-      return `Searched the web ${count} ${count === 1 ? "time" : "times"}`;
+      return `A căutat pe internet de ${count} ${count === 1 ? "dată" : "ori"}`;
     case "code-search":
-      return `Searched code ${count} ${count === 1 ? "time" : "times"}`;
+      return `A căutat în cod de ${count} ${count === 1 ? "dată" : "ori"}`;
     case "other":
-      return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
+      return `A folosit ${count} ${count === 1 ? "instrument" : "instrumente"}`;
     case "update":
-      return `Received ${count} ${count === 1 ? "update" : "updates"}`;
+      return `A primit ${count} ${count === 1 ? "actualizare" : "actualizări"}`;
   }
 }
 
@@ -530,7 +530,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   const toolEntries = entries.filter((entry) => entry.itemType !== "reasoning");
   if (entries.length > 0 && toolEntries.length === 0) {
     return {
-      summary: entries.length === 1 ? "Thought" : `Thought (×${entries.length})`,
+      summary: entries.length === 1 ? "S-a gândit" : `S-a gândit (×${entries.length})`,
       hasFailure: false,
     };
   }
@@ -583,10 +583,10 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
         ? sourceNames[0]!
         : sourceNames.length === 2
           ? sourceNames.join(" and ")
-          : `${sourceNames.slice(0, -1).join(", ")}, and ${sourceNames.at(-1)}`;
+          : `${sourceNames.slice(0, -1).join(", ")} și ${sourceNames.at(-1)}`;
     const allIntegrations = sourceValues.every((source) => source.kind === "integration");
     labels.unshift(
-      `Used ${formattedNames}${allIntegrations ? ` ${sourceNames.length === 1 ? "integration" : "integrations"}` : ""}`,
+      `A folosit ${allIntegrations ? `${sourceNames.length === 1 ? "integrarea" : "integrările"} ` : ""}${formattedNames}`,
     );
   }
   const sourcedCount = entries.filter(
@@ -597,15 +597,15 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   const remainingCount =
     entries.length - sourcedCount - selected.reduce((count, group) => count + group.count, 0);
   if (remainingCount > 0) {
-    labels.push(`Performed ${remainingCount} other ${remainingCount === 1 ? "action" : "actions"}`);
+    labels.push(`A făcut încă ${remainingCount} ${remainingCount === 1 ? "acțiune" : "acțiuni"}`);
   }
   const sentenceLabels = labels.map((label, index) =>
     index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
   );
   const summary =
     sentenceLabels.length < 3
-      ? sentenceLabels.join(" and ")
-      : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+      ? sentenceLabels.join(" și ")
+      : `${sentenceLabels.slice(0, -1).join(", ")} și ${sentenceLabels.at(-1)}`;
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 

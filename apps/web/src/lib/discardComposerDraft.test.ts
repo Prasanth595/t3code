@@ -68,7 +68,7 @@ describe("discardComposerDraft", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe("new reply");
     expect(releaseDraftAttachments).toHaveBeenCalledOnce();
     expect(addToast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Failed to restore draft" }),
+      expect.objectContaining({ title: "Ciorna nu a putut fi restaurată" }),
     );
   });
 });

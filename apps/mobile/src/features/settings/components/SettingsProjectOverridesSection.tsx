@@ -13,15 +13,15 @@ export function SettingsProjectOverridesSection(props: {
   readonly onClear: () => void;
 }) {
   return (
-    <SettingsSection title="Project">
+    <SettingsSection title="Proiect">
       <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
         <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={2}>
           {props.projectLabel}
         </Text>
         {!props.pending && props.supportsOverrides && props.hasOverrides ? (
           <Button
-            label="Use defaults"
-            accessibilityHint="Use environment defaults for this project"
+            label="Folosește valorile implicite"
+            accessibilityHint="Folosește valorile implicite ale mediului pentru acest proiect"
             tone="text"
             disabled={props.disabled}
             onPress={props.onClear}
@@ -30,7 +30,7 @@ export function SettingsProjectOverridesSection(props: {
       </View>
       {!props.supportsOverrides ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Update the selected environments to edit project overrides.
+          Actualizează mediile selectate ca să editezi setările proiectului.
         </Text>
       ) : null}
     </SettingsSection>

@@ -59,7 +59,7 @@ export function ReviewGuideExcerpt({
       <View className="overflow-hidden rounded-lg border border-border-subtle">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open ${excerpt.path} at line ${excerpt.start} in full diff`}
+          accessibilityLabel={`Deschide ${excerpt.path} la linia ${excerpt.start} în diff-ul complet`}
           onPress={onOpen}
           className="min-h-11 flex-row items-center gap-3 border-b border-border-subtle px-3 py-2 active:opacity-60"
         >
@@ -113,8 +113,8 @@ export function ReviewGuideExcerpt({
         ) : (
           <Text className="p-3 text-xs text-foreground-muted">
             {loading
-              ? `Loading ${excerpt.path}…`
-              : `${excerpt.path}:${excerpt.start}–${excerpt.end} is not in the loaded diff.`}
+              ? `Se încarcă ${excerpt.path}…`
+              : `${excerpt.path}:${excerpt.start}–${excerpt.end} nu e în diff-ul încărcat.`}
           </Text>
         )}
       </View>

@@ -71,13 +71,13 @@ export function useAttachmentDocument(input: {
     void refresh()
       .then((url) => {
         if (cancelled) return;
-        if (!url) throw new Error("Reconnect to this environment and try again.");
+        if (!url) throw new Error("Reconectează-te la acest mediu și încearcă din nou.");
         textReadUrl.current = { uri: url, authorizedAt: Date.now() };
         setRemoteUri(url);
       })
       .catch((cause: unknown) => {
         if (!cancelled)
-          setError(cause instanceof Error ? cause.message : "The attachment is unavailable.");
+          setError(cause instanceof Error ? cause.message : "Atașamentul nu e disponibil.");
       });
     return () => {
       cancelled = true;
@@ -103,7 +103,7 @@ export function useAttachmentDocument(input: {
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "The local file is unavailable.");
+          setError(cause instanceof Error ? cause.message : "Fișierul local nu e disponibil.");
       });
     return () => {
       controller.abort();
@@ -127,7 +127,7 @@ export function useAttachmentDocument(input: {
           let target = authorized?.uri ?? uri;
           if (!authorized || Date.now() - authorized.authorizedAt > STALE_URL_MS) {
             const refreshed = await refresh();
-            if (!refreshed) throw new Error("Reconnect to this environment and try again.");
+            if (!refreshed) throw new Error("Reconectează-te la acest mediu și încearcă din nou.");
             target = refreshed;
             if (!controller.signal.aborted) {
               // Keep the source-read URL and its age together without restarting active media.
@@ -149,7 +149,7 @@ export function useAttachmentDocument(input: {
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
-          setContentError(cause instanceof Error ? cause.message : "Could not read this file.");
+          setContentError(cause instanceof Error ? cause.message : "Fișierul nu a putut fi citit.");
       });
     return () => controller.abort();
   }, [uri, needsText, revision, sizeBytes, refresh]);
@@ -172,8 +172,8 @@ export function useAttachmentDocument(input: {
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not share file",
-        cause instanceof Error ? cause.message : "Please try again.",
+        "Fișierul nu a putut fi partajat",
+        cause instanceof Error ? cause.message : "Încearcă din nou.",
       );
     }
   };

@@ -69,13 +69,13 @@ export function composerPromptLink(input: {
 export async function copyPromptLink(link: string): Promise<void> {
   try {
     if (!(await writeTextToClipboard(link))) return;
-    toastManager.add({ type: "success", title: "Prompt link copied" });
+    toastManager.add({ type: "success", title: "Link-ul promptului a fost copiat" });
   } catch (error) {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not copy the prompt link",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Link-ul promptului nu a putut fi copiat",
+        description: error instanceof Error ? error.message : "A apărut o eroare.",
       }),
     );
   }

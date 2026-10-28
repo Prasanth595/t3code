@@ -97,7 +97,7 @@ function GuestShareDialog({
     const error = squashAtomCommandFailure(result);
     setState({
       status: "failed",
-      message: error instanceof Error ? error.message : "Could not create a guest link.",
+      message: error instanceof Error ? error.message : "Link-ul de invitat nu a putut fi creat.",
     });
   };
 
@@ -110,10 +110,10 @@ function GuestShareDialog({
     >
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Share with guest</DialogTitle>
+          <DialogTitle>Partajează cu un invitat</DialogTitle>
           <DialogDescription>
-            The guest sees the thread as you do, including command output and the agent&apos;s
-            reasoning. Each message they send waits for you.
+            Invitatul vede conversația ca tine, inclusiv rezultatele comenzilor și raționamentul
+            agentului. Fiecare mesaj trimis de el așteaptă aprobarea ta.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -121,20 +121,20 @@ function GuestShareDialog({
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                aria-label="Guest link"
+                aria-label="Link invitat"
                 value={state.url}
                 onFocus={(event) => event.currentTarget.select()}
               />
               <Button size="sm" variant="outline" onClick={() => copyToClipboard(state.url)}>
                 {isCopied ? <CheckIcon /> : <CopyIcon />}
-                {isCopied ? "Copied" : "Copy"}
+                {isCopied ? "Copiat" : "Copiază"}
               </Button>
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">
               {activeShare !== null
-                ? "A new link ends the current one."
-                : "The link works once and expires in 24 hours."}
+                ? "Un link nou îl închide pe cel curent."
+                : "Link-ul merge o singură dată și expiră în 24 de ore."}
             </p>
           )}
           {state.status === "failed" ? (
@@ -163,7 +163,7 @@ function GuestShareDialog({
                 onClick={() => void create()}
                 disabled={!canCreate || state.status === "creating"}
               >
-                {state.status === "creating" ? "Creating..." : "Create link"}
+                {state.status === "creating" ? "Se creează..." : "Creează link"}
               </Button>
             </>
           )}
@@ -198,7 +198,7 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
           setClosing(false);
         }}
       >
-        Stop sharing
+        Oprește partajarea
       </Button>
     </div>
   );
@@ -207,9 +207,11 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
 function GuestShareStatus({ share }: { readonly share: ThreadGuestShare }) {
   const nowMinute = useNowMinute();
   // The share stays on the thread after it expires, until the owner clears it.
-  if (share.expiresAt.slice(0, 16) <= nowMinute) return <span>Guest link expired</span>;
+  if (share.expiresAt.slice(0, 16) <= nowMinute) return <span>Link-ul de invitat a expirat</span>;
   return (
-    <span>{share.guestName !== null ? `${share.guestName} is a guest` : "Guest link active"}</span>
+    <span>
+      {share.guestName !== null ? `${share.guestName} e invitat` : "Link de invitat activ"}
+    </span>
   );
 }
 
@@ -246,7 +248,7 @@ export function GuestPendingMessages({
     }),
   );
   if (share === null || pending.length === 0) return null;
-  const guestName = share.guestName ?? "Guest";
+  const guestName = share.guestName ?? "Invitat";
   const openImage = (attachment: ChatAttachment) => {
     const preview = buildExpandedImagePreview(
       images.map((image) => ({ ...image, previewUrl: imageUrlById.get(image.id) ?? "" })),
@@ -271,7 +273,7 @@ export function GuestPendingMessages({
   return (
     <ol
       className="chat-content-lane flex flex-col gap-4 pb-4"
-      aria-label={`${pending.length} guest message${pending.length === 1 ? "" : "s"} waiting`}
+      aria-label={`${pending.length} ${pending.length === 1 ? "mesaj de invitat așteaptă" : "mesaje de invitat așteaptă"}`}
       aria-live="polite"
     >
       {pending.map((message) => {
@@ -303,7 +305,7 @@ export function GuestPendingMessages({
                   size="xs"
                   variant="ghost-muted"
                   disabled={busy}
-                  aria-label={`Dismiss message from ${guestName}`}
+                  aria-label={`Respinge mesajul de la ${guestName}`}
                   onClick={() => void resolve(message.id, "dismiss")}
                 >
                   Dismiss
@@ -311,7 +313,7 @@ export function GuestPendingMessages({
                 <Button
                   size="xs"
                   disabled={busy}
-                  aria-label={`Send message from ${guestName}`}
+                  aria-label={`Trimite mesajul de la ${guestName}`}
                   onClick={() => void resolve(message.id, "send")}
                 >
                   Send

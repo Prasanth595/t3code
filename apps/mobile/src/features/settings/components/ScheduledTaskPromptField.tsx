@@ -39,7 +39,7 @@ export function ScheduledTaskPromptField(props: {
           multiline
           scrollEnabled
           textAlignVertical="top"
-          placeholder="What should the agent do each time?"
+          placeholder="Ce ar trebui să facă agentul de fiecare dată?"
           placeholderTextColorClassName="accent-foreground-muted"
           className="max-h-40 min-h-24 font-sans text-base text-foreground"
         />

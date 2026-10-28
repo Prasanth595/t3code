@@ -47,29 +47,29 @@ export function FilesHeader(props: {
         style={{ opacity: searching ? 0 : 1 }}
       >
         <AndroidScreenHeader
-          title="Files"
+          title="Fișiere"
           subtitle={props.projectName}
           hideBottomBorder
           onBack={props.onBack}
           leading={props.leading}
           actions={[
             {
-              accessibilityLabel: "Search files",
+              accessibilityLabel: "Caută fișiere",
               icon: "magnifyingglass",
               onPress: () => setSearchOpen(true),
             },
           ]}
           trailing={
             <AndroidAnchoredMenu
-              title="File options"
-              actions={[{ id: "refresh", title: "Refresh files" }]}
+              title="Opțiuni fișiere"
+              actions={[{ id: "refresh", title: "Reîmprospătează fișierele" }]}
               onPressAction={({ nativeEvent }) => {
                 if (nativeEvent.event === "refresh") props.onRefresh();
               }}
             >
               {(open) => (
                 <AndroidHeaderIconButton
-                  accessibilityLabel="File options"
+                  accessibilityLabel="Opțiuni fișiere"
                   icon="ellipsis"
                   onPress={open}
                 />
@@ -82,15 +82,15 @@ export function FilesHeader(props: {
         <View className="absolute inset-0 bg-header px-2" style={{ paddingTop, paddingBottom }}>
           <View className="flex-1 flex-row items-center gap-1">
             <AndroidHeaderIconButton
-              accessibilityLabel="Close file search"
+              accessibilityLabel="Închide căutarea"
               icon="arrow.left"
               onPress={closeSearch}
             />
             <SearchField
               inputRef={searchRef}
-              accessibilityLabel="Search files"
-              clearAccessibilityLabel="Clear file search"
-              placeholder="Search files"
+              accessibilityLabel="Caută fișiere"
+              clearAccessibilityLabel="Șterge căutarea"
+              placeholder="Caută fișiere"
               value={props.searchQuery}
               onChangeText={onSearchQueryChange}
             />

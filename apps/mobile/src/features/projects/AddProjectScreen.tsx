@@ -129,7 +129,7 @@ function platformFromOs(os: string | null | undefined): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "An error occurred.";
+    : "A apărut o eroare.";
 }
 
 function stringParam(value: string | string[] | undefined): string | null {
@@ -434,11 +434,11 @@ function EmptyEnvironmentState() {
     <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
       <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        Start or reconnect an environment before adding a project.
+        Pornește sau reconectează un mediu înainte să adaugi un proiect.
       </Text>
       <View className="mt-1">
         <Button
-          label="Add environment"
+          label="Adaugă mediu"
           tone="primary"
           onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         />
@@ -456,11 +456,11 @@ function SourceControlRow(props: {
 }) {
   const navigation = useNavigation();
   const title =
-    props.source === "url" ? "Git URL" : `${addProjectRemoteSourceLabel(props.source)} repository`;
+    props.source === "url" ? "Git URL" : `Repository ${addProjectRemoteSourceLabel(props.source)}`;
   const subtitle =
     props.source === "url"
-      ? "Clone from a remote URL"
-      : `Clone ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
+      ? "Clonează de la o adresă"
+      : `Clonează ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
   const icon =
     props.source === "url" ? (
       <SymbolView
@@ -525,12 +525,12 @@ export function AddProjectSourceScreen() {
   const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data);
 
   return (
-    <AddProjectShell title="Add project">
+    <AddProjectShell title="Adaugă proiect">
       {selectedEnvironment === null ? <EmptyEnvironmentState /> : null}
 
       {environmentOptions.length > 1 ? (
         <>
-          <SectionTitle>Environments</SectionTitle>
+          <SectionTitle>Medii</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
               <ListRow
@@ -577,8 +577,8 @@ export function AddProjectSourceScreen() {
           <ListSection>
             {selectedEnvironment.newProjectsRoot !== null ? (
               <ListRow
-                title="New project"
-                subtitle="Start a new Git repository from a name"
+                title="Proiect nou"
+                subtitle="Pornește un repository Git nou cu un nume"
                 icon={
                   <SymbolView
                     name="plus"
@@ -598,11 +598,11 @@ export function AddProjectSourceScreen() {
               />
             ) : null}
             <ListRow
-              title="Local folder"
+              title="Dosar local"
               subtitle={
                 canCreateProject
-                  ? "Browse a folder on disk"
-                  : "This connection cannot add projects."
+                  ? "Alege un dosar de pe disc"
+                  : "Această conexiune nu poate adăuga proiecte."
               }
               icon={
                 <SymbolView
@@ -631,7 +631,7 @@ export function AddProjectSourceScreen() {
                   ready={canCloneProject && readiness(candidate).ready}
                   hint={
                     !canCloneProject
-                      ? "This connection cannot clone projects."
+                      ? "Această conexiune nu poate clona proiecte."
                       : readiness(candidate).ready
                         ? addProjectRemoteSourcePathHint(candidate)
                         : (readiness(candidate).hint ?? "")
@@ -696,8 +696,8 @@ function useCreateProject(environment: EnvironmentOption | null) {
       !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
     ) {
       Dialog.alert(
-        "Project not added",
-        `This connection cannot add projects right now. Any existing files remain at ${workspaceRoot}.`,
+        "Proiectul nu a fost adăugat",
+        `Această conexiune nu poate adăuga proiecte acum. Fișierele existente rămân în ${workspaceRoot}.`,
       );
       return;
     }
@@ -708,7 +708,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       path: workspaceRoot,
     });
     if (existing) {
-      Dialog.alert("Project already exists", existing.title);
+      Dialog.alert("Proiectul există deja", existing.title);
       openNewTaskDraft(navigation, {
         environmentId: existing.environmentId,
         projectId: existing.id,
@@ -825,7 +825,7 @@ export function AddProjectRepositoryScreen(props: {
             onSubmitEditing={() => void lookupRepository()}
           />
           <PrimaryActionButton
-            label={source === "url" ? "Continue" : "Lookup repository"}
+            label={source === "url" ? "Continuă" : "Caută repository-ul"}
             disabled={isSubmitting || repositoryInput.trim().length === 0}
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
@@ -882,9 +882,9 @@ function FolderBrowser(props: {
 
   return (
     <>
-      <SectionTitle>Browse folders</SectionTitle>
+      <SectionTitle>Răsfoiește dosarele</SectionTitle>
       {!canReadFiles && !fileAccess.isPending ? (
-        <ErrorBanner message={fileAccess.error ?? "This connection cannot browse host folders."} />
+        <ErrorBanner message={fileAccess.error ?? "Această conexiune nu poate răsfoi dosarele."} />
       ) : null}
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
@@ -1032,7 +1032,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
     }
     const { projectId, workspaceRoot, commitError } = result.value;
     if (commitError !== undefined) {
-      Dialog.alert("Created without a first commit", commitError);
+      Dialog.alert("Creat fără un prim commit", commitError);
     }
     if (publishes && publishTarget !== null) {
       void publishRepository({
@@ -1046,7 +1046,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       }).then((publishResult) => {
         if (AsyncResult.isFailure(publishResult)) {
           Dialog.alert(
-            `Could not create the ${publishTarget.definition.label} repository`,
+            `Repository-ul ${publishTarget.definition.label} nu a putut fi creat`,
             errorMessage(Cause.squash(publishResult.cause)),
           );
         }
@@ -1063,7 +1063,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
     if (project === null) {
       setName("");
       setError(
-        "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        "Proiectul a fost creat, dar nu a ajuns încă pe acest dispozitiv. Va apărea în listă după ce se sincronizează conexiunea.",
       );
       return;
     }
@@ -1075,7 +1075,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   };
 
   return (
-    <AddProjectShell title="New project">
+    <AddProjectShell title="Proiect nou">
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -1085,15 +1085,15 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             onChangeText={setName}
             autoCorrect={false}
             autoFocus
-            placeholder="Project name"
+            placeholder="Numele proiectului"
             returnKeyType="done"
             onSubmitEditing={() => void submit()}
           />
           {pathPreview !== null ? (
             <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
               {trimmedName.length > 0
-                ? `Creates ${pathPreview}`
-                : `Goes in ${environment.newProjectsRoot}`}
+                ? `Creează ${pathPreview}`
+                : `Se creează în ${environment.newProjectsRoot}`}
               {showMachines ? ` on ${environment.label}` : null}
             </Text>
           ) : null}
@@ -1101,7 +1101,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           {publishTarget !== null ? (
             <ListSection>
               <ListRow
-                title={`Create private repository on ${publishTarget.definition.label}`}
+                title={`Creează un repository privat pe ${publishTarget.definition.label}`}
                 subtitle={
                   trimmedName.length > 0 && pathPreview !== null
                     ? getNewProjectRepository(publishTarget, pathPreview)
@@ -1117,7 +1117,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                 isFirst
                 right={
                   <ThemedSwitch
-                    accessibilityLabel={`Create private repository on ${publishTarget.definition.label}`}
+                    accessibilityLabel={`Creează un repository privat pe ${publishTarget.definition.label}`}
                     value={publishes}
                     onValueChange={setPublishes}
                   />
@@ -1158,15 +1158,15 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             </ListSection>
           ) : null}
           <PrimaryActionButton
-            label="Create project"
+            label="Creează proiectul"
             disabled={isSubmitting || trimmedName.length === 0}
             onPress={() => void submit()}
             loading={isSubmitting}
           />
           <ListSection>
             <ListRow
-              title="Add existing project"
-              subtitle="Open a folder or clone a repository"
+              title="Adaugă un proiect existent"
+              subtitle="Deschide un dosar sau clonează un repository"
               icon={
                 <SymbolView
                   name="folder.badge.plus"
@@ -1227,16 +1227,16 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   };
 
   return (
-    <AddProjectShell title="Local folder">
+    <AddProjectShell title="Dosar local">
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
           {!canCreateProject ? (
-            <ErrorBanner message="This connection cannot add projects." />
+            <ErrorBanner message="Această conexiune nu poate adăuga proiecte." />
           ) : null}
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
-            label="Add project"
+            label="Adaugă proiectul"
             disabled={!canCreateProject || isBrowseNavigating || isSubmitting}
             onPress={submitPath}
             loading={isSubmitting}
@@ -1337,7 +1337,7 @@ export function AddProjectDestinationScreen(props: {
         );
         if (project === null) {
           setError(
-            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            "Proiectul a fost creat, dar nu a ajuns încă pe acest dispozitiv. Va apărea în listă după ce se sincronizează conexiunea.",
           );
         } else {
           openNewTaskDraft(navigation, {
@@ -1376,7 +1376,7 @@ export function AddProjectDestinationScreen(props: {
   };
 
   return (
-    <AddProjectShell title="Clone destination">
+    <AddProjectShell title="Destinația clonării">
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-grouped-card px-4 py-3">
@@ -1390,14 +1390,14 @@ export function AddProjectDestinationScreen(props: {
         <>
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
-            label="Clone project"
+            label="Clonează proiectul"
             disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={submitPath}
             loading={isSubmitting}
           />
           {!canCloneProject ? (
             <Text className="text-sm text-foreground-muted">
-              This connection cannot clone projects.
+              Această conexiune nu poate clona proiecte.
             </Text>
           ) : null}
           <FolderBrowser

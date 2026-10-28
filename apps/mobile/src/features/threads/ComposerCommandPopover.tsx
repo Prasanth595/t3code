@@ -116,13 +116,13 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
 function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return "Pull requests";
+      return "Pull request-uri";
     case "slash-command":
-      return "Commands";
+      return "Comenzi";
     case "skill":
-      return "Skills";
+      return "Abilități";
     case "path":
-      return "Files";
+      return "Fișiere";
     default:
       return null;
   }
@@ -130,19 +130,19 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
 
 function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path" ? "Se caută fișiere…" : "Se încarcă…";
   }
   switch (triggerKind) {
     case "pull-request":
-      return "No matching pull requests.";
+      return "Niciun pull request găsit.";
     case "path":
-      return "No matching files or folders.";
+      return "Niciun fișier sau dosar găsit.";
     case "skill":
-      return "No skills found.";
+      return "Nicio abilitate găsită.";
     case "slash-command":
-      return "No matching commands.";
+      return "Nicio comandă găsită.";
     default:
-      return "No results.";
+      return "Niciun rezultat.";
   }
 }
 

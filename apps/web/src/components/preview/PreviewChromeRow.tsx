@@ -111,14 +111,14 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={canGoBack ? onBack : NOOP}
                   disabled={!canGoBack}
-                  aria-label="Back"
+                  aria-label="Înapoi"
                   type="button"
                 />
               }
             >
               <ArrowLeft />
             </TooltipTrigger>
-            <TooltipPopup>Back</TooltipPopup>
+            <TooltipPopup>Înapoi</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -128,14 +128,14 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={canGoForward ? onForward : NOOP}
                   disabled={!canGoForward}
-                  aria-label="Forward"
+                  aria-label="Înainte"
                   type="button"
                 />
               }
             >
               <ArrowRight />
             </TooltipTrigger>
-            <TooltipPopup>Forward</TooltipPopup>
+            <TooltipPopup>Înainte</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -145,14 +145,14 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={refreshDisabled ? NOOP : onRefresh}
                   disabled={refreshDisabled}
-                  aria-label={loading ? "Stop" : "Refresh"}
+                  aria-label={loading ? "Oprește" : "Reîmprospătează"}
                   type="button"
                 />
               }
             >
               <RefreshIcon refreshing={loading} />
             </TooltipTrigger>
-            <TooltipPopup>{loading ? "Loading…" : "Refresh"}</TooltipPopup>
+            <TooltipPopup>{loading ? "Se încarcă…" : "Reîmprospătează"}</TooltipPopup>
           </Tooltip>
         </div>
 
@@ -182,7 +182,7 @@ export function PreviewChromeRow({
                       inputRef.current?.blur();
                     }
                   }}
-                  placeholder="Search or enter URL"
+                  placeholder="Caută sau introdu o adresă"
                   spellCheck={false}
                   disabled={inputDisabled}
                   data-preview-url-input
@@ -202,14 +202,14 @@ export function PreviewChromeRow({
                         variant="ghost"
                         size="icon-xs"
                         onClick={onOpenInBrowser}
-                        aria-label="Open in system browser"
+                        aria-label="Deschide în browserul sistemului"
                         type="button"
                       />
                     }
                   >
                     <ExternalLink />
                   </TooltipTrigger>
-                  <TooltipPopup>Open in system browser</TooltipPopup>
+                  <TooltipPopup>Deschide în browserul sistemului</TooltipPopup>
                 </Tooltip>
               </span>
             </InputGroupAddon>
@@ -225,7 +225,7 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={onPickElement}
                   disabled={pickDisabled}
-                  aria-label={pickActive ? "Cancel annotation" : "Annotate preview"}
+                  aria-label={pickActive ? "Anulează adnotarea" : "Adnotează previzualizarea"}
                   aria-pressed={pickActive ? "true" : "false"}
                   type="button"
                 />
@@ -237,8 +237,8 @@ export function PreviewChromeRow({
               {pickDisabled && pickDisabledReason
                 ? pickDisabledReason
                 : pickActive
-                  ? "Cancel annotation (Esc)"
-                  : "Annotate elements, regions, and drawings"}
+                  ? "Anulează adnotarea (Esc)"
+                  : "Adnotează elemente, zone și desene"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -250,7 +250,7 @@ export function PreviewChromeRow({
                   variant={recording ? "secondary" : "ghost"}
                   size="icon-xs"
                   onClick={(event) => onCapture(event.shiftKey)}
-                  aria-label={recording ? "Stop recording" : "Capture screenshot"}
+                  aria-label={recording ? "Oprește înregistrarea" : "Fă o captură"}
                   type="button"
                   className="relative"
                   disabled={captureDisabled}
@@ -263,7 +263,7 @@ export function PreviewChromeRow({
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>
-              {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
+              {recording ? "Oprește înregistrarea" : "Captură · Shift-clic pentru înregistrare"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -276,7 +276,9 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={onPictureInPicture}
                   aria-label={
-                    pictureInPicture ? "Close floating preview" : "Float preview over chat"
+                    pictureInPicture
+                      ? "Închide previzualizarea plutitoare"
+                      : "Previzualizare plutitoare peste chat"
                   }
                   aria-pressed={pictureInPicture ? "true" : "false"}
                   type="button"
@@ -287,7 +289,9 @@ export function PreviewChromeRow({
               <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
             </TooltipTrigger>
             <TooltipPopup>
-              {pictureInPicture ? "Close floating preview" : "Float preview over chat"}
+              {pictureInPicture
+                ? "Închide previzualizarea plutitoare"
+                : "Previzualizare plutitoare peste chat"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

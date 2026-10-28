@@ -81,10 +81,10 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 
   if (!manifest) {
     return (
-      <SettingsScreen title="Open source licenses">
+      <SettingsScreen title="Licențe open source">
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            License notices are unavailable in this build.
+            Licențele nu sunt disponibile în această versiune.
           </Text>
         </View>
       </SettingsScreen>
@@ -92,7 +92,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
   }
 
   return (
-    <SettingsScreen title="Open source licenses">
+    <SettingsScreen title="Licențe open source">
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           options={{
@@ -100,7 +100,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
               ? () => [
                   createNativeMailSearchToolbarItem({
                     onSearchTextChange: setQuery,
-                    placeholder: "Search packages",
+                    placeholder: "Caută pachete",
                     searchTextChangeId: "open-source-licenses-search-text",
                     showsSearchDismissButton: true,
                   }),
@@ -116,7 +116,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
                   obscureBackground: false,
                   onCancelButtonPress: () => setQuery(""),
                   onChangeText: (event) => setQuery(event.nativeEvent.text),
-                  placeholder: "Search packages",
+                  placeholder: "Caută pachete",
                 },
           }}
         />
@@ -146,7 +146,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         ListEmptyComponent={
           <View className="items-center px-6 py-12">
             <Text className="text-center text-base text-foreground-muted">
-              No licenses match that search.
+              Nicio licență nu corespunde căutării.
             </Text>
           </View>
         }
@@ -156,10 +156,10 @@ export function SettingsOpenSourceLicensesRouteScreen() {
               <SearchField
                 inputRef={searchRef}
                 autoFocus={false}
-                accessibilityLabel="Search open-source licenses"
-                clearAccessibilityLabel="Clear package search"
+                accessibilityLabel="Caută licențe open source"
+                clearAccessibilityLabel="Șterge căutarea"
                 onChangeText={setQuery}
-                placeholder="Search packages"
+                placeholder="Caută pachete"
                 value={query}
               />
             </View>
@@ -184,10 +184,10 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
 
   if (!entry) {
     return (
-      <SettingsScreen title="License notice">
+      <SettingsScreen title="Licență">
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            This license notice is unavailable.
+            Această licență nu este disponibilă.
           </Text>
         </View>
       </SettingsScreen>
@@ -195,7 +195,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
   }
 
   return (
-    <SettingsScreen title="License notice">
+    <SettingsScreen title="Licență">
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -212,12 +212,12 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
           </Text>
           {sourceUrl ? (
             <Pressable
-              accessibilityHint="Opens the project website"
+              accessibilityHint="Deschide site-ul proiectului"
               accessibilityRole="link"
               onPress={() => void Linking.openURL(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"
             >
-              <Text className="font-t3-medium text-primary-text">Project source</Text>
+              <Text className="font-t3-medium text-primary-text">Sursa proiectului</Text>
               <SymbolView
                 name="arrow.up.right"
                 size={16}

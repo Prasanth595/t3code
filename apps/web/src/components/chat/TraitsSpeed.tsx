@@ -63,7 +63,7 @@ export function TraitsSpeedIcon({
         )}
       />
       <span className="sr-only">
-        {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
+        {speedIcon === "ultrafast" ? "Mod ultrarapid activ" : "Mod rapid activ"}
       </span>
     </>
   );

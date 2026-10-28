@@ -20,9 +20,9 @@ import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWor
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 
 const SEARCH_LABELS = {
-  threads: "Search threads",
-  pullRequests: "Search pull requests",
-  settings: "Search settings",
+  threads: "Caută conversații",
+  pullRequests: "Caută pull request-uri",
+  settings: "Caută în setări",
 } as const;
 
 export function WorkspaceToolbar(props: {
@@ -124,7 +124,7 @@ export function WorkspaceToolbar(props: {
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
-      accessibilityLabel="New chat"
+      accessibilityLabel="Chat nou"
       icon="square.and.pencil"
       onPress={props.onNewTask}
       separateBackground
@@ -133,7 +133,7 @@ export function WorkspaceToolbar(props: {
   const searchButton = foldedSearch ? (
     <Toolbar.Button
       identifier="workspace-search"
-      accessibilityLabel={searchVisible ? "Close search" : searchLabel}
+      accessibilityLabel={searchVisible ? "Închide căutarea" : searchLabel}
       icon={searchVisible ? "xmark" : "magnifyingglass"}
       onPress={searchVisible ? () => searchRef.current?.cancelSearch() : focusSearch}
       separateBackground
@@ -197,7 +197,7 @@ export function WorkspaceToolbar(props: {
           sidebarTabs === "picker" ||
           compactTabs ? null : (
             <Toolbar.Button
-              accessibilityLabel="New chat"
+              accessibilityLabel="Chat nou"
               icon="square.and.pencil"
               onPress={props.onNewTask}
             />

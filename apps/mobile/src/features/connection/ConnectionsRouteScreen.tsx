@@ -31,11 +31,11 @@ export function ConnectionsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Environments"
+          title="Medii"
           onBack={() => navigation.goBack()}
           actions={[
             {
-              accessibilityLabel: "Add environment",
+              accessibilityLabel: "Adaugă mediu",
               icon: "plus",
               onPress: () => navigation.navigate("ConnectionsNew"),
             },

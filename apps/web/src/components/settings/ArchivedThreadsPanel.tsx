@@ -130,8 +130,8 @@ export function ArchivedThreadsPanel() {
     if (!api) return;
     const clicked = await api.contextMenu.show(
       [
-        { id: "unarchive", label: "Unarchive" },
-        { id: "delete", label: "Delete", destructive: true },
+        { id: "unarchive", label: "Dezarhivează" },
+        { id: "delete", label: "Șterge", destructive: true },
       ],
       position,
     );
@@ -145,8 +145,8 @@ export function ArchivedThreadsPanel() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to unarchive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi dezarhivată",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -162,8 +162,8 @@ export function ArchivedThreadsPanel() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to delete thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Conversația nu a putut fi ștearsă",
+            description: error instanceof Error ? error.message : "A apărut o eroare.",
           }),
         );
       }
@@ -186,16 +186,16 @@ export function ArchivedThreadsPanel() {
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
                 )}
                 {isLoadingArchive
-                  ? "Loading archived threads"
+                  ? "Se încarcă conversațiile arhivate"
                   : archiveError
-                    ? "Could not load archived threads"
-                    : "No archived threads"}
+                    ? "Conversațiile arhivate nu au putut fi încărcate"
+                    : "Nicio conversație arhivată"}
               </span>
             }
             description={
               isLoadingArchive
-                ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
+                ? "Se verifică mediile conectate."
+                : (archiveError ?? "Conversațiile arhivate vor apărea aici.")
             }
           />
         </SettingsSection>
@@ -227,9 +227,9 @@ export function ArchivedThreadsPanel() {
                       toastManager.add(
                         stackedThreadToast({
                           type: "error",
-                          title: "Archived thread action failed",
+                          title: "Acțiunea pe conversația arhivată a eșuat",
                           description:
-                            error instanceof Error ? error.message : "An error occurred.",
+                            error instanceof Error ? error.message : "A apărut o eroare.",
                         }),
                       );
                     }
@@ -240,7 +240,7 @@ export function ArchivedThreadsPanel() {
                   <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
                     {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
                     Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                    {" \u00b7 Created "}
+                    {" \u00b7 Creată "}
                     <RelativeTime timestamp={thread.createdAt} />
                   </span>
                 }
@@ -264,9 +264,9 @@ export function ArchivedThreadsPanel() {
                           toastManager.add(
                             stackedThreadToast({
                               type: "error",
-                              title: "Failed to unarchive thread",
+                              title: "Conversația nu a putut fi dezarhivată",
                               description:
-                                error instanceof Error ? error.message : "An error occurred.",
+                                error instanceof Error ? error.message : "A apărut o eroare.",
                             }),
                           );
                         }
@@ -274,7 +274,7 @@ export function ArchivedThreadsPanel() {
                     }}
                   >
                     <ArchiveX className="size-3.5" />
-                    <span>Unarchive</span>
+                    <span>Dezarhivează</span>
                   </Button>
                 }
               />
