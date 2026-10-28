@@ -330,6 +330,7 @@ describe("OrchestratorMcpService", () => {
               threadId: parentThreadId,
               origin: "app_owned",
               childThreadId,
+              prompt: "Check it",
               driver: "codex",
               model: "gpt-5.6-terra",
               status: finished ? "completed" : "running",

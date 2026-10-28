@@ -85,6 +85,10 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/threads", () => ({
   environmentThreadDetails: { threadAtom: () => ({ kind: "thread" }) },
 }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ presentationById: new Map() }),
+}));
+vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("./thread-inspector-navigation", () => ({ useOpenThreadInspector: () => () => false }));
 vi.mock("./SubagentRow", () => ({
   SubagentRow: ({ subagent }: { subagent: { title: string; status: string } }) => (

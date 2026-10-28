@@ -558,6 +558,8 @@ it.effect("leaves a delegated run that waits for a running slot to admission", (
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           listByCommandId: () => Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          cancelUnsettled: () => Effect.succeed([]),
+          signalCancellations: () => Effect.void,
         }),
       ),
     ),

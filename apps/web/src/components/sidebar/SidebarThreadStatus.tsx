@@ -110,7 +110,10 @@ export function SidebarTopStatusBadge(props: {
 }) {
   const { topStatus } = props;
   return (
-    <span className={cn("inline-flex items-center gap-1 font-medium", topStatus.className)}>
+    <span
+      data-sidebar-top-status
+      className={cn("inline-flex items-center gap-1 font-medium", topStatus.className)}
+    >
       <TopStatusIcon icon={topStatus.icon} className="size-4" />
       {/* Not a live region: a collapsed sidebar is inert, so
         BackgroundThreadAnnouncer and the open thread's

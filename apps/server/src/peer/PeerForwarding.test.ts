@@ -664,8 +664,12 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
           },
         ],
       ] as const) {
-        const refused = yield* a.call("thread:laptop-full", name, args, previewOnly);
-        expect(failureOf(refused), name).toMatchObject({ code: "capability_denied" });
+        // A credential without orchestration is a workflow member's: these tools are not listed
+        // for it, and a call to one answers "not found" before any handler runs.
+        const refused = yield* a
+          .call("thread:laptop-full", name, args, previewOnly)
+          .pipe(Effect.flip);
+        expect(String(refused), name).toContain("not found");
       }
       expect(yield* Ref.get(b.bearers)).toEqual([]);
 

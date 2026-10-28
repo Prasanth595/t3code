@@ -1407,7 +1407,12 @@ it.effect(
           ]),
         );
         // Coordinator keeps every tool.
-        expect(coordinator).toEqual(expect.arrayContaining(hiddenFromMember));
+        // The link tools are listed only while the linked-environments beta is on, for anyone.
+        expect(coordinator).toEqual(
+          expect.arrayContaining(
+            hiddenFromMember.filter((name) => !/^t3_environment_(links?|unlink)$/.test(name)),
+          ),
+        );
         // The member sees worktree, pull request (minus the watch tools a child never gets) and html tools only.
         const expectedMember = [
           ...namesOf(WorktreeToolkit as never),
