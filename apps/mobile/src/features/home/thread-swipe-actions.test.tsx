@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import type ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -101,7 +101,7 @@ vi.mock("react-native-gesture-handler/ReanimatedSwipeable", async () => {
 });
 
 import { withThreadDismissal } from "./thread-dismissal";
-import { ThreadSwipeable } from "./thread-swipe-actions";
+import { ThreadSwipeable, useSwipeableScrollGate } from "./thread-swipe-actions";
 
 function setup(side: "left" | "right", onPrimary: () => void = vi.fn(), onOpposite?: () => void) {
   harness.timingTargets = [];
@@ -231,5 +231,72 @@ describe("thread swipe input", () => {
     expect(settle).toHaveBeenCalledOnce();
     expect(harness.timingTargets).toContain(test.target);
     expect(harness.timingTargets).not.toContain(-test.target);
+  });
+});
+
+type ScrollGate = ReturnType<typeof useSwipeableScrollGate>;
+
+function GateProbe(props: { readonly onRender: (gate: ScrollGate) => void }) {
+  const gate = useSwipeableScrollGate();
+  useEffect(() => {
+    props.onRender(gate);
+  });
+  return null;
+}
+
+function renderScrollGate() {
+  vi.useFakeTimers();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  let gate: ScrollGate | null = null;
+  act(() => root.render(<GateProbe onRender={(next) => void (gate = next)} />));
+  const current = () => {
+    if (gate === null) throw new Error("scroll gate did not render");
+    return gate;
+  };
+  return {
+    enabled: () => current().swipeEnabled,
+    handlers: () => current().scrollGateHandlers,
+    [Symbol.dispose]: () => {
+      act(() => root.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
+function scrollAt(y: number) {
+  return { nativeEvent: { contentOffset: { y } } } as unknown as Parameters<
+    ScrollGate["scrollGateHandlers"]["onScroll"]
+  >[0];
+}
+
+describe("swipeable scroll gate", () => {
+  it("re-enables swipes when momentum never reports its end", () => {
+    using gate = renderScrollGate();
+    act(() => gate.handlers().onScrollBeginDrag(scrollAt(0)));
+    act(() => gate.handlers().onScroll(scrollAt(40)));
+    expect(gate.enabled()).toBe(false);
+
+    // The fling is interrupted by a finger, so no momentum end ever arrives.
+    act(() => gate.handlers().onScrollEndDrag());
+    act(() => gate.handlers().onMomentumScrollBegin(scrollAt(40)));
+    act(() => gate.handlers().onScroll(scrollAt(120)));
+    expect(gate.enabled()).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(gate.enabled()).toBe(true);
+  });
+
+  it("re-enables swipes as soon as a new drag begins", () => {
+    using gate = renderScrollGate();
+    act(() => gate.handlers().onScrollBeginDrag(scrollAt(0)));
+    act(() => gate.handlers().onScroll(scrollAt(40)));
+    expect(gate.enabled()).toBe(false);
+
+    act(() => gate.handlers().onScrollBeginDrag(scrollAt(40)));
+    expect(gate.enabled()).toBe(true);
   });
 });

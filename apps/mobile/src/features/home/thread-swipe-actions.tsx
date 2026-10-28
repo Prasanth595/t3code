@@ -153,6 +153,8 @@ export function useSwipeRowSide(): "left" | "right" {
   return Platform.OS === "android" && !layout.usesSplitView ? "left" : "right";
 }
 
+const SCROLL_GATE_IDLE_MS = 240;
+
 /** Trackpads can start pans mid-momentum, bypassing failOffsetY; disable swipes during vertical scrolls. */
 export function useSwipeableScrollGate(options?: {
   readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -160,9 +162,8 @@ export function useSwipeableScrollGate(options?: {
 }) {
   const [gateActive, setGateActive] = useState(false);
   const gateActiveRef = useRef(false);
-  const draggingRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollOriginYRef = useRef(0);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const externalOnScroll = options?.onScroll;
   const externalOnScrollBeginDrag = options?.onScrollBeginDrag;
 
@@ -172,47 +173,57 @@ export function useSwipeableScrollGate(options?: {
       setGateActive(next);
     }
   }, []);
-  const clearSettle = useCallback(() => {
-    if (settleTimerRef.current !== null) {
-      clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = null;
+  const clearIdle = useCallback(() => {
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
     }
   }, []);
-  useEffect(() => clearSettle, [clearSettle]);
+  // A finger landing during momentum ends it without a momentum-end event, so the gate re-arms its
+  // own clear while scrolls arrive rather than trusting an end callback that may never come.
+  const holdWhileScrolling = useCallback(() => {
+    clearIdle();
+    idleTimerRef.current = setTimeout(() => update(false), SCROLL_GATE_IDLE_MS);
+  }, [clearIdle, update]);
+  useEffect(() => clearIdle, [clearIdle]);
 
+  const startScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOriginYRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
   const onScrollBeginDrag = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      draggingRef.current = true;
-      dragStartYRef.current = event.nativeEvent.contentOffset.y;
-      clearSettle();
+      update(false);
+      clearIdle();
+      startScroll(event);
       externalOnScrollBeginDrag?.(event);
     },
-    [clearSettle, externalOnScrollBeginDrag],
+    [clearIdle, externalOnScrollBeginDrag, startScroll, update],
   );
   const onScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (
-        draggingRef.current &&
-        !gateActiveRef.current &&
-        Math.abs(event.nativeEvent.contentOffset.y - dragStartYRef.current) > 4
-      ) {
+      if (gateActiveRef.current) {
+        holdWhileScrolling();
+      } else if (Math.abs(event.nativeEvent.contentOffset.y - scrollOriginYRef.current) > 4) {
         update(true);
+        holdWhileScrolling();
       }
       externalOnScroll?.(event);
     },
-    [externalOnScroll, update],
+    [externalOnScroll, holdWhileScrolling, update],
   );
   const onScrollEndDrag = useCallback(() => {
-    draggingRef.current = false;
-    clearSettle();
-    settleTimerRef.current = setTimeout(() => update(false), 160);
-  }, [clearSettle, update]);
-  const onMomentumScrollBegin = useCallback(() => {
-    clearSettle();
-  }, [clearSettle]);
+    holdWhileScrolling();
+  }, [holdWhileScrolling]);
+  const onMomentumScrollBegin = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      startScroll(event);
+    },
+    [startScroll],
+  );
   const onMomentumScrollEnd = useCallback(() => {
+    clearIdle();
     update(false);
-  }, [update]);
+  }, [clearIdle, update]);
 
   return {
     swipeEnabled: !gateActive,
