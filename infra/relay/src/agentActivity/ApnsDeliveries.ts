@@ -974,7 +974,6 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
-        case "live_activity_start":
         case "live_activity_update":
           if (payload.aggregate === null) {
             return Effect.fail(

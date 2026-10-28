@@ -1,3 +1,4 @@
+import * as AgentActivityAlerts from "./agentActivityAlerts.ts";
 import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type {

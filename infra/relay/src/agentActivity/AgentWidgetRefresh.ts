@@ -125,7 +125,6 @@ const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentLinks.userId, device.userId),
             isNull(relayEnvironmentLinks.revokedAt),
-            eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
           ),
         )
         .pipe(persistenceError("list-environments"));

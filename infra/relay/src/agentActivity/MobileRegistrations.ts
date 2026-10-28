@@ -95,16 +95,21 @@ const make = Effect.gen(function* () {
     ),
     getAgentActivitySnapshot: Effect.fn("relay.mobile_registrations.get_agent_activity_snapshot")(
       function* (input) {
-        const activeStates = yield* rows.listForUser({
-          userId: input.userId,
-          includeLiveActivitiesDisabled: true,
-        });
+        const [activeStates, liveActivityStates] = yield* Effect.all([
+          rows.listForUser({ userId: input.userId, includeLiveActivitiesDisabled: true }),
+          rows.listForUser({ userId: input.userId }),
+        ]);
         const now = yield* DateTime.now;
         const excludedEnvironmentIds = [...new Set(input.excludedEnvironmentIds ?? [])];
         const excluded = new Set(excludedEnvironmentIds);
         return {
           excludedEnvironmentIds,
-          aggregate: AgentActivityPublisher.makeAggregateState({
+          liveActivityAggregate: makeAggregateState({
+            activeStates: liveActivityStates.filter((state) => !excluded.has(state.environmentId)),
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+          }),
+          aggregate: makeAggregateState({
             activeStates: activeStates.filter((state) => !excluded.has(state.environmentId)),
             terminalState: null,
             nowMs: now.epochMilliseconds,

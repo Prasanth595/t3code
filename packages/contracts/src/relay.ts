@@ -1055,6 +1055,7 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
 
 export const RelayAgentActivitySnapshotResponse = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
+  liveActivityAggregate: Schema.optional(Schema.NullOr(RelayAgentActivityAggregateState)),
   environmentIds: Schema.optional(Schema.Array(EnvironmentId)),
   // Absent on older relays, which may ignore an unknown query parameter.
   excludedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),

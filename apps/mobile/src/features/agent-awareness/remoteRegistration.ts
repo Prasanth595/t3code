@@ -374,10 +374,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   expectedGeneration: number,
 ): Effect.fn.Return<void, unknown, ManagedRelay.ManagedRelayClient> {
   if (expectedGeneration !== deviceRegistrationGeneration) {
-    logRegistrationDebug("device registration cancelled before relay request", {
-      expectedGeneration,
-      currentGeneration: deviceRegistrationGeneration,
-    });
     return;
   }
   const relayConfig = readRelayConfig();
@@ -387,14 +383,9 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   }
   const token = yield* relayToken("read-device-registration-relay-token");
   if (expectedGeneration !== deviceRegistrationGeneration) {
-    logRegistrationDebug("device registration cancelled after auth lookup", {
-      expectedGeneration,
-      currentGeneration: deviceRegistrationGeneration,
-    });
     return;
   }
   if (!token) {
-    logRegistrationDebug("relay device registration skipped; user is not signed in");
     setRegistrationStatus("unknown");
     return;
   }
@@ -407,10 +398,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   if (expectedGeneration !== deviceRegistrationGeneration) {
     // Signed out while the record loaded — do not resurrect the cleared
     // record or report the previous account's registration as current.
-    logRegistrationDebug("device registration cancelled after record lookup", {
-      expectedGeneration,
-      currentGeneration: deviceRegistrationGeneration,
-    });
     return;
   }
   const widgetToken =
@@ -436,16 +423,10 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   ) {
     if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
     setRegistrationStatus("registered");
-    logRegistrationDebug("relay device registration skipped; already registered for account", {
-      expectedGeneration,
-    });
     return;
   }
 
   const client = yield* ManagedRelay.ManagedRelayClient;
-  logRegistrationDebug("relay device registration request started", {
-    expectedGeneration,
-  });
   yield* client.registerDevice({
     clerkToken: token,
     payload,
@@ -454,10 +435,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     // Signed out while the request was in flight: the sign-out path already
     // reset the status and cleared the record for the next account, so a
     // stale success must not overwrite either.
-    logRegistrationDebug("device registration completed after sign-out; result discarded", {
-      expectedGeneration,
-      currentGeneration: deviceRegistrationGeneration,
-    });
     return;
   }
   if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
@@ -471,9 +448,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
       logRegistrationError("persist registration record failed", error);
     }),
   );
-  logRegistrationDebug("relay device registration request completed", {
-    expectedGeneration,
-  });
 });
 
 const unregisterDeviceWithRelay = Effect.fn("remoteRegistration.unregisterDeviceWithRelay")(
@@ -915,11 +889,9 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   expectedGeneration = deviceRegistrationGeneration,
 ): Effect.fn.Return<void, unknown, ManagedRelay.ManagedRelayClient> {
   if (!canRegisterPushNotifications()) {
-    logRegistrationDebug("device registration skipped; platform does not support it");
     return;
   }
 
-  logRegistrationDebug("device registration loading local state", { expectedGeneration });
   const [deviceId, storedPreferences] = yield* Effect.all([
     Effect.tryPromise({
       try: () => loadOrCreateAgentAwarenessDeviceId(),
@@ -951,10 +923,6 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     );
   }
   const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
-  logRegistrationDebug("device registration local state ready", {
-    expectedGeneration,
-    notificationsEnabled: pushTokenRegistration.notificationsEnabled,
-  });
   const bundleId =
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
@@ -1090,7 +1058,6 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   relayWidgetSnapshot = null;
   relayWidgetConfirmedAt = null;
   publishedWidgetContent = null;
-  environmentConnections.clear();
   pushTokenSubscription?.remove();
   pushTokenSubscription = null;
   appStateSubscription?.remove();
@@ -1157,10 +1124,6 @@ export const registerLiveActivityPushToken = Effect.fn(
           }),
       });
       if (!activityPushToken) {
-        logRegistrationDebug(
-          "live activity push token not available yet; waiting for token event",
-          { connectionCount: environmentConnections.size },
-        );
         return false;
       }
 
@@ -1211,9 +1174,6 @@ const registerLiveActivityPushTokenValue = Effect.fn(
   });
   if (registered) {
     registeredActivityPushTokens.set(input.activityPushToken, Date.now());
-    logRegistrationDebug("live activity push token registered", {
-      tokenSuffix: input.activityPushToken.slice(-8),
-    });
   }
   return registered;
 });
@@ -1298,8 +1258,11 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
       try: () => [...getAgentLiveActivities()],
       catch: () => [] as Array<LiveActivity<AgentActivityProps>>,
     }).pipe(Effect.orElseSucceed(() => [] as Array<LiveActivity<AgentActivityProps>>));
-    if (activities.length === 0 && snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
-      const aggregate = snapshot.aggregate;
+    const aggregate =
+      snapshot && "liveActivityAggregate" in snapshot
+        ? snapshot.liveActivityAggregate
+        : snapshot?.aggregate;
+    if (activities.length === 0 && aggregate && aggregate.activeCount > 0) {
       const primed = yield* Effect.try({
         try: () =>
           startAgentLiveActivity(widgetPropsFromAggregate(aggregate), liveActivityStaleDate()),
@@ -1314,7 +1277,6 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
         ),
       );
       if (primed) {
-        logRegistrationDebug("live activity card primed", { activeCount: aggregate.activeCount });
         activities = [primed];
       }
     }

@@ -81,7 +81,11 @@ function fixture(
       from: (table: unknown) => ({
         where:
           table === relayEnvironmentLinks
-            ? () => Effect.succeed([{ environmentId: "env-a" }])
+            ? (condition: SQL) => {
+                const params = dialect.sqlToQuery(condition).params;
+                queries.push(params);
+                return Effect.succeed(params.includes(true) ? [] : [{ environmentId: "env-a" }]);
+              }
             : select,
       }),
     }),
@@ -206,7 +210,9 @@ describe("AgentWidgetRefresh", () => {
       const test = fixture();
       return Effect.gen(function* () {
         const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
-        expect((yield* widgets.refresh({ token })).aggregate).toMatchObject({
+        const snapshot = yield* widgets.refresh({ token });
+        expect(snapshot.environmentIds).toEqual([state.environmentId]);
+        expect(snapshot.aggregate).toMatchObject({
           activeCount: 1,
           activities: [{ phase: "running" }],
         });

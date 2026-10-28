@@ -1,3 +1,4 @@
+import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 import * as Alchemy from "alchemy";
 import * as Axiom from "@alchemy.run/axiom";
 import * as Cloudflare from "@alchemy.run/cloudflare";

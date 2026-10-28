@@ -93,6 +93,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
@@ -105,8 +107,6 @@ function shouldPublishAgentAwarenessEvent(
     // Unsettling must not re-alert a dismissed result.
     case "thread.unsettled":
     case "thread.guest-share-updated":
-    case "thread.snoozed":
-    case "thread.unsnoozed":
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":
@@ -336,7 +336,7 @@ function terminalWorkSinceStart(thread: OrchestrationV2ThreadShell, startedAt: n
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
-  readonly startedAt: number;
+  readonly now: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
 }): ReadonlyArray<ThreadId> {
@@ -351,7 +351,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
-        now: input.startedAt,
+        now: input.now,
       });
       return state !== null;
     })
@@ -737,7 +737,7 @@ export const make = Effect.gen(function* () {
     ]);
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
-      startedAt,
+      now: (yield* DateTime.now).epochMilliseconds,
       projects: projectSnapshot.projects,
       threads: shellSnapshot.threads,
     });

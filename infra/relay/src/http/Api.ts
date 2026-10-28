@@ -1,3 +1,4 @@
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
 import * as Crypto from "effect/Crypto";

@@ -367,6 +367,12 @@ describe("live widget activity", () => {
     expect(
       retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([], 10)),
     ).toEqual(observed);
+    const legacy = snapshot([]);
+    expect(
+      retainUnconfirmedWidgetActivities(observed, new Map(), observed, {
+        aggregate: { ...legacy.aggregate!, totalCount: undefined },
+      }),
+    ).toEqual(observed);
     const matching = snapshot(observed.get(ENVIRONMENT)!);
     expect(retainUnconfirmedWidgetActivities(observed, new Map(), observed, matching).size).toBe(0);
     expect(retainUnconfirmedWidgetActivities(observed, observed, observed, matching)).toEqual(
@@ -393,7 +399,12 @@ describe("live widget activity", () => {
       retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([row()], 12)),
     ).toEqual(observed);
     expect(
-      retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([row()])).size,
+      retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([row()])),
+    ).toEqual(observed);
+    expect(
+      retainUnconfirmedWidgetActivities(observed, new Map(), observed, {
+        aggregate: { ...snapshot([row()]).aggregate!, totalCount: 1 },
+      }).size,
     ).toBe(0);
     expect(
       retainUnconfirmedWidgetActivities(observed, new Map(), observed, {

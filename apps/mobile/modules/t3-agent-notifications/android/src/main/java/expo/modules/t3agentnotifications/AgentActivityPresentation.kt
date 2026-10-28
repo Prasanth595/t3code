@@ -139,7 +139,11 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
       builder.setSubText(
         listOfNotNull(
           hero!!.project.takeIf { singleProject && it.isNotBlank() },
-          if (activeCount > 0) "$workingCount working" else "$threadCount threads"
+          when {
+            workingCount > 0 -> "$workingCount working"
+            activeCount > 0 -> "$activeCount active"
+            else -> "$threadCount threads"
+          }
         ).joinToString(" · ")
       )
     }

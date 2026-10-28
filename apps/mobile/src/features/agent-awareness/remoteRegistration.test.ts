@@ -51,7 +51,6 @@ import {
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
-  unregisterAgentAwarenessConnection,
   updateAgentAwarenessRegistrationPreferences,
 } from "./remoteRegistration";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
@@ -310,6 +309,9 @@ function snapshotRelayLayer(
     ManagedRelay.ManagedRelayClient,
     ManagedRelay.ManagedRelayClient.of({
       relayUrl: "https://relay.example.test",
+      getT3ChatLink: () => Effect.die("unused"),
+      createT3ChatLinkRequest: () => Effect.die("unused"),
+      unlinkT3Chat: () => Effect.die("unused"),
       listEnvironments: () => Effect.die("unused"),
       listDevices: () => Effect.die("unused"),
       createEnvironmentLinkChallenge: () => Effect.die("unused"),
@@ -324,18 +326,6 @@ function snapshotRelayLayer(
       resetTokenCache: Effect.void,
     }),
   );
-}
-
-function savedConnection(): SavedRemoteConnection {
-  return {
-    environmentId: "env-1" as EnvironmentId,
-    environmentLabel: "Desktop",
-    pairingUrl: "https://desktop.example/pair",
-    displayUrl: "https://desktop.example",
-    httpBaseUrl: "https://desktop.example",
-    wsBaseUrl: "wss://desktop.example/ws",
-    bearerToken: "bearer-token",
-  };
 }
 
 const layerRelayTest = ManagedRelayLayer.layer("https://relay.example.test").pipe(
@@ -1954,42 +1944,51 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }),
   );
 
-  it.effect("uses a scoped count but keeps the unfiltered aggregate for native priming", () =>
-    Effect.gen(function* () {
-      addLiveEnvironment();
-      setLiveShell("running");
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
-      backgroundRuntime.pending.length = 0;
-      widgetMocks.getInstances.mockReturnValue([]);
-      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true } as Preferences);
-      const queries: Array<ReadonlyArray<EnvironmentId> | undefined> = [];
-      const layer = snapshotRelayLayer(({ excludedEnvironmentIds }) => {
-        queries.push(excludedEnvironmentIds);
-        return Effect.succeed(
-          excludedEnvironmentIds
-            ? {
-                aggregate: null,
-                excludedEnvironmentIds,
-              }
-            : activeAgentActivitySnapshot,
+  it.effect.each([false, true])(
+    "keeps widget counts separate from Live Activity opt-out %s",
+    (disabled) =>
+      Effect.gen(function* () {
+        addLiveEnvironment();
+        setLiveShell("running");
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+        backgroundRuntime.pending.length = 0;
+        widgetMocks.getInstances.mockReturnValue([]);
+        vi.mocked(loadPreferences).mockResolvedValue({
+          liveActivitiesEnabled: true,
+        } as Preferences);
+        const queries: Array<ReadonlyArray<EnvironmentId> | undefined> = [];
+        const layer = snapshotRelayLayer(({ excludedEnvironmentIds }) => {
+          queries.push(excludedEnvironmentIds);
+          return Effect.succeed(
+            excludedEnvironmentIds
+              ? {
+                  aggregate: null,
+                  excludedEnvironmentIds,
+                }
+              : {
+                  ...activeAgentActivitySnapshot,
+                  liveActivityAggregate: disabled ? null : activeAgentActivitySnapshot.aggregate,
+                },
+          );
+        });
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+        expect(queries).toEqual([undefined, [liveEnvironmentId]]);
+        if (disabled) expect(widgetMocks.start).not.toHaveBeenCalled();
+        else
+          expect(widgetMocks.start).toHaveBeenCalledWith(
+            expect.objectContaining({
+              activities: activeAgentActivitySnapshot.aggregate.activities,
+            }),
+            expect.any(Date),
+          );
+        expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            activeCount: 1,
+            isStale: false,
+            activities: [expect.objectContaining({ threadId: "local-thread" })],
+          }),
         );
-      });
-      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
-      expect(queries).toEqual([undefined, [liveEnvironmentId]]);
-      expect(widgetMocks.start).toHaveBeenCalledWith(
-        expect.objectContaining({
-          activities: activeAgentActivitySnapshot.aggregate.activities,
-        }),
-        expect.any(Date),
-      );
-      expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          activeCount: 1,
-          isStale: false,
-          activities: [expect.objectContaining({ threadId: "local-thread" })],
-        }),
-      );
-    }),
+      }),
   );
 
   it.effect(

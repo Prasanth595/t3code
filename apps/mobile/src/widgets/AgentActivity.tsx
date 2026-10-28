@@ -212,7 +212,7 @@ export function AgentActivity(
   const agentsLabel =
     props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
-    attentionCount !== null && attentionCount > 0
+    !props.isExpired && !isSystemStale && attentionCount !== null && attentionCount > 0
       ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`
       : "";
   const currentLabel = allDone
@@ -642,7 +642,11 @@ export function AgentActivity(
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
         <Text modifiers={[font({ weight: "bold", size: 13 }), foregroundStyle(tint)]}>
-          {workingCount === null ? "?" : allDone ? doneLabel : `${workingCount}`}
+          {allDone
+            ? doneLabel
+            : workingCount === null || isSystemStale || props.isExpired
+              ? "?"
+              : `${workingCount}`}
         </Text>
       </HStack>
     ),

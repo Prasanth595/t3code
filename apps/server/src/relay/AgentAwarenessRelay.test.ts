@@ -124,7 +124,7 @@ describe("startup agent activity", () => {
     const newFailed = ThreadId.make("new-failed");
     const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
-      startedAt,
+      now: startedAt + 60_000,
       projects: [{ id: PROJECT_ID, title: "Project" }],
       threads: [
         shell(),
@@ -148,11 +148,26 @@ describe("startup agent activity", () => {
           status: "failed",
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
         }),
+        shell({
+          id: ThreadId.make("expired-snooze"),
+          snoozedUntil: DateTime.makeUnsafe("2026-09-04T12:00:30.000Z"),
+        }),
+        shell({
+          id: ThreadId.make("active-snooze"),
+          snoozedUntil: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z"),
+        }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    assert.deepStrictEqual(ids, [THREAD_ID, oldCompleted, newCompleted, oldFailed, newFailed]);
+    assert.deepStrictEqual(ids, [
+      THREAD_ID,
+      oldCompleted,
+      newCompleted,
+      oldFailed,
+      newFailed,
+      ThreadId.make("expired-snooze"),
+    ]);
   });
 });
 

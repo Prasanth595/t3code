@@ -95,8 +95,9 @@ export function retainUnconfirmedWidgetActivities(
   if ((snapshot.excludedEnvironmentIds?.length ?? 0) > 0) return observed;
   const relayRows = snapshot.aggregate?.activities ?? [];
   const complete =
-    (snapshot.aggregate?.activeCount ?? 0) === relayRows.filter(isActive).length &&
-    (snapshot.aggregate?.totalCount === undefined ||
+    snapshot.aggregate === null ||
+    (snapshot.aggregate.activeCount === relayRows.filter(isActive).length &&
+      snapshot.aggregate.totalCount !== undefined &&
       snapshot.aggregate.totalCount === relayRows.length);
   const retained = new Map(observed);
   for (const [environmentId, rows] of observed) {

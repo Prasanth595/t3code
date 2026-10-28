@@ -291,20 +291,29 @@ describe("MobileRegistrations", () => {
         updatedAt: "1970-01-01T00:00:10.000Z",
         deepLink: `/threads/${index < 6 ? local : remote}/thread-${index}`,
       }));
-      const registrations = yield* MobileRegistrations.make.pipe(
+      const registrations = yield* MobileRegistrations.MobileRegistrations.pipe(
         Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(Devices.Devices, makeDevices()),
-            Layer.succeed(
-              AgentActivityRows.AgentActivityRows,
-              makeAgentActivityRows({
-                listForUser: () => Effect.succeed(states),
-              }),
-            ),
-            Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-            Layer.succeed(
-              AgentActivityPublisher.AgentActivityPublisher,
-              makeAgentActivityPublisher(),
+          MobileRegistrations.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(Devices.Devices, makeDevices()),
+                Layer.succeed(
+                  AgentActivityRows.AgentActivityRows,
+                  makeAgentActivityRows({
+                    listForUser: (input) =>
+                      Effect.succeed(
+                        input.includeLiveActivitiesDisabled
+                          ? states
+                          : states.filter((state) => state.environmentId === remote),
+                      ),
+                  }),
+                ),
+                Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+                Layer.succeed(
+                  AgentActivityPublisher.AgentActivityPublisher,
+                  makeAgentActivityPublisher(),
+                ),
+              ),
             ),
           ),
         ),
@@ -312,6 +321,10 @@ describe("MobileRegistrations", () => {
       const global = yield* registrations.getAgentActivitySnapshot({ userId: "user" });
       expect(global.excludedEnvironmentIds).toEqual([]);
       expect(global.aggregate?.activeCount).toBe(14);
+      expect(global.liveActivityAggregate?.activeCount).toBe(8);
+      expect(
+        global.liveActivityAggregate?.activities.every((row) => row.environmentId === remote),
+      ).toBe(true);
       expect(global.aggregate?.activities.every((row) => row.environmentId === local)).toBe(true);
       const filtered = yield* registrations.getAgentActivitySnapshot({
         userId: "user",
@@ -328,7 +341,11 @@ describe("MobileRegistrations", () => {
           userId: "user",
           excludedEnvironmentIds: [local, remote],
         }),
-      ).toEqual({ aggregate: null, excludedEnvironmentIds: [local, remote] });
+      ).toEqual({
+        aggregate: null,
+        liveActivityAggregate: null,
+        excludedEnvironmentIds: [local, remote],
+      });
     }),
   );
 

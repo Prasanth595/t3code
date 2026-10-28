@@ -1,3 +1,4 @@
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -619,7 +620,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       retained: true,
     }));
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [
         { ...state, updatedAt: "1970-01-02T00:00:00.000Z" },
         {
