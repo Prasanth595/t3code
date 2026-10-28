@@ -19,6 +19,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  type UsageDisplay,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
@@ -122,6 +123,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const USAGE_DISPLAY_LABELS: Record<UsageDisplay, string> = {
+  remaining: "Left",
+  used: "Used",
+};
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -419,6 +425,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
+    ...(settings.usageDisplay !== DEFAULT_UNIFIED_SETTINGS.usageDisplay ? ["Show usage as"] : []),
     ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
       ? ["Thread notifications"]
       : []),
@@ -586,6 +593,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      usageDisplay: DEFAULT_UNIFIED_SETTINGS.usageDisplay,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -1594,6 +1602,42 @@ export function ThreadsSettingsPanel() {
       ) : null}
 
       <SettingsSection id="usage-limits" title="Usage limits">
+        <SettingsRow
+          {...searchableSetting("usage-display")}
+          description="Show subscription limits as the share left or the share used."
+          resetAction={
+            settings.usageDisplay !== DEFAULT_UNIFIED_SETTINGS.usageDisplay ? (
+              <SettingResetButton
+                label="usage display"
+                onClick={() =>
+                  updateSettings({ usageDisplay: DEFAULT_UNIFIED_SETTINGS.usageDisplay })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.usageDisplay}
+              onValueChange={(value) => {
+                if (value === "remaining" || value === "used") {
+                  updateSettings({ usageDisplay: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Show usage as">
+                <SelectValue>{USAGE_DISPLAY_LABELS[settings.usageDisplay]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="remaining">
+                  {USAGE_DISPLAY_LABELS.remaining}
+                </SelectItem>
+                <SelectItem hideIndicator value="used">
+                  {USAGE_DISPLAY_LABELS.used}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           serverScoped
           {...searchableSetting("auto-resume-limited-threads")}

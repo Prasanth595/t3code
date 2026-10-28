@@ -198,6 +198,15 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings usage display", () => {
+  it("keeps showing what is left when existing settings omit the choice", () => {
+    expect(decodeClientSettings({}).usageDisplay).toBe("remaining");
+    expect(decodeClientSettings({ usageDisplay: "used" }).usageDisplay).toBe("used");
+    expect(decodeClientSettingsPatch({ usageDisplay: "used" }).usageDisplay).toBe("used");
+    expect(() => decodeClientSettingsPatch({ usageDisplay: "spent" })).toThrow();
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
