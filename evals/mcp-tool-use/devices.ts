@@ -366,25 +366,34 @@ export const agentDeviceSessions = (
 
 /**
  * Each launcher `open` a new call makes, read as the tracker reads calls, with the other thread's
- * session that holds its device. agent-device refuses an open that has one with DEVICE_IN_USE.
+ * session that holds its device and whether another session holds it at all. agent-device refuses
+ * an open that has a holder with DEVICE_IN_USE. Each launcher command runs in order, so an earlier
+ * `close --session <owner>` in the same call frees the device for a later open.
  */
 const opensIn = (
   targets: ReadonlyArray<LauncherTarget>,
   { sessions, variables }: ReturnType<typeof followSessions>,
   command: string,
   owners: ReadonlyArray<AgentDeviceOwner>,
-) =>
-  shellInvocations(
+) => {
+  const current = new Map(sessions);
+  return shellInvocations(
     withAliases(command, launcherAliases(command, targets)),
     new Map(variables),
     false,
     true,
   ).flatMap((action) => {
     const call = action.remote ? undefined : launcherCall(targets, action.words);
-    return call?.command === "open" && call.tracked !== undefined
-      ? [{ call, words: action.words, owner: holder(call, call.tracked, sessions, owners) }]
-      : [];
+    if (call?.tracked === undefined) return [];
+    const owner = holder(call, call.tracked, current, owners);
+    const held = owners.some(
+      (candidate) =>
+        candidate.deviceId === call.deviceId && current.get(candidate.session) !== undefined,
+    );
+    if (owner === undefined) current.set(call.tracked, afterCall(call, current.get(call.tracked)));
+    return call.command === "open" ? [{ call, words: action.words, owner, held }] : [];
   });
+};
 
 /**
  * What the shell simulator is told of the sessions the launchers name, and other threads', with
@@ -891,18 +900,13 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
     const opens =
       command === undefined || owners.length === 0
         ? []
-        : opensIn(targets, followed, command, owners).flatMap(({ call, words, owner }) => {
+        : opensIn(targets, followed, command, owners).flatMap(({ call, words, owner, held }) => {
             const opened = `\`${words.join(" ")}\` drives ${deviceName(call.deviceId)}`;
             const error = owner && inUseError(call, owner);
             if (owner !== undefined && error !== undefined)
               return [
                 `${opened}, which session ${owner.session} holds: it fails with exit code 1, printing "Error (${error.code}): ${error.message}" and "Hint: ${error.hint}"`,
               ];
-            const held = owners.some(
-              (candidate) =>
-                candidate.deviceId === call.deviceId &&
-                followed.sessions.get(candidate.session) !== undefined,
-            );
             return held
               ? []
               : [`${opened}, which no other session holds: it prints no DEVICE_IN_USE`];

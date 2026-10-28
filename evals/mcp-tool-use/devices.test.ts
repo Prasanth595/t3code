@@ -854,6 +854,13 @@ it.effect(
       );
       // An open in the other thread's own session is not refused, and gets no route.
       assert.notInclude(told(commandLine(held, "open com.acme.app", owner)), "In the new call");
+      // An open after the same call closes the other thread's session finds the device free.
+      const reopen = told(`${commandLine(held, "close", owner)}; ${piped}`);
+      assert.include(
+        reopen,
+        `\`${piped}\` drives Acme iPhone, ${IPHONE}, on build-mac, which no other session holds: it prints no DEVICE_IN_USE`,
+      );
+      assert.notInclude(reopen, `which session ${owner} holds`);
       // Neither do commands other than open.
       assert.notInclude(
         told(`${commandLine(spare, "screenshot /tmp/a.png")} && echo ok`),
