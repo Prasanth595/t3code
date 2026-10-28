@@ -4,7 +4,7 @@ import { recallComposerText as recallableComposerPrompt } from "@t3tools/shared/
 
 export { recallableComposerPrompt };
 
-export type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
+type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
   readonly context?: OrchestrationMessageContext | undefined;
 };
@@ -19,7 +19,7 @@ export function appendRewoundPrompt(
   return currentPrompt.length > 0 ? `${currentPrompt}\n\n${restoredPrompt}` : restoredPrompt;
 }
 
-export interface ComposerPromptHistoryEntry {
+interface ComposerPromptHistoryEntry {
   readonly id: string;
   readonly prompt: string;
 }
@@ -38,7 +38,7 @@ function findActive(
   return entries.findLastIndex((entry) => entry.prompt === position.recalled);
 }
 
-export interface ComposerPromptHistoryStep {
+interface ComposerPromptHistoryStep {
   readonly position: ComposerPromptHistoryPosition | null;
   readonly prompt: string;
 }

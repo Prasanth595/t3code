@@ -3,7 +3,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextRecord, threadContextReference } from "../../lib/composerContextRecords";
+import { threadContextReference } from "../../lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
   approvalFeedbackBlockReason,
