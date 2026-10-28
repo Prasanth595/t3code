@@ -21,6 +21,7 @@ import {
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +47,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { applyUltracode, ULTRACODE_TURN_NOTE } from "@t3tools/provider-core/server/ultracode";
+import type { UltracodeMode } from "@t3tools/contracts/settings";
 import { personTypedWords } from "@t3tools/shared/workflowIntent";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -69,12 +71,24 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  settings = ServerSettings.layerTest(),
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    settings,
   );
+
+/** Settings whose ultracode value is the next of `values` on each read, the last one repeating. */
+const layerUltracodeReads = (values: ReadonlyArray<UltracodeMode>, reads: { count: number }) =>
+  Layer.mock(ServerSettings.ServerSettingsService)({
+    getSettings: Effect.sync(() => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      ultracode: values[Math.min(reads.count++, values.length - 1)]!,
+    })),
+  });
 
 function startWithMissingWorktree(
   worktreePath: string,
@@ -304,6 +318,8 @@ function makeLocalCommandHarness(input: {
     readonly handoff?: "injected" | "inline";
   };
   readonly attachments?: OrchestrationV2ThreadProjection["messages"][number]["attachments"];
+  /** The ultracode setting on each successive read; the last value repeats. */
+  readonly ultracodeReads?: ReadonlyArray<UltracodeMode>;
   /** The resumed native session already holds this much of its context window. */
   readonly nativeContextUsage?: { readonly usedTokens: number; readonly maxTokens: number };
 }) {
@@ -642,6 +658,7 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const settingsReads = { count: 0 };
   const freshSession = vi.fn(() => Effect.succeed(providerThread));
   const open = vi.fn(() =>
     input.interruptOpen === true
@@ -718,7 +735,7 @@ function makeLocalCommandHarness(input: {
         message: {
           ...root.message,
           text: applyUltracode({
-            mode: "keyword",
+            mode: root.turnTriggers.ultracode,
             driver: root.providerThread.driver,
             text: root.message.text,
             typedWords: personTypedWords(root.typedText),
@@ -836,7 +853,12 @@ function makeLocalCommandHarness(input: {
           write: () => Effect.succeed([]),
         }),
         IdAllocator.layer,
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(
+          input.worktreesDir,
+          input.ultracodeReads === undefined
+            ? undefined
+            : layerUltracodeReads(input.ultracodeReads, settingsReads),
+        ),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -907,6 +929,7 @@ function makeLocalCommandHarness(input: {
     open,
     writeIfRunCurrent,
     startRootRun,
+    settingsReads,
     freshSession,
     deliveredTurns,
     injectHistory,
@@ -1673,6 +1696,33 @@ effectIt.effect(
       const text = harness.deliveredTurns[0]!.message.text;
       expect(text).toContain("Recovered conversation.");
       expect(text.split(ULTRACODE_TURN_NOTE)).toHaveLength(2);
+    }),
+);
+
+// Turn start reads the trigger settings once. Ultracode changing from off to keyword while the
+// session recovers must not give the delivered text a note the handoff was not budgeted for.
+effectIt.effect(
+  "a settings change while the session recovers does not change the budgeted turn",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: HOOKED_TEXT,
+        previousTurn: COMPLETED_PREVIOUS_TURN,
+        delivery: { handoff: "inline" },
+        nativeContextUsage: { usedTokens: 95_000, maxTokens: 128_000 },
+        ultracodeReads: ["off", "keyword"],
+      });
+
+      yield* harness.start;
+
+      expect(harness.settingsReads.count).toBe(1);
+      expect(harness.startRootRun.mock.calls[0]?.[0].turnTriggers.ultracode).toBe("off");
+      // Budgeted and delivered without the note: the pending context fits, so no fresh session.
+      expect(harness.freshSession).not.toHaveBeenCalled();
+      expect(harness.deliveredTurns).toHaveLength(1);
+      const text = harness.deliveredTurns[0]!.message.text;
+      expect(text).toContain("Earlier question");
+      expect(text).not.toContain(ULTRACODE_TURN_NOTE);
     }),
 );
 

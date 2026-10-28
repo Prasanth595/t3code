@@ -767,39 +767,49 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
-      // Run execution adds the workflow or ultracode note to this text before delivery. Budget the
-      // text with the note, or a resume that fits without it passes the preflight and then fails
-      // delivery instead of falling back to a fresh session. The gate answers `workflowRequestOf`,
-      // so asking it here has no side effects.
-      const preparedText = yield* serverSettings.getSettings.pipe(
-        Effect.map((settings) => {
-          const turnSettings = resolveProjectSettings(
+      // The one read of the trigger settings. The handoff is budgeted against the text with the
+      // workflow or ultracode note, and run execution shapes its text from this same snapshot, so a
+      // settings change while the session recovers cannot lengthen delivery past the budget.
+      // The gate answers `workflowRequestOf`, so asking here has no side effects.
+      const turnTriggersResult = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings): RunExecutionService.RunExecutionTurnTriggers => {
+          const { workflowTriggers, ultracode, workflowPresets } = resolveProjectSettings(
             settings,
             projection.thread.projectId,
           ).settings;
-          const request = {
-            workflowTriggers: turnSettings.workflowTriggers,
-            typedText: message.text,
-            createdBy: message.createdBy,
-            creationSource: message.creationSource,
-            scheduledTaskId: message.scheduledTaskId,
-            senderThreadId: message.senderThreadId,
-            delegatedThread: projection.thread.lineage.relationshipToParent === "subagent",
-            resumesEarlierTurn: run.restartContinuationOfRunId !== undefined,
-          };
-          return applyTurnTriggers(
-            {
-              ...request,
-              ultracode: turnSettings.ultracode,
-              workflowPresets: turnSettings.workflowPresets,
-              driver: session.driver,
-              text: userText,
-            },
-            workflowRequestOf(request),
-          );
+          return { workflowTriggers, ultracode, workflowPresets };
         }),
-        // Run execution fails the start on the same read; budget the plain text until then.
-        Effect.orElseSucceed(() => userText),
+        Effect.result,
+      );
+      if (turnTriggersResult._tag === "Failure") {
+        if (input.willRetry === true) return yield* turnTriggersResult.failure;
+        yield* settleStartFailure({
+          signal: "turn-settings-read-failure",
+          title: "Provider turn failed to start",
+          error: turnTriggersResult.failure,
+        });
+        return;
+      }
+      const turnTriggers = turnTriggersResult.success;
+      const triggerRequest = {
+        workflowTriggers: turnTriggers.workflowTriggers,
+        typedText: message.text,
+        createdBy: message.createdBy,
+        creationSource: message.creationSource,
+        scheduledTaskId: message.scheduledTaskId,
+        senderThreadId: message.senderThreadId,
+        delegatedThread: projection.thread.lineage.relationshipToParent === "subagent",
+        resumesEarlierTurn: run.restartContinuationOfRunId !== undefined,
+      };
+      const preparedText = applyTurnTriggers(
+        {
+          ...triggerRequest,
+          ultracode: turnTriggers.ultracode,
+          workflowPresets: turnTriggers.workflowPresets,
+          driver: session.driver,
+          text: userText,
+        },
+        workflowRequestOf(triggerRequest),
       );
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
@@ -1548,6 +1558,7 @@ export const layer: Layer.Layer<
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         typedText: message.text,
+        turnTriggers,
         message: {
           messageId: message.id,
           text: userText,

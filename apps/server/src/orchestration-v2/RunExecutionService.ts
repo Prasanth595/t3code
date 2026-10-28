@@ -1,5 +1,6 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
 import {
   isOrchestrationV2WorkActive,
   CommandId,
@@ -550,6 +551,15 @@ export const RunExecutionServiceV2Error = Schema.Union([
 ]);
 export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 
+/**
+ * The settings that decide the turn's workflow or ultracode note. Turn start reads them once and
+ * budgets its context handoff against the text they produce; the run shapes the same text from them.
+ */
+export type RunExecutionTurnTriggers = Pick<
+  ServerSettingsValue,
+  "workflowTriggers" | "ultracode" | "workflowPresets"
+>;
+
 export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
@@ -579,6 +589,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
    * (context chips expanded), and the workflow trigger must not read pasted context.
    */
   readonly typedText: string;
+  readonly turnTriggers: RunExecutionTurnTriggers;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
@@ -1669,7 +1680,7 @@ export const layer: Layer.Layer<
         }));
         // The gate and the note answer one question about this message, asked once.
         const workflowRequest = {
-          workflowTriggers: runSettings.workflowTriggers,
+          workflowTriggers: input.turnTriggers.workflowTriggers,
           typedText: input.typedText,
           createdBy: input.message.createdBy,
           creationSource: input.message.creationSource,
@@ -1707,8 +1718,8 @@ export const layer: Layer.Layer<
             text: applyTurnTriggers(
               {
                 ...workflowRequest,
-                ultracode: runSettings.ultracode,
-                workflowPresets: runSettings.workflowPresets,
+                ultracode: input.turnTriggers.ultracode,
+                workflowPresets: input.turnTriggers.workflowPresets,
                 driver: input.providerThread.driver,
                 text: input.message.text,
               },

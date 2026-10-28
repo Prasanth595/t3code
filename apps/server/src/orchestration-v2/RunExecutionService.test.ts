@@ -26,6 +26,7 @@ import {
   ServerSettingsError,
   ThreadId,
   TurnItemId,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import * as Cause from "effect/Cause";
@@ -54,6 +55,11 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as WorkflowApprovalGate from "./WorkflowApprovalGate.ts";
 
 const driver = ProviderDriverKind.make("codex");
+const DEFAULT_TURN_TRIGGERS: RunExecutionService.RunExecutionTurnTriggers = {
+  workflowTriggers: DEFAULT_SERVER_SETTINGS.workflowTriggers,
+  ultracode: DEFAULT_SERVER_SETTINGS.ultracode,
+  workflowPresets: DEFAULT_SERVER_SETTINGS.workflowPresets,
+};
 const rootAppThread = (id: ThreadId) =>
   ({
     id,
@@ -802,6 +808,7 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
 
     yield* runExecution.startRootRun({
+      turnTriggers: DEFAULT_TURN_TRIGGERS,
       commandId: CommandId.make("command:run-execution-start-guard"),
       appThread: rootAppThread(threadId),
       providerSessionId,
@@ -858,6 +865,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
 
     yield* runExecution.startRootRun({
+      turnTriggers: DEFAULT_TURN_TRIGGERS,
       commandId: CommandId.make("command:run-execution-app-context"),
       appThread: rootAppThread(threadId),
       providerSessionId: ProviderSessionId.make("session:run-execution-app-context"),
@@ -967,6 +975,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        turnTriggers: DEFAULT_TURN_TRIGGERS,
         commandId: CommandId.make("command:run-execution-start-guard-read"),
         appThread: rootAppThread(threadId),
         providerSessionId: ProviderSessionId.make("session:run-execution-start-guard-read"),
@@ -1063,6 +1072,7 @@ it.effect(
         const threadId = ThreadId.make(`thread:compact-routing:${index}`);
         const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
         yield* runExecution.startRootRun({
+          turnTriggers: DEFAULT_TURN_TRIGGERS,
           commandId: CommandId.make(`command:compact-routing:${index}`),
           appThread: rootAppThread(threadId),
           providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
@@ -1182,6 +1192,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        turnTriggers: DEFAULT_TURN_TRIGGERS,
         commandId: CommandId.make("command:run-execution-baseline-failure"),
         appThread: rootAppThread(threadId),
         providerSessionId,
@@ -1323,6 +1334,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
       const result = yield* Effect.gen(function* () {
         const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
         yield* runExecution.startRootRun({
+          turnTriggers: DEFAULT_TURN_TRIGGERS,
           commandId: CommandId.make("command:run-execution-settings-failure"),
           appThread: rootAppThread(threadId),
           providerSessionId,
@@ -1608,6 +1620,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        turnTriggers: DEFAULT_TURN_TRIGGERS,
         commandId: CommandId.make("command:run-execution-late-child"),
         appThread: rootAppThread(threadId),
         providerSessionId,
@@ -1769,6 +1782,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        turnTriggers: DEFAULT_TURN_TRIGGERS,
         commandId: CommandId.make(`command:${key}`),
         appThread: rootAppThread(threadId),
         providerSessionId: ProviderSessionId.make(`session:${key}`),
@@ -2150,6 +2164,7 @@ it.effect(
       yield* Effect.gen(function* () {
         const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
         yield* runExecution.startRootRun({
+          turnTriggers: DEFAULT_TURN_TRIGGERS,
           commandId: CommandId.make("command:subagent-interrupt-cascade"),
           appThread: rootAppThread(ids.threadId),
           providerSessionId: ProviderSessionId.make("session:subagent-interrupt-cascade"),
@@ -3057,6 +3072,28 @@ it.effect("sends an ultracode turn to the provider with the workflow note", () =
   }),
 );
 
+it.effect("shapes the turn from the settings turn start read, not from a later read", () =>
+  Effect.gen(function* () {
+    // Turn start read ultracode as "keyword" and budgeted the handoff for the note; the server
+    // setting says "off" by the time the run starts. The turn must carry the note it budgeted.
+    const [text] = yield* providerTextsFor({
+      key: "ultracode-settings-snapshot",
+      messageText: "Review the parser. ultracode",
+      settings: { ultracode: "off" },
+      turnTriggers: { ...DEFAULT_TURN_TRIGGERS, ultracode: "keyword" },
+    });
+    assert.isTrue(text?.startsWith("Review the parser. ultracode\n\n<t3-ultracode>"));
+    // And the other way: a note that was not budgeted is not added.
+    const [plain] = yield* providerTextsFor({
+      key: "ultracode-settings-snapshot-off",
+      messageText: "Review the parser. ultracode",
+      settings: { ultracode: "keyword" },
+      turnTriggers: { ...DEFAULT_TURN_TRIGGERS, ultracode: "off" },
+    });
+    assert.equal(plain, "Review the parser. ultracode");
+  }),
+);
+
 it.effect("sends a delegated child's task text unchanged even when it says ultracode", () =>
   Effect.gen(function* () {
     const sent = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -3504,6 +3541,8 @@ function captureRootRunTermination(input: {
   readonly typedText?: string;
   readonly providerDriver?: ProviderDriverKind;
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  /** What turn start read once and handed over; defaults to what `settings` gives. */
+  readonly turnTriggers?: RunExecutionService.RunExecutionTurnTriggers;
   readonly attemptReason?: OrchestrationV2RunAttempt["reason"];
   readonly restartContinuationOfRunId?: RunId;
   /** Runs before the turn starts, against the same approval gate turn start will use. */
@@ -3603,9 +3642,25 @@ function captureRootRunTermination(input: {
       Layer.provideMerge(PreviewAgentActivity.layer),
     );
 
+    const settingsTriggers = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.flatMap((service) => service.getSettings),
+      Effect.map(
+        ({
+          workflowTriggers,
+          ultracode,
+          workflowPresets,
+        }): RunExecutionService.RunExecutionTurnTriggers => ({
+          workflowTriggers,
+          ultracode,
+          workflowPresets,
+        }),
+      ),
+      Effect.provide(ServerSettings.layerTest(input.settings)),
+    );
     const previewActivityEnded = yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       const start = runExecution.startRootRun({
+        turnTriggers: input.turnTriggers ?? settingsTriggers,
         commandId: CommandId.make(`command:${input.key}`),
         appThread: {
           ...rootAppThread(ids.threadId),
@@ -4130,6 +4185,7 @@ function runBackgroundItemScenario(
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        turnTriggers: DEFAULT_TURN_TRIGGERS,
         commandId: CommandId.make(`command:${key}`),
         appThread: rootAppThread(ids.threadId),
         providerSessionId: ProviderSessionId.make(`session:${key}`),
