@@ -122,7 +122,7 @@ function T3ConnectTunnelUsage() {
       <TunnelUsageMeter used={usage.used} limit={usage.limit} />
       {usage.upgrade ? (
         <p className="mt-2 text-xs leading-4.5 text-muted-foreground">
-          {t3Chat.linkUrl ? (
+          {usage.upgrade === "link" && t3Chat.linkUrl ? (
             <>
               Confirm on{" "}
               <a
