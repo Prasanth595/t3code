@@ -197,105 +197,104 @@ function ConfiguredConnectOnboardingDialog() {
     : null;
 
   return (
-    <>
-      <Dialog
-        open={openForAccount !== null}
-        onOpenChange={(open) => {
-          if (!open && !isApplying) complete();
-        }}
-      >
-        <WizardPopup>
-          <WizardHeader
-            title="Set up T3 Connect"
-            description={
-              <>
-                Mesh your devices together. Publish this environment and connect the rest, all in
-                one place.
-              </>
-            }
-          >
-            {steps.length > 1 ? (
-              <WizardSteps
-                steps={steps.map((id) => STEP_LABELS[id])}
-                currentStep={steps.indexOf(step)}
-                isStepDisabled={() => isApplying}
-                onStepChange={(index) => {
-                  const next = steps[index];
-                  if (
-                    next === "publish" &&
-                    (primaryEnvironmentId === null ||
-                      !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
-                      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
-                  )
-                    return;
-                  if (next) setStep(next);
-                }}
+    <Dialog
+      open={openForAccount !== null}
+      onOpenChange={(open) => {
+        if (!open && !isApplying) complete();
+      }}
+    >
+      <WizardPopup>
+        <WizardHeader
+          title="Set up T3 Connect"
+          description={
+            <>
+              Mesh your devices together. Publish this environment and connect the rest, all in one
+              place.
+            </>
+          }
+        >
+          {steps.length > 1 ? (
+            <WizardSteps
+              steps={steps.map((id) => STEP_LABELS[id])}
+              currentStep={steps.indexOf(step)}
+              isStepDisabled={() => isApplying}
+              onStepChange={(index) => {
+                const next = steps[index];
+                if (
+                  next === "publish" &&
+                  (primaryEnvironmentId === null ||
+                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
+                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
+                )
+                  return;
+                if (next) setStep(next);
+              }}
+            />
+          ) : null}
+        </WizardHeader>
+        <WizardPanel>
+          {step === "publish" ? (
+            <PublishStep
+              exposeEnvironment={exposeEnvironment}
+              publishAgentActivity={publishAgentActivity}
+              disabled={isApplying || !canManageRelay || linkStateData === null}
+              operationError={controller.operationError ?? controller.linkState.error}
+              tunnelLimit={controller.tunnelLimit}
+              onOpenAccountPage={leaveForAccountPage}
+              onExposeEnvironmentChange={(enabled) => {
+                if (
+                  primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                )
+                  setExposeEnvironment(enabled);
+              }}
+              onPublishAgentActivityChange={(enabled) => {
+                if (
+                  primaryEnvironmentId !== null &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
+                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
+                )
+                  setPublishAgentActivity(enabled);
+              }}
+            />
+          ) : (
+            <DevicesStep />
+          )}
+        </WizardPanel>
+        <WizardFooter
+          leading={
+            <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
+              <Checkbox
+                checked={dontShowAgain}
+                onCheckedChange={(checked) => setDontShowAgain(checked === true)}
               />
-            ) : null}
-          </WizardHeader>
-          <WizardPanel>
-            {step === "publish" ? (
-              <PublishStep
-                exposeEnvironment={exposeEnvironment}
-                publishAgentActivity={publishAgentActivity}
-                disabled={isApplying || !canManageRelay || linkStateData === null}
-                operationError={controller.operationError ?? controller.linkState.error}
-                tunnelLimit={controller.tunnelLimit}
-                onOpenAccountPage={leaveForAccountPage}
-                onExposeEnvironmentChange={(enabled) => {
-                  if (
-                    primaryEnvironmentId !== null &&
-                    readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                    readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                  )
-                    setExposeEnvironment(enabled);
-                }}
-                onPublishAgentActivityChange={(enabled) => {
-                  if (
-                    primaryEnvironmentId !== null &&
-                    readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                    readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                  )
-                    setPublishAgentActivity(enabled);
-                }}
-              />
-            ) : (
-              <DevicesStep />
-            )}
-          </WizardPanel>
-          <WizardFooter
-            leading={
-              <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
-                <Checkbox
-                  checked={dontShowAgain}
-                  onCheckedChange={(checked) => setDontShowAgain(checked === true)}
-                />
-                Don&apos;t show this again
-              </label>
-            }
-          >
-            {step === "publish" ? (
-              <>
-                <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                  Not now
-                </Button>
-                <Button
-                  disabled={isApplying || !canManageRelay || linkStateData === null}
-                  onClick={() => void applyPublishSelection()}
-                >
-                  {isApplying ? "Enabling…" : "Continue"}
-                </Button>
-              </>
-            ) : (
-              <Button disabled={isApplying} onClick={complete}>
-                Done
+              Don&apos;t show this again
+            </label>
+          }
+        >
+          {step === "publish" ? (
+            <>
+              <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
+                Not now
               </Button>
-            )}
-          </WizardFooter>
-        </WizardPopup>
-      </Dialog>
+              <Button
+                disabled={isApplying || !canManageRelay || linkStateData === null}
+                onClick={() => void applyPublishSelection()}
+              >
+                {isApplying ? "Enabling…" : "Continue"}
+              </Button>
+            </>
+          ) : (
+            <Button disabled={isApplying} onClick={complete}>
+              Done
+            </Button>
+          )}
+        </WizardFooter>
+      </WizardPopup>
+      {/* Base UI renders Root children while closed, so this keeps the account page mounted. */}
       {accountPage.portals}
-    </>
+    </Dialog>
   );
 }
 
