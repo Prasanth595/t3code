@@ -1,7 +1,7 @@
 import { EnvironmentId, ProviderDriverKind, UsageLimitSourceId } from "@t3tools/contracts";
 import type { LimitPresentations } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -70,9 +70,9 @@ it("reorders providers with the keyboard and cancels an uncommitted move", async
   await userEvent.keyboard(" ");
   await userEvent.keyboard("{ArrowUp}");
   await userEvent.keyboard(" ");
-  await expect.poll(headings).toEqual(["Claude", "Codex"]);
+  await vi.waitFor(() => expect(headings()).toEqual(["Claude", "Codex"]));
   await userEvent.keyboard(" ");
   await userEvent.keyboard("{ArrowDown}");
   await userEvent.keyboard("{Escape}");
-  await expect.poll(headings).toEqual(["Claude", "Codex"]);
+  await vi.waitFor(() => expect(headings()).toEqual(["Claude", "Codex"]));
 });
