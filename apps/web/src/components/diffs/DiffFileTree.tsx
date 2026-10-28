@@ -184,7 +184,7 @@ export function DiffFileTree({
     model.setGitStatus(gitStatus);
   }, [gitStatus, model]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Refresh the imperative tree decorations after review state changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the imperative tree decorations after review state changes.
   useEffect(() => {
     // Pierre ignores unchanged git statuses, so reviewed/comment-only updates need a render
     // of the existing tree. This preserves its scroll, selection, and folder expansion.
@@ -192,7 +192,7 @@ export function DiffFileTree({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Review marks change the row decoration without changing Git status or tree paths.
   }, [entries, model]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize external file selection into the imperative tree and its scroll position.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize external file selection into the imperative tree and its scroll position.
   useEffect(() => {
     if (selectedPath === null) {
       handledRevealRef.current = null;

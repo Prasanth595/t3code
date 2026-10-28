@@ -170,7 +170,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
   const stagingWrites = useRef(0);
   const busy = useRef(false);
   const [message, setMessage] = useState(remembered.message);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Persist committed navigation for restoring this native review surface.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist committed navigation for restoring this native review surface.
   useEffect(() => {
     updateWorkingChangesReviewMemory(props.memoryKey, {
       selection,
@@ -195,13 +195,13 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     unstagedBefore: typeof unstaged.query.data;
   } | null>(null);
   const queryData = useRef({ staged: staged.query.data, unstaged: unstaged.query.data });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async staging completion must read the latest committed query result.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async staging completion must read the latest committed query result.
   useLayoutEffect(() => {
     queryData.current = { staged: staged.query.data, unstaged: unstaged.query.data };
   }, [staged.query.data, unstaged.query.data]);
   const state = optimistic?.state ?? authoritative;
   const stateRef = useRef(state);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async staging completion must read the latest committed optimistic state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async staging completion must read the latest committed optimistic state.
   useLayoutEffect(() => {
     stateRef.current = state;
   }, [state]);
@@ -214,7 +214,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
   const selected = selection;
   const readerKey = JSON.stringify(["git", scope, selectedPath]);
   const readerKeyRef = useRef(readerKey);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async reader callbacks must target the committed reader identity.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async reader callbacks must target the committed reader identity.
   useLayoutEffect(() => {
     readerKeyRef.current = readerKey;
   }, [readerKey]);
@@ -223,7 +223,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     state: WorkingChangesState;
   } | null>(null);
   const readerContextRef = useRef(readerContext);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Native scroll callbacks must read the committed reader context.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Native scroll callbacks must read the committed reader context.
   useLayoutEffect(() => {
     readerContextRef.current = readerContext;
   }, [readerContext]);
@@ -247,7 +247,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
   );
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const observedRefresh = useRef({ staged: false, unstaged: false });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Settle optimistic staging after authoritative host reads complete.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Settle optimistic staging after authoritative host reads complete.
   useEffect(() => {
     if (staged.query.isPending) observedRefresh.current.staged = true;
     if (unstaged.query.isPending) observedRefresh.current.unstaged = true;
@@ -679,7 +679,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
   const loadFile = data.diff.loadVisibleFile;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Load the selected or restored file once asynchronous metadata is available.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the selected or restored file once asynchronous metadata is available.
   useEffect(() => {
     if (selectedPath) loadFile(selectedPath);
     if (restoreAnchor) loadFile(restoreAnchor.path);
@@ -726,7 +726,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     waitForPath: null as string | null,
   });
   const restoreRequired = restoreAnchor !== undefined;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Reset native scroll restoration when the committed reader changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reset native scroll restoration when the committed reader changes.
   useLayoutEffect(() => {
     if (restoreState.current.readerKey !== readerKey)
       restoreState.current = {

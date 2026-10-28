@@ -109,7 +109,7 @@ function useWorkingChanges(
   );
   const refresh = query.refresh;
   const revision = props.revision;
-  // oxlint-disable-next-line t3code/react-effect-budget -- External Git revisions invalidate the cached working-tree preview.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- External Git revisions invalidate the cached working-tree preview.
   useEffect(() => {
     refresh();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Git status revisions and completed staging actions request a fresh preview.
@@ -199,7 +199,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
   const view = chosenView ?? (initialGitStatusReady && initialChangedCount === 0 ? "files" : "git");
   // Choose once after the initial read. Later writes keep the current reader open.
   if (chosenView === null && initialGitStatusReady) setView(view);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Persist committed navigation for restoring this review surface.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist committed navigation for restoring this review surface.
   useLayoutEffect(() => {
     workingNavigation.set(navigationKey, { view, selection, folded, message, workspacePath });
   }, [navigationKey, view, selection, folded, message, workspacePath]);
@@ -224,7 +224,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
     stagedUpdatedAt: staged.query.dataUpdatedAt,
     unstagedUpdatedAt: unstaged.query.dataUpdatedAt,
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async staging completion must read the latest committed query result.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async staging completion must read the latest committed query result.
   useLayoutEffect(() => {
     queryData.current = {
       staged: staged.query.data,
@@ -238,7 +238,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
     staged.query.dataUpdatedAt,
     unstaged.query.dataUpdatedAt,
   ]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Settle optimistic staging after authoritative host reads complete.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Settle optimistic staging after authoritative host reads complete.
   useEffect(() => {
     if (!optimistic?.confirmed) return;
     if (staged.query.isPending) refreshedScopes.current.staged = true;
@@ -329,7 +329,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
       ? readerFiles.filter((file) => resolveFileDiffPath(file) === selectedPath)
       : readerFiles;
   const requestFile = data.patches.requestFile;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Load the selected file once asynchronous metadata is available.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the selected file once asynchronous metadata is available.
   useEffect(() => {
     if (!selectedPath) return;
     const index = data.files.findIndex((file) => resolveFileDiffPath(file) === selectedPath);

@@ -752,7 +752,8 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       onScroll={(event) => {
                         const offset = event.nativeEvent.contentOffset.y;
                         scrollOffsets.current[tab] = offset;
-                        if (shown(requestedSection.current) === tab) currentScrollOffset.current = { tab, offset };
+                        if (shown(requestedSection.current) === tab)
+                          currentScrollOffset.current = { tab, offset };
                       }}
                       className="flex-1"
                       renderScrollComponent={
@@ -802,6 +803,12 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                             <View>
                               {tab === "overview" && identity ? (
                                 <View>
+                                  <SourceControlAppAccessNotice
+                                    environmentId={params.environmentId}
+                                    provider={identity.provider}
+                                    host={params.host}
+                                    repository={params.repository}
+                                  />
                                   {pr ? (
                                     <PullRequestOverview
                                       pr={pr}
@@ -1243,6 +1250,7 @@ export function PullRequestDiffContent({
       setCollapsedIds(EMPTY_IDS);
     }
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-arms native file scrolling when a new chapter is mounted
   useLayoutEffect(() => {
     if (activeChapterId !== undefined) jumpStarted.current = false;
   }, [activeChapterId]);
@@ -1262,8 +1270,10 @@ export function PullRequestDiffContent({
       jumpStarted.current = false;
     });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to file-jump events from the native review navigator
   useEffect(() => subscribePullRequestFileJump(jumpScope, (path) => jumpToFile(path)), [jumpScope]);
   const appliedFilter = useRef(filter.hideTestFiles);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-arms the native file reveal when filtering changes the mounted diff rows
   useEffect(() => {
     if (appliedFilter.current === filter.hideTestFiles) return;
     appliedFilter.current = filter.hideTestFiles;
@@ -1291,7 +1301,7 @@ export function PullRequestDiffContent({
     canHighlight: true,
   });
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
-  // oxlint-disable-next-line t3code/react-effect-budget -- Load the selected file when asynchronously fetched metadata makes it available.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the selected file when asynchronously fetched metadata makes it available.
   useEffect(() => {
     const parsed = result.parsed;
     if (

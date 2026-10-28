@@ -95,7 +95,7 @@ export function WorkingChangesTree({
   const revealScope = selected?.scope;
   const revealPath = selected?.path;
   const revealKey = selected ? reviewTreeRowKey(selected) : null;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scroll the virtualized tree to an externally selected file.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll the virtualized tree to an externally selected file.
   useEffect(() => {
     if (revealKey === lastRevealed.current) return;
     const index = rows.findIndex(

@@ -1353,13 +1353,11 @@ export const make = Effect.gen(function* () {
     includePositions = true,
   ) {
     const { owner, name } = parseRepositorySelector(input.repository);
-    const response = yield* client
-      .PendingReview({ owner, name, number: input.number })
-      .pipe(
-        graphql({ ...input, operation: "pendingReview" }),
-        Effect.map((data) => JSON.stringify({ data })),
-      )
-      .pipe(retryPendingReviewRead);
+    const response = yield* client.PendingReview({ owner, name, number: input.number }).pipe(
+      graphql({ ...input, operation: "pendingReview" }),
+      Effect.map((data) => JSON.stringify({ data })),
+      retryPendingReviewRead,
+    );
     const decoded = yield* decodePendingReviews(response).pipe(
       Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
     );
@@ -1403,8 +1401,8 @@ export const make = Effect.gen(function* () {
         .pipe(
           graphql({ ...input, operation: "pendingReview" }),
           Effect.map((data) => JSON.stringify({ data })),
-        )
-        .pipe(retryPendingReviewRead);
+          retryPendingReviewRead,
+        );
       const decoded = yield* decodeDraftThreadPositions(response).pipe(
         Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
       );
@@ -3068,8 +3066,12 @@ export const make = Effect.gen(function* () {
       );
     }),
 
-    saveDraftComment: (input) => draftReviewGate.withPermit(saveDraftComment(input)),
-    discardDraftComment: (input) => draftReviewGate.withPermit(discardDraftComment(input)),
+    saveDraftComment: Effect.fn("GitHubPullRequestApi.saveDraftComment")((input) =>
+      draftReviewGate.withPermit(saveDraftComment(input)),
+    ),
+    discardDraftComment: Effect.fn("GitHubPullRequestApi.discardDraftComment")((input) =>
+      draftReviewGate.withPermit(discardDraftComment(input)),
+    ),
     submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function* (input) {
       if (
         input.pendingReviewId !== undefined ||

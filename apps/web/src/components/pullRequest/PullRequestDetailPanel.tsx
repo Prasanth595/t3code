@@ -104,7 +104,6 @@ import {
 import { PullRequestBaseBranch } from "./PullRequestBaseBranch";
 import { PullRequestDetailCrumbs } from "./PullRequestDetailCrumbs";
 import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
-import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";

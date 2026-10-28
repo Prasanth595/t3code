@@ -44,7 +44,7 @@ export function PullRequestAttachments({
     cancelled: boolean;
     abort?: (() => void) | undefined;
   } | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Abort in-flight uploads when their destination changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Abort in-flight uploads when their destination changes or unmounts.
   useEffect(
     () => () => {
       if (transfer.current?.scopeKey === scopeKey) {

@@ -48,7 +48,7 @@ export function rememberFocusedThreadWorkspace(
 
 export function useRememberThreadWorkspaceLocation() {
   const navigation = useNavigation();
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to native navigation changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to native navigation changes.
   useEffect(() => {
     // Route state also observes explicit Back: returning to chat remembers chat.
     const remember = () => rememberFocusedThreadWorkspace(navigation.getState());

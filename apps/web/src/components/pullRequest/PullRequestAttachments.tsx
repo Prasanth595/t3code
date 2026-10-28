@@ -41,7 +41,7 @@ export function PullRequestAttachments({
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const transfer = useRef<{ cancelled: boolean; abort?: (() => void) | undefined } | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Abort in-flight uploads when their destination changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Abort in-flight uploads when their destination changes or unmounts.
   useEffect(
     () => () => {
       if (transfer.current) {
@@ -136,7 +136,7 @@ export function PullRequestAttachments({
   };
   // File drops are handled by the same publisher as the picker, including permission and
   // cancellation checks. Ordinary pasted links remain ordinary composer text.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Attach native drag listeners to the mounted editor.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attach native drag listeners to the mounted editor.
   useEffect(() => {
     const textarea = textareaRef.current;
     const composer =

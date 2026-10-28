@@ -30,7 +30,7 @@ export function GuideGeneratingHeading({
   const [width, setWidth] = useState(0);
   const progress = useSharedValue(0);
   const gradientId = `guide-glimmer-${useId().replaceAll(":", "")}`;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to native accessibility and foreground state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to native accessibility and foreground state.
   useEffect(() => {
     let mounted = true;
     void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
@@ -44,7 +44,7 @@ export function GuideGeneratingHeading({
       app.remove();
     };
   }, []);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Start and stop the native animation with visibility and reduced-motion preferences.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start and stop the native animation with visibility and reduced-motion preferences.
   useEffect(() => {
     cancelAnimation(progress);
     progress.set(0);

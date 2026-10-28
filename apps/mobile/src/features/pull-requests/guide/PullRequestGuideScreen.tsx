@@ -56,6 +56,7 @@ export function PullRequestGuideContent({
     guide?.stops.some((stop) =>
       stopFilePaths(stop).some((path) => !files.some((file) => file.path === path)),
     ) ?? false;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads missing diff pages from the environment for the visible review guide
   useEffect(() => {
     if (active && hasMissingFiles && diff.canLoadMore) loadMore();
   }, [active, hasMissingFiles, diff.canLoadMore, loadMore]);
@@ -65,7 +66,7 @@ export function PullRequestGuideContent({
   const generate = useEffectEvent(() => {
     void state.write();
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Start remote guide generation once the asynchronous host query is ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start remote guide generation once the asynchronous host query is ready.
   useEffect(() => {
     if (!shouldGenerate || attempted.current === generationKey) return;
     attempted.current = generationKey;

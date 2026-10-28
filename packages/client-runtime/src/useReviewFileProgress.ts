@@ -96,12 +96,12 @@ export function useReviewFileProgress(options: {
   // retires the press rather than the host happening to agree with it.
   const answeredFrom = useRef<Map<string, FileViewedStates | null>>(new Map());
   const statesRef = useRef(states);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async write completion must read the latest committed review state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async write completion must read the latest committed review state.
   useLayoutEffect(() => {
     statesRef.current = states;
   }, [states]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Reconcile optimistic writes with authoritative host reads.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reconcile optimistic writes with authoritative host reads.
   useEffect(() => {
     const pending = new Set([...queued.current.keys(), ...sentBy.current.keys()]);
     const answered = new Set<string>();
@@ -154,7 +154,7 @@ export function useReviewFileProgress(options: {
   // Read through a ref rather than closed over: `setViewed` is handed to every file header the
   // viewer draws, and a new identity per render would rebuild all of them.
   const flushRef = useRef(flush);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scope cleanup must flush through the latest committed writer.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scope cleanup must flush through the latest committed writer.
   useLayoutEffect(() => {
     flushRef.current = flush;
   }, [flush]);
@@ -162,7 +162,7 @@ export function useReviewFileProgress(options: {
   // Leaving a change request, the environment it lives on, or the page itself records what was
   // pressed and then drops the rest. The flush kept here is the one bound to the scope being
   // left, which is what sends those last presses where they were meant to go.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Flush pending network writes before the review scope disappears.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Flush pending network writes before the review scope disappears.
   useEffect(() => {
     const flushScope = flushRef.current;
     scope.current = scopeKey;
@@ -179,14 +179,14 @@ export function useReviewFileProgress(options: {
   }, [scopeKey]);
 
   const refreshRef = useRef(refresh);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Host refresh callbacks must use the latest committed reader.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Host refresh callbacks must use the latest committed reader.
   useLayoutEffect(() => {
     refreshRef.current = refresh;
   }, [refresh]);
   const refreshFromHost = useCallback(() => refreshRef.current(), []);
 
   const previousHead = useRef(options.headSha);
-  // oxlint-disable-next-line t3code/react-effect-budget -- A changed remote head requires a fresh host review state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A changed remote head requires a fresh host review state.
   useEffect(() => {
     if (previousHead.current !== options.headSha && enabled) refreshFromHost();
     previousHead.current = options.headSha;

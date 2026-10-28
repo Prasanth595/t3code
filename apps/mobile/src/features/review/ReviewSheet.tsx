@@ -307,6 +307,7 @@ export function ReviewSheet(
     [nativeReviewDiffData, props.openedFile],
   );
   const openedPath = props.openedFile?.path;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the externally requested file into the native diff viewer
   useEffect(() => {
     if (openedPath) loadVisibleFile(openedPath);
   }, [openedPath, loadVisibleFile]);

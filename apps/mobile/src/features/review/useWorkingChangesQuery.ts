@@ -20,7 +20,7 @@ export function useWorkingChangesQuery(input: {
   // The parent reads the same combined query. Its response timestamp can invalidate
   // the scoped previews, but refreshing the combined query here would feed itself.
   const revision = input.scope ? input.revision : undefined;
-  // oxlint-disable-next-line t3code/react-effect-budget -- External Git revisions invalidate the cached working-tree preview.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- External Git revisions invalidate the cached working-tree preview.
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react/exhaustive-effect-dependencies -- Revision and mutation generation invalidate the same cached query.

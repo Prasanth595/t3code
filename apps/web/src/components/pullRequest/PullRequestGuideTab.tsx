@@ -128,6 +128,7 @@ export function PullRequestGuideTab({
   const failure =
     runState?._tag === "Failed" && runState.headSha === currentHeadSha ? runState.detail : null;
   const attemptedGuide = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts remote guide generation once the active host query permits it
   useEffect(() => {
     if (
       !active ||

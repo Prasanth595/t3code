@@ -47,7 +47,7 @@ import {
   useQuietThreadShell,
   useQuietThreadVisibleTurnItems,
 } from "../state/entities";
-import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";

@@ -842,6 +842,7 @@ function PullRequestCodeTab({
     }),
   );
   const displayedChapter = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the code viewer DOM scroll position after chapter and reviewed-file changes
   useLayoutEffect(() => {
     const chapterId = chapter?.id ?? null;
     if (displayedChapter.current !== chapterId) {
@@ -907,7 +908,12 @@ function PullRequestCodeTab({
     setToggledFiles((current) =>
       range.reduce(
         (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, foldOverride ?? (viewed ? "folded" : effectiveFoldOverride), next),
+          toggleFileDiffFoldForViewed(
+            file.fileKey,
+            viewed,
+            foldOverride ?? (viewed ? "folded" : effectiveFoldOverride),
+            next,
+          ),
         current,
       ),
     );
@@ -918,7 +924,7 @@ function PullRequestCodeTab({
     const remaining = new Set(paths);
     for (const file of annotatedFiles) {
       if (!selected.has(file.path)) continue;
-      setFileViewed(file.fileKey, file.path, reviewed);
+      setFileViewed(file.fileKey, reviewed, false);
       remaining.delete(file.path);
     }
     for (const path of remaining) setViewed(path, reviewed);
@@ -1018,6 +1024,7 @@ function PullRequestCodeTab({
     answeredReveal.current = revealRequest.nonce;
     revealFile(revealRequest.path, revealRequest.line, revealRequest.side);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the mounted code viewer once a requested file and its conversation load
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A reveal may open its conversation or advance the diff cursor.
     answerReveal();
@@ -1364,7 +1371,7 @@ function PullRequestCodeTab({
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   const lastReviewedSha = latestReviewedCommit(detail.comments, detail.viewer);
   const lastReviewedIndex = lastReviewedSha === null ? -1 : commitOids.indexOf(lastReviewedSha);
-  // oxlint-disable-next-line t3code/react-effect-budget -- A refreshed host commit list can invalidate the parent selection.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A refreshed host commit list can invalidate the parent selection.
   useEffect(() => {
     if (commit !== null && selectedOids.length === 0) onSelectedCommitChange(null);
   }, [commit, onSelectedCommitChange, selectedOids.length]);
@@ -1644,23 +1651,6 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
-  // positions it when it renders it.
-  const answerReveal = useEffectEvent(() => {
-    if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
-    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
-      if (canLoadNextSlice) loadNextSlice();
-      return;
-    }
-    answeredRevealNonce.current = revealRequest.nonce;
-    revealFile(revealRequest.path);
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the code view to a requested file once loaded, or pages forward until it arrives
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
-    answerReveal();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
-  }, [canLoadNextSlice, items, revealRequest]);
   const toolbar = (
     <>
       {viewControlsTarget ? createPortal(displayControls, viewControlsTarget) : null}
@@ -1835,7 +1825,7 @@ function PullRequestCodeTab({
     </div>
   ) : null;
   return (
-    <div className="@container/guide flex h-full min-h-0 flex-col">
+    <div className="@container/guide flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {toolbar}
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
@@ -2007,7 +1997,7 @@ function PullRequestCodeTab({
                       const selectedPaths = new Set(paths);
                       for (const item of annotatedFiles) {
                         if (selectedPaths.has(item.path))
-                          setFileViewed(item.fileKey, item.path, reviewed);
+                          setFileViewed(item.fileKey, reviewed, false);
                       }
                     }
                   : undefined

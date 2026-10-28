@@ -323,7 +323,7 @@ export function AnnotatableCodeView({
     });
   };
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Attach the context-menu listener to the mounted diff host.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attach the context-menu listener to the mounted diff host.
   useEffect(() => {
     if (!container || (!onStageLines && !onRevertLines)) return;
     const onContextMenu = (event: MouseEvent) => {

@@ -6,7 +6,7 @@ export function useReviewAttachmentInsertion(value: string, onChange: (value: st
   const input = useRef<TextInputInstance>(null);
   const selection = useRef({ start: value.length, end: value.length });
   const latest = useRef({ value, onChange });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Async attachment uploads must insert through the latest committed editor value and callback.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Async attachment uploads must insert through the latest committed editor value and callback.
   useLayoutEffect(() => {
     latest.current = { value, onChange };
   }, [value, onChange]);

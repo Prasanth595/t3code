@@ -323,6 +323,7 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = loadingDirectories;
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs selection styling into the imperative tree shadow DOM
   useEffect(() => {
     const shadow = model.getFileTreeContainer()?.shadowRoot;
     if (!shadow) return;

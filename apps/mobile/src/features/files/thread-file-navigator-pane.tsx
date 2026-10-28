@@ -3,7 +3,7 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useCallback, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
