@@ -1,0 +1,24 @@
+post_install() {
+  cat <<'EOF'
+This package installs `t3code` (desktop app) and `t3` (server).
+
+The server keeps its old shape: same `t3 serve` command line, same base
+directory (~/.t3), same port (3773), so existing pairings keep working.
+
+`~/.local/bin/t3` comes before /usr/bin on PATH. Where such a launcher from an
+older standalone install exists, it keeps running that runtime, so point it at
+this package instead:
+
+  ln -sfn /usr/bin/t3 ~/.local/bin/t3
+
+Then restart whatever runs the server, from the same directory as before.
+`t3 update` and `t3 uninstall` refuse on a package-managed install; use the
+package manager instead.
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+Restart the running server so it picks up the new binary.
+EOF
+}
