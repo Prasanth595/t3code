@@ -31,6 +31,7 @@ import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEnt
 import { useTheme } from "~/hooks/useTheme";
 import type { ChatMessage } from "~/types";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
+import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
@@ -49,7 +50,6 @@ const NO_COMPOSER = createRef<ChatComposerHandle>();
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_TURN_ITEMS: ReadonlyArray<never> = [];
 const ignore = () => {};
-const ignoreImage = (_preview: ExpandedImagePreview) => {};
 
 const markdownLabel = (name: string) => name.replace(/[[\]\\]/g, "\\$&");
 
@@ -193,6 +193,7 @@ function ChatTimeline({
   } | null;
 }) {
   const threadKey = `mira-chat-${chat.id}`;
+  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const { resolvedTheme } = useTheme();
   const relayUrl = useMiraRelayUrl();
@@ -238,7 +239,7 @@ function ChatTimeline({
         supportsConversationRollback={false}
         onRevertToTurnCount={ignore}
         isRevertingCheckpoint={false}
-        onImageExpand={ignoreImage}
+        onImageExpand={setExpandedImage}
         activeThreadEnvironmentId={CHAT_ENVIRONMENT_ID}
         markdownCwd={undefined}
         resolvedTheme={resolvedTheme}
@@ -257,6 +258,9 @@ function ChatTimeline({
       {follow.showScrollToBottom ? (
         <ScrollToEndButton bottom={4} onScrollToEnd={() => follow.scrollToEnd(true)} />
       ) : null}
+      {expandedImage === null ? null : (
+        <ExpandedImageDialog preview={expandedImage} onClose={() => setExpandedImage(null)} />
+      )}
     </div>
   );
 }

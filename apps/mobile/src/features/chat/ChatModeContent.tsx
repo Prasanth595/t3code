@@ -46,6 +46,7 @@ import {
   convertPastedImagesToAttachments,
   type DraftComposerAttachment,
 } from "../../lib/composerImages";
+import { FilePreview } from "../../components/FilePreview";
 import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -347,15 +348,37 @@ function ChatErrorNotice(props: {
 
 function MessageAttachments(props: { readonly attachments: ReadonlyArray<SaasChatAttachment> }) {
   const relayUrl = useMiraRelayUrl();
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  const photos =
+    relayUrl === null
+      ? []
+      : props.attachments.flatMap((attachment) =>
+          attachment.kind === "image"
+            ? [
+                {
+                  kind: "image" as const,
+                  uri: chatAttachmentUrl(relayUrl, attachment.id),
+                  name: attachment.name,
+                },
+              ]
+            : [],
+        );
+  const previewed = photos.find((photo) => photo.uri === previewing);
   return (
     <View className="gap-2">
+      {previewed === undefined ? null : (
+        <FilePreview
+          source={{ ...previewed, gallery: photos }}
+          onRequestClose={() => setPreviewing(null)}
+        />
+      )}
       {props.attachments.map((attachment) =>
         attachment.kind === "image" && relayUrl !== null ? (
           <Pressable
             key={attachment.id}
             accessibilityRole="imagebutton"
             accessibilityLabel={`Open ${attachment.name}`}
-            onPress={() => void Linking.openURL(chatAttachmentUrl(relayUrl, attachment.id))}
+            onPress={() => setPreviewing(chatAttachmentUrl(relayUrl, attachment.id))}
           >
             <Image
               source={{ uri: chatAttachmentUrl(relayUrl, attachment.id) }}
