@@ -10,6 +10,8 @@ describe("guest host images", () => {
     ["![a](/w/shot\\_1.png) ![b](/w/a&amp;b.png)", "/w/shot_1.png", "image/png"],
     ["![a](/w/shot\\_1.png) ![b](/w/a&amp;b.png)", "/w/a&b.png", "image/png"],
     ["![a](file:///w/caf%c3%a9.png)", "/w/café.png", "image/png"],
+    ["![a](file:///w/%73hot.png) ![b](/w/sh&#111;t2.png)", "/w/shot.png", "image/png"],
+    ["![a](file:///w/%73hot.png) ![b](/w/sh&#111;t2.png)", "/w/shot2.png", "image/png"],
     ["![a][r]\n\n[r]: /w/ref.png", "/w/ref.png", "image/png"],
     ["![a](file:///w/url%20form.png)", "/w/url form.png", "image/png"],
     ["![a](C:\\w\\win.png)", "C:\\w\\win.png", "image/png"],

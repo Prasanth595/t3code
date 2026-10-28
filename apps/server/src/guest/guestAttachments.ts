@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { markdownDestinationHostPath } from "@t3tools/shared/markdownLinks";
 import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
-import { fileBasename, isAbsolutePath, isNetworkPath } from "@t3tools/shared/path";
+import { isAbsolutePath, isNetworkPath } from "@t3tools/shared/path";
 
 /** A file from a guest's message request, saved by the multipart parser to a temporary path. */
 export interface GuestUpload {
@@ -79,13 +79,10 @@ export function repliesShowImage<Reply extends { readonly text: string }>(
   imageSources: (reply: Reply) => ReadonlyArray<string> = (reply) =>
     chatMarkdownImageSources(reply.text),
 ) {
-  // Parsing is the slow part, so only replies with an image and a run of the file's name are
-  // parsed. Not the whole name: markdown can escape or encode it (`shot\_1.png`, `caf%C3%A9.png`).
-  const key = /[A-Za-z0-9]+/.exec(fileBasename(path))?.[0] ?? "";
+  // Parsing is the slow part; a reply with no image syntax shows no image.
   return replies.some(
     (reply) =>
       (reply.text.includes("![") || /<img/i.test(reply.text)) &&
-      reply.text.includes(key) &&
       imageSources(reply).some((source) => markdownDestinationHostPath(source) === path),
   );
 }
