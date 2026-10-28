@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type LinkableMachine,
@@ -34,7 +35,7 @@ import { mintPairingCodeOn } from "../../state/peerPairingCode";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsChoiceRow } from "../settings/components/SettingsChoiceRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
@@ -125,7 +126,7 @@ function PendingLinkRequest(props: {
       setDeclining(false),
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 
@@ -311,7 +312,7 @@ function LinkRequestSheet(props: {
       setPairingCode("");
       props.onClose();
     } else if (!isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 
