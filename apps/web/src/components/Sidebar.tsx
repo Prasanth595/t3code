@@ -3299,6 +3299,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   className="mx-0.5 h-8 list-none"
                                 >
                                   <CollapsibleSectionHeader
+                                    role="treeitem"
+                                    tabIndex={-1}
+                                    data-sidebar-row="shelf:pinned"
                                     onClick={togglePinnedShelf}
                                     expanded={pinnedShelfExpanded}
                                     tone={
@@ -3309,10 +3312,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                           : "muted"
                                     }
                                     data-testid="sidebar-pinned-shelf-toggle"
+                                    accessory={
+                                      <span className="font-normal tabular-nums">
+                                        {pinnedThreads.length}
+                                      </span>
+                                    }
                                   >
-                                    {pinnedShelfExpanded
-                                      ? "Pinned"
-                                      : `Pinned (${pinnedThreads.length})`}
+                                    Pinned
                                   </CollapsibleSectionHeader>
                                 </li>,
                               );
