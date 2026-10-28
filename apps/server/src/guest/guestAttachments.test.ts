@@ -1,0 +1,26 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { embeddedHostImageType } from "./guestAttachments.ts";
+
+describe("embeddedHostImageType", () => {
+  it.each([
+    ["![a](/w/a.png)", "/w/a.png", "image/png"],
+    ["![a](</w/my shot.jpg>)", "/w/my shot.jpg", "image/jpeg"],
+    ["![a](/w/shot(1).png)", "/w/shot(1).png", "image/png"],
+    ["![a][r]\n\n[r]: /w/ref.png", "/w/ref.png", "image/png"],
+    ["![a](file:///w/url%20form.png)", "/w/url form.png", "image/png"],
+    ["![a](C:\\w\\win.png)", "C:\\w\\win.png", "image/png"],
+    ["![a][r]\n\n[r]: C:\\w\\ref.png", "C:/w/ref.png", "image/png"],
+    // Shown as a link, in code, or not at all: the guest sees no image, so none loads.
+    ["[a](/w/link.png)", "/w/link.png", null],
+    ["```\n![a](/w/code.png)\n```", "/w/code.png", null],
+    ["`![a](/w/span.png)`", "/w/span.png", null],
+    ["<!-- ![a](/w/comment.png) -->", "/w/comment.png", null],
+    ["![a](/w/a.png)", "/a.png", null],
+    ["![a](//host/s/x.png)", "//host/s/x.png", null],
+    ["![a](\\\\host\\s\\x.png)", "\\\\host\\s\\x.png", null],
+    ["![a](/w/a.svg)", "/w/a.svg", null],
+  ])("%j serves %j as %j", (text, path, type) => {
+    expect(embeddedHostImageType(path, [text])).toBe(type);
+  });
+});

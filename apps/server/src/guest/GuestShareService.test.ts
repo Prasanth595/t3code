@@ -884,7 +884,7 @@ it.effect("serves an image on the host only when an agent message embeds it", ()
         message(
           "message:agent-images",
           "assistant",
-          `Done: ![Shot](<${shot}>) and [the other](file://${encodeURI(linked)}) ![Page](${page})`,
+          `Done: ![Shot](<${shot}>) ![Other](file://${encodeURI(linked)}) ![Page](${page})`,
         ),
         // A guest's sent message is a user message; it must not open files on the host.
         message("message:guest-image", "user", `![Mine](${fromUser})`),

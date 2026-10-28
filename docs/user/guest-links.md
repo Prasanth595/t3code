@@ -27,8 +27,8 @@ unlinking the machine from T3 Connect also ends it. You can send or dismiss gues
 
 The guest sees the thread's recent history and everything after, in the same timeline you see, as
 it streams: messages and their files, the agent's replies with the images they show from your
-machine, its reasoning, plans, questions, and its work, with command output when they expand a command. Their composer shows the thread's model, but
-they cannot change it. They do not see diffs, and they cannot act on the thread: no forking,
+machine, its reasoning, plans, questions, and its work, with command output when they expand a
+command. Their composer shows the thread's model, but they cannot change it. They do not see diffs, and they cannot act on the thread: no forking,
 reverting, opening files on your machine, or answering the agent for you.
 
 Anything the agent read or printed can show, such as a value from a file. Share only threads you

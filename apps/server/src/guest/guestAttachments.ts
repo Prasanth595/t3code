@@ -3,12 +3,9 @@ import {
   GUEST_MESSAGE_MAX_ATTACHMENTS,
   isProviderSendTurnSupportedImageMimeType,
 } from "@t3tools/contracts";
-import {
-  extractMarkdownLinkHrefs,
-  markdownDestinationHostPath,
-  normalizeMarkdownLinkDestination,
-} from "@t3tools/shared/markdownLinks";
-import { isAbsolutePath, isNetworkPath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { markdownDestinationHostPath } from "@t3tools/shared/markdownLinks";
+import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
+import { fileBasename, isAbsolutePath, isNetworkPath } from "@t3tools/shared/path";
 
 /** A file from a guest's message request, saved by the multipart parser to a temporary path. */
 export interface GuestUpload {
@@ -64,9 +61,9 @@ const IMAGE_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 /**
- * The type of the host image at `path` when an agent message links or embeds it, or null when the
- * guest may not load it. Only files the guest can already see named in the thread qualify, never a
- * network path, which would make the host reach out to another machine.
+ * The type of the host image at `path` when an agent message shows it, or null when the guest may
+ * not load it. Only images the guest already sees in the thread qualify, never a network path,
+ * which would make the host reach out to another machine.
  */
 export function embeddedHostImageType(
   path: string,
@@ -75,15 +72,12 @@ export function embeddedHostImageType(
   if (!isAbsolutePath(path) || isNetworkPath(path)) return null;
   const mimeType = IMAGE_TYPE_BY_EXTENSION[path.split(".").at(-1)!.toLowerCase()];
   if (mimeType === undefined) return null;
-  // The guest page sends Windows drive paths with forward slashes, as the markdown renderer does.
-  const names = (hostPath: string) =>
-    hostPath === path ||
-    (isWindowsAbsolutePath(hostPath) && hostPath.replaceAll("\\", "/") === path);
-  const embedded = agentMessages.some((text) =>
-    extractMarkdownLinkHrefs(text).some((href) => {
-      const hostPath = markdownDestinationHostPath(normalizeMarkdownLinkDestination(href));
-      return hostPath !== null && names(hostPath);
-    }),
+  // Parsing is the slow part, so only messages that name the file are parsed.
+  const name = fileBasename(path);
+  const embedded = agentMessages.some(
+    (text) =>
+      (text.includes(name) || text.includes(encodeURI(name))) &&
+      chatMarkdownImageSources(text).some((source) => markdownDestinationHostPath(source) === path),
   );
   return embedded ? mimeType : null;
 }
