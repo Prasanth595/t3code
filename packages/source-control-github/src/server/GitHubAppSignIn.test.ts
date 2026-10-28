@@ -560,6 +560,26 @@ describe("GitHubAppAccess", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("pins the user's credential while the app's reach is unknown", () => {
+    const failing = (sent: Sent): Reply =>
+      sent.path.startsWith("/user/installations") ? { status: 502, body: {} } : { body: {} };
+    const withGh = harness({ signIns: { "github.com": session() }, handle: failing });
+    const appOnly = harness({
+      signIns: { "github.com": session() },
+      ghSignedIn: false,
+      handle: failing,
+    });
+    const tokenFor = Effect.flatMap(Effect.service(GitHubAppAccess.GitHubAppAccess), (access) =>
+      access
+        .credentialFor("github.com", "pingdotgg/t3code")
+        .pipe(Effect.map((held) => Redacted.value(held.token))),
+    );
+    return Effect.gen(function* () {
+      expect(yield* tokenFor.pipe(Effect.provide(withGh.layer))).toBe("gh-token");
+      expect(yield* tokenFor.pipe(Effect.provide(appOnly.layer))).toBe("ghu_current");
+    });
+  });
+
   it.effect("names the account the app sign-in acts as", () => {
     const { layer } = harness({
       signIns: { "github.com": session() },

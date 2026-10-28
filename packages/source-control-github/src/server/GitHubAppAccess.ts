@@ -55,7 +55,10 @@ export class GitHubAppAccess extends Context.Service<
     readonly reach: (host: string, repository: string) => Effect.Effect<GitHubAppReach>;
     /** The login the app sign-in acts as. */
     readonly viewer: (host: string) => Effect.Effect<string, GitHubRequestPolicy.GitHubApiError>;
-    /** The credential for work on one repository: the app's only where it is installed. */
+    /**
+     * The credential for work pinned to one repository: the app's only where an installation is
+     * confirmed to cover it, the user's own otherwise when there is one.
+     */
     readonly credentialFor: (
       host: string,
       repository: string,
@@ -155,20 +158,27 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit) => (Exit.isSuccess(exit) ? COVERAGE_TTL : COVERAGE_FAILURE_TTL),
   });
 
-  const reach: GitHubAppAccess["Service"]["reach"] = Effect.fn("GitHubAppAccess.reach")(
-    function* (rawHost, rawRepository) {
-      const host = rawHost.trim().toLowerCase();
-      if (!appSignIn.enabled) return "signed-out";
-      const known = yield* Cache.get(coverage, host).pipe(Effect.option);
-      if (Option.isNone(known)) return "covered";
-      if (known.value === null) return "signed-out";
-      const repository = ownerAndName(rawRepository);
-      const owner = repository.split("/")[0] ?? "";
-      return known.value.accounts.has(owner) || known.value.repositories.has(repository)
-        ? "covered"
-        : "not-covered";
-    },
-  );
+  /** `unknown` when GitHub could not list the installations just now. */
+  const coverageFor = Effect.fn("GitHubAppAccess.coverageFor")(function* (
+    rawHost: string,
+    rawRepository: string,
+  ) {
+    const host = rawHost.trim().toLowerCase();
+    if (!appSignIn.enabled) return "signed-out" as const;
+    const known = yield* Cache.get(coverage, host).pipe(Effect.option);
+    if (Option.isNone(known)) return "unknown" as const;
+    if (known.value === null) return "signed-out" as const;
+    const repository = ownerAndName(rawRepository);
+    const owner = repository.split("/")[0] ?? "";
+    return known.value.accounts.has(owner) || known.value.repositories.has(repository)
+      ? ("covered" as const)
+      : ("not-covered" as const);
+  });
+
+  const reach: GitHubAppAccess["Service"]["reach"] = (host, repository) =>
+    coverageFor(host, repository).pipe(
+      Effect.map((answer) => (answer === "unknown" ? "covered" : answer)),
+    );
 
   const viewer: GitHubAppAccess["Service"]["viewer"] = Effect.fn("GitHubAppAccess.viewer")(
     function* (rawHost) {
@@ -193,8 +203,11 @@ export const make = Effect.gen(function* () {
   const credentialFor: GitHubAppAccess["Service"]["credentialFor"] = Effect.fn(
     "GitHubAppAccess.credentialFor",
   )(function* (host, repository) {
-    const personal = (yield* reach(host, repository)) === "not-covered";
-    return yield* api.credential(host, { personal });
+    // Pinned work cannot be handed on, so only confirmed app access keeps the app credential.
+    if ((yield* coverageFor(host, repository)) === "covered") return yield* api.credential(host);
+    return yield* api
+      .credential(host, { personal: true })
+      .pipe(Effect.catch(() => api.credential(host)));
   });
 
   return GitHubAppAccess.of({ reach, viewer, credentialFor });
