@@ -170,6 +170,11 @@ import {
 } from "./guestShare.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
+  PromptSuggestionError,
+  PromptSuggestionInput,
+  PromptSuggestionResult,
+} from "./promptSuggestion.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestChangeBreakdown,
@@ -515,6 +520,7 @@ export const WS_METHODS = {
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
+  promptSuggestionsGenerate: "promptSuggestions.generate",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -923,6 +929,12 @@ const WsServerCheckOtlpEndpointRpc = Rpc.make(WS_METHODS.serverCheckOtlpEndpoint
   payload: OtlpEndpointCheckInput,
   success: OtlpEndpointCheckResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsPromptSuggestionsGenerateRpc = Rpc.make(WS_METHODS.promptSuggestionsGenerate, {
+  payload: PromptSuggestionInput,
+  success: PromptSuggestionResult,
+  error: Schema.Union([PromptSuggestionError, EnvironmentAuthorizationError]),
 });
 
 const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
@@ -1965,6 +1977,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
+  WsPromptSuggestionsGenerateRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

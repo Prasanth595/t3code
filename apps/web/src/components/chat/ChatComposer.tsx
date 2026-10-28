@@ -182,7 +182,9 @@ import { useThreadContextDrop, threadContextDropTargetProps } from "./threadCont
 import { readThreadShell } from "~/state/entities";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
+import type { ComposerContextRecord, RunId, ThreadPullRequestLink } from "@t3tools/contracts";
+import { Kbd } from "../ui/kbd";
+import { isPromptSuggestionAcceptKey, usePromptSuggestion } from "./usePromptSuggestion";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import {
   type ComposerCommandItem,
@@ -370,6 +372,8 @@ export interface ChatComposerProps {
   projectSelectionRequired: boolean;
 
   phase: SessionPhase;
+  /** The settled run to suggest a follow-up prompt for, when suggestions apply to this thread. */
+  promptSuggestionRunId: RunId | null;
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
@@ -520,6 +524,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
+    promptSuggestionRunId,
     canInterrupt,
     isSendBusy,
     canResume,
@@ -1171,6 +1176,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  // Ask only while the composer is empty and idle, so a draft in progress costs no generation.
+  const promptSuggestionApplies =
+    settings.promptSuggestionsEnabled &&
+    prompt.length === 0 &&
+    composerImages.length === 0 &&
+    composerFiles.length === 0 &&
+    composerTerminalContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    composerContextRecords.size === 0 &&
+    pendingUserInputs.length === 0 &&
+    !isComposerApprovalState &&
+    !showPlanFollowUpPrompt &&
+    !projectSelectionRequired;
+  const promptSuggestion = usePromptSuggestion({
+    environmentId,
+    threadId: promptSuggestionApplies ? activeThreadId : null,
+    runId: promptSuggestionApplies ? promptSuggestionRunId : null,
+  });
 
   const editPromptFromTraits = (edit: (prompt: string) => string) => {
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -2175,7 +2199,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
+  const acceptPromptSuggestion = (suggestion: string) =>
+    applyPromptReplacement(0, promptRef.current.length, suggestion);
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
+    (promptSuggestion !== null &&
+      promptRef.current.length === 0 &&
+      !composerMenuOpenRef.current &&
+      isPromptSuggestionAcceptKey(key, event) &&
+      acceptPromptSuggestion(promptSuggestion)) ||
     composerCommandKeyHandler({
       keybindings,
       sendShortcut: settings.sendShortcut,
@@ -3360,22 +3391,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onCitationSubmitAndSend={submitCitationAndSendStable}
                     onCitationDraftSave={saveCitationDraftToPromptStable}
                     onPaste={onComposerPasteStable}
+                    placeholderHint={
+                      promptSuggestion !== null ? <Kbd aria-hidden="true">Tab</Kbd> : null
+                    }
                     placeholder={
-                      isComposerApprovalState
-                        ? activePendingApproval?.supportsFeedback
-                          ? "Send feedback to decline this request"
-                          : "Send a message to decline and redirect the agent"
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : DEFAULT_COMPOSER_PLACEHOLDER
+                      promptSuggestion !== null
+                        ? promptSuggestion
+                        : isComposerApprovalState
+                          ? activePendingApproval?.supportsFeedback
+                            ? "Send feedback to decline this request"
+                            : "Send a message to decline and redirect the agent"
+                          : activePendingProgress
+                            ? isChoiceOnlyPendingQuestion
+                              ? "Choose an option above"
+                              : "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : projectSelectionRequired
+                                ? "Choose a project above to start a thread"
+                                : showProviderUnavailable
+                                  ? "Enable a provider in Settings to send a message"
+                                  : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={
                       projectSelectionRequired ||

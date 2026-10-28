@@ -163,6 +163,8 @@ export interface ComposerPromptEditorProps {
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
+  /** Trails the placeholder, e.g. the key that accepts a suggested prompt. */
+  placeholderHint?: React.ReactNode;
   onChange: (
     nextValue: string,
     nextCursor: number,
@@ -941,6 +943,7 @@ function ComposerPromptEditorTiptapInner(
     containerClassName,
     className,
     placeholderClassName,
+    placeholderHint,
     onChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
@@ -1821,6 +1824,9 @@ function ComposerPromptEditorTiptapInner(
                 )}
               >
                 {placeholder}
+                {placeholderHint ? (
+                  <span className="ml-1.5 align-middle">{placeholderHint}</span>
+                ) : null}
               </div>
             ) : null}
           </div>

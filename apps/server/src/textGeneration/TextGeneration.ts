@@ -17,6 +17,8 @@ export type {
   CommitMessageGenerationResult,
   PrContentGenerationInput,
   PrContentGenerationResult,
+  PromptSuggestionGenerationInput,
+  PromptSuggestionGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
   ThreadTitleGenerationInput,
@@ -32,7 +34,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "generatePromptSuggestion";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -79,6 +82,15 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((textGeneration) => textGeneration.generateReviewGuide(input)),
       );
     }),
+    generatePromptSuggestion: Effect.fn("TextGeneration.generatePromptSuggestion")(
+      function (input) {
+        return resolveInstance(
+          registry,
+          "generatePromptSuggestion",
+          input.modelSelection.instanceId,
+        ).pipe(Effect.flatMap((textGeneration) => textGeneration.generatePromptSuggestion(input)));
+      },
+    ),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
       return resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) =>

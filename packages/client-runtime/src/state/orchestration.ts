@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
   type ThreadId,
   type OrchestrationGetTurnDiffResult,
 } from "@t3tools/contracts";
@@ -106,6 +107,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    }),
+    // Keyed by run, so a settled answer never goes stale; the server shares it across clients.
+    promptSuggestion: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:prompt-suggestion",
+      tag: WS_METHODS.promptSuggestionsGenerate,
+      staleTimeMs: 30 * 60_000,
+      idleTtlMs: 30 * 60_000,
     }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",

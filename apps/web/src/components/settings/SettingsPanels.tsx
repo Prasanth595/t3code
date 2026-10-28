@@ -93,6 +93,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { PromptSuggestionSettingsSection } from "./PromptSuggestionSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 
@@ -1838,6 +1839,7 @@ export function ThreadsSettingsPanel() {
           />
         </AdvancedSettings>
       </SettingsSection>
+      <PromptSuggestionSettingsSection />
     </SettingsPageContainer>
   );
 }

@@ -59,6 +59,7 @@ import {
 import { mapSettingsSecrets, SECRET_REDACTED, type SettingsSecret } from "./settingsSecrets.ts";
 
 export {
+  resolvePromptSuggestionModelSelection,
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
 } from "@t3tools/shared/serverSettings";
@@ -434,6 +435,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
+  "promptSuggestionModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
 ]);

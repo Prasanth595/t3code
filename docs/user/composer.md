@@ -146,6 +146,16 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Prompt suggestions
+
+On web and desktop, T3 Code can suggest your next message when a turn completes. The suggestion
+appears as faded text in the empty composer. Press `Tab` or `ArrowRight` to insert it, then edit or
+send it. Typing anything else ignores it. Interrupted and failed turns get no suggestion.
+
+Turn this on in **Settings → Threads → Prompt suggestions**, and choose the model that writes them.
+Without a choice, the text generation model writes them. Each suggestion is one short request to that
+model, made while the thread is open and the composer is empty.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind

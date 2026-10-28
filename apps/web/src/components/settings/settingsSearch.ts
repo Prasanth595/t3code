@@ -658,6 +658,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "prompt-suggestions",
+    title: "Prompt suggestions",
+    to: "/settings/threads",
+    searchTerms: ["autosuggest autocomplete next prompt message ghost text composer tab predict"],
+    environmentOnly: true,
+  },
+  {
+    id: "prompt-suggestion-model",
+    title: "Prompt suggestion model",
+    to: "/settings/threads",
+    // Hidden until suggestions are on, so a search lands on the switch that shows it.
+    targetId: "prompt-suggestions",
+    searchTerms: ["autosuggest autocomplete next prompt message provider"],
+    environmentOnly: true,
+  },
+  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",

@@ -77,6 +77,20 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, MAX_THREAD_TITLE_CHARS - 3).trimEnd()}...`;
 }
 
+const MAX_PROMPT_SUGGESTION_CHARS = 280;
+
+/** Null when the model declined; suggestions render inline, so they collapse to one line. */
+export function sanitizePromptSuggestion(raw: string): string | null {
+  const normalized = raw
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length === 0) return null;
+  if (normalized.length <= MAX_PROMPT_SUGGESTION_CHARS) return normalized;
+  return normalized.slice(0, MAX_PROMPT_SUGGESTION_CHARS).trimEnd();
+}
+
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
   return `${capitalized} CLI (\`${cliName}\`)`;

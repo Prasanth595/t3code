@@ -1037,6 +1037,14 @@ export default function ChatView(props: ChatViewProps) {
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
+  // Only a completed reply has a next step to suggest; generating one needs operate access.
+  const promptSuggestionRunId =
+    isServerThread &&
+    canOperateThread &&
+    latestRunSettled &&
+    activeLatestRun?.status === "completed"
+      ? activeLatestRun.runId
+      : null;
   const activeThreadEnvironmentId = activeThread?.environmentId;
   const activeThreadProjectId = activeThread?.projectId;
   const activeProjectRef =
@@ -3405,6 +3413,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
+                              promptSuggestionRunId={promptSuggestionRunId}
                               isCompacting={isCompacting}
                               canInterrupt={canInterruptRunningThread}
                               isSendBusy={

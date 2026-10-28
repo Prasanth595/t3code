@@ -80,6 +80,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetResourceTelemetryHistory]: "server",
   [WS_METHODS.serverRetryResourceTelemetry]: "server",
   [WS_METHODS.serverCheckOtlpEndpoint]: "server",
+  [WS_METHODS.promptSuggestionsGenerate]: "prompt-suggestions",
   [WS_METHODS.serverPrepareTriage]: "server",
   [WS_METHODS.serverGetUsageSummary]: "server",
   [WS_METHODS.serverRefreshUsageRates]: "server",
