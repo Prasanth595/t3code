@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 import { PGlite } from "@electric-sql/pglite";
@@ -9,6 +11,8 @@ import { drizzle } from "drizzle-orm/pglite";
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
+
+const BACKFILL_MIGRATION = "20261028062605_backfill_withdrawn_tunnel_allocations";
 
 class FakeTransaction extends Context.Service<FakeTransaction, { holdsLock: boolean }>()(
   "t3code-relay/environments/ManagedTunnelLimits.test/FakeTransaction",
@@ -89,22 +93,23 @@ describe("ManagedTunnelLimits", () => {
 
   it.effect("counts each allocation by its tunnel and link state", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const pg = yield* Effect.acquireRelease(
         Effect.promise(() => PGlite.create()),
         (client) => Effect.promise(() => client.close()),
       );
-      yield* Effect.promise(() =>
-        pg.exec(`
-          create table relay_managed_endpoint_allocations (
-            user_id text not null, environment_id text not null, tunnel_id text,
-            tunnel_released_at text, updated_at text not null
-          );
-          create table relay_environment_links (
-            user_id text not null, environment_id text not null, revoked_at text,
-            managed_tunnels_enabled boolean not null, updated_at text not null
-          );
-        `),
-      );
+      const migrationsDir = new URL("../../migrations/postgres/", import.meta.url).pathname;
+      const migrations = (yield* fs.readDirectory(migrationsDir)).toSorted();
+      const applyMigrations = (names: ReadonlyArray<string>) =>
+        Effect.forEach(names, (name) =>
+          fs
+            .readFileString(`${migrationsDir}${name}/migration.sql`)
+            .pipe(Effect.flatMap((migration) => Effect.promise(() => pg.exec(migration)))),
+        );
+      const backfill = migrations.indexOf(BACKFILL_MIGRATION);
+      expect(backfill).toBe(migrations.length - 1);
+      yield* applyMigrations(migrations.slice(0, backfill));
+
       const at = (minutes: number) => `2026-10-27T12:${String(minutes).padStart(2, "0")}:00.000Z`;
       const cases: ReadonlyArray<{
         readonly environmentId: string;
@@ -169,35 +174,75 @@ describe("ManagedTunnelLimits", () => {
           allocation: { updatedAt: 50 },
           link: { revoked: true, updatedAt: 48 },
         },
+        {
+          environmentId: "withdrawn-at-provisioning-write",
+          counted: false,
+          allocation: { tunnelId: "t", updatedAt: 20 },
+          link: { revoked: true, updatedAt: 20 },
+        },
         { environmentId: "self", counted: false, allocation: { tunnelId: "t", updatedAt: 10 } },
       ];
-      for (const entry of cases) {
-        yield* Effect.promise(() =>
-          pg.query(
-            "insert into relay_managed_endpoint_allocations values ('user-1', $1, $2, $3, $4)",
-            [
-              entry.environmentId,
-              entry.allocation.tunnelId ?? null,
-              entry.allocation.releasedAt === undefined ? null : at(entry.allocation.releasedAt),
-              at(entry.allocation.updatedAt),
-            ],
-          ),
+      // Written before the deploy: claimDeprovision bumped updatedAt past the revoke, then cleanup failed.
+      const legacyCases: typeof cases = [
+        {
+          environmentId: "legacy-failed-deprovision",
+          counted: false,
+          allocation: { tunnelId: "t", updatedAt: 30 },
+          link: { revoked: true, updatedAt: 20 },
+        },
+        {
+          environmentId: "legacy-failed-publish-only-deprovision",
+          counted: false,
+          allocation: { tunnelId: "t", updatedAt: 30 },
+          link: { publishOnly: true, updatedAt: 20 },
+        },
+        {
+          environmentId: "legacy-live",
+          counted: true,
+          allocation: { tunnelId: "t", updatedAt: 30 },
+          link: { updatedAt: 20 },
+        },
+      ];
+      const insert = (entries: typeof cases) =>
+        Effect.forEach(entries, (entry) =>
+          Effect.promise(async () => {
+            await pg.query(
+              `insert into relay_managed_endpoint_allocations
+                (user_id, environment_id, hostname, tunnel_id, tunnel_name, tunnel_released_at, created_at, updated_at)
+                values ('user-1', $1::text, $1::text, $2, $1::text, $3, $4, $4)`,
+              [
+                entry.environmentId,
+                entry.allocation.tunnelId ?? null,
+                entry.allocation.releasedAt === undefined ? null : at(entry.allocation.releasedAt),
+                at(entry.allocation.updatedAt),
+              ],
+            );
+            const link = entry.link;
+            if (link !== undefined) {
+              await pg.query(
+                `insert into relay_environment_links
+                  (user_id, environment_id, environment_public_key, endpoint_http_base_url,
+                   endpoint_ws_base_url, endpoint_provider_kind, revoked_at, managed_tunnels_enabled,
+                   created_at, updated_at)
+                  values ('user-1', $1, 'key', 'https://e', 'wss://e', 'cloudflare_tunnel', $2, $3, $4, $4)`,
+                [
+                  entry.environmentId,
+                  link.revoked === true ? at(link.updatedAt) : null,
+                  link.publishOnly !== true,
+                  at(link.updatedAt),
+                ],
+              );
+            }
+          }),
         );
-        if (entry.link !== undefined) {
-          const link = entry.link;
-          yield* Effect.promise(() =>
-            pg.query("insert into relay_environment_links values ('user-1', $1, $2, $3, $4)", [
-              entry.environmentId,
-              link.revoked === true ? at(link.updatedAt) : null,
-              link.publishOnly !== true,
-              at(link.updatedAt),
-            ]),
-          );
-        }
-      }
+      yield* insert(legacyCases);
+      yield* applyMigrations(migrations.slice(backfill));
+      yield* insert(cases);
       yield* Effect.promise(() =>
         pg.query(
-          "insert into relay_managed_endpoint_allocations values ('user-2', 'other-user', 't', null, $1)",
+          `insert into relay_managed_endpoint_allocations
+            (user_id, environment_id, hostname, tunnel_id, tunnel_name, created_at, updated_at)
+            values ('user-2', 'other-user', 'other-user', 't', 'other-user', $1, $1)`,
           [at(10)],
         ),
       );
@@ -216,11 +261,11 @@ describe("ManagedTunnelLimits", () => {
       );
 
       expect(counted.map((row) => row.environmentId).toSorted()).toEqual(
-        cases
+        [...legacyCases, ...cases]
           .filter((entry) => entry.counted)
           .map((entry) => entry.environmentId)
           .toSorted(),
       );
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
