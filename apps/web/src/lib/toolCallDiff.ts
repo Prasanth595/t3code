@@ -1,14 +1,41 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { getRenderablePatch, resolveFileDiffPath } from "./diffRendering";
 
 type FileChange = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
 function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes">) {
   let patch = item.diffStr;
-  if (!patch || patch.startsWith("diff --git ") || patch.startsWith("--- ")) return patch;
+  if (!patch) return patch;
   const change = item.changes?.[0];
+  const rawFileOperation = change?.operation === "add" || change?.operation === "delete";
+  if (patch.startsWith("diff --git ") || patch.startsWith("--- ")) {
+    if (!rawFileOperation) return patch;
+    const parsed = getRenderablePatch(patch, "tool-call-format");
+    if (
+      parsed?.kind === "files" &&
+      parsed.files.every((file) => {
+        const path = resolveFileDiffPath(file).replaceAll("\\", "/");
+        return (
+          file.hunks.length > 0 &&
+          item.changes?.some((recorded) => {
+            const recordedPath = recorded.path.replaceAll("\\", "/");
+            return (
+              (recorded.operation === "add"
+                ? file.deletionLines.length === 0
+                : recorded.operation === "delete"
+                  ? file.additionLines.length === 0
+                  : true) &&
+              (recordedPath === path || recordedPath.endsWith(`/${path}`))
+            );
+          })
+        );
+      })
+    )
+      return patch;
+  }
   // Codex can record added/deleted file contents or bare hunks instead of a complete patch.
-  if (!patch.trimStart().startsWith("@@ ")) {
-    if (change?.operation !== "add" && change?.operation !== "delete") return patch;
+  if (rawFileOperation || !patch.trimStart().startsWith("@@ ")) {
+    if (!rawFileOperation) return patch;
     const lines = patch.split("\n");
     const hasFinalNewline = patch.endsWith("\n");
     if (hasFinalNewline) lines.pop();
