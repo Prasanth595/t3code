@@ -26,7 +26,7 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
-import { toolCallPatch } from "../lib/toolCallDiff";
+import { toolCallDiff } from "../lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
@@ -371,14 +371,16 @@ export default function DiffPanel({
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
+  const toolCallPreview =
+    toolCallSelection && toolCallItem?.type === "file_change" ? toolCallDiff(toolCallItem) : null;
   const selectedPatch = toolCallSelection
-    ? toolCallItem?.type === "file_change"
-      ? toolCallPatch(toolCallItem)
-      : undefined
+    ? toolCallPreview?.patch
     : selectedTurn
       ? activeCheckpointDiff.data?.diff
       : gitDiff;
-  const isSelectedPatchTruncated = isGitSelection && selectedGitSource?.truncated === true;
+  const isSelectedPatchTruncated =
+    toolCallPreview?.truncated === true ||
+    (isGitSelection && selectedGitSource?.truncated === true);
   const selectedPatchQuery = toolCallSelection
     ? toolCallDetail
     : selectedTurn
@@ -404,6 +406,14 @@ export default function DiffPanel({
       ...(toolCallSelection ? { ignoreWhitespace: diffIgnoreWhitespace } : {}),
     },
   );
+  const recordedToolCallFileCount =
+    toolCallSelection && toolCallItem?.type === "file_change"
+      ? (toolCallItem.changes?.length ?? 0)
+      : 0;
+  const omittedToolCallFiles =
+    renderablePatch?.kind === "files"
+      ? Math.max(0, recordedToolCallFileCount - renderablePatch.files.length)
+      : 0;
   const fileStats = new Map(lazySource?.files?.map((file) => [file.path, file]));
   const sourceLineStat =
     isGitSelection && selectedGitSource?.files
@@ -1023,7 +1033,13 @@ export default function DiffPanel({
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
-                {selectedGitSource?.files ? " Totals include all changes." : ""}
+                {isGitSelection && selectedGitSource?.files ? " Totals include all changes." : ""}
+              </p>
+            )}
+            {omittedToolCallFiles > 0 && (
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+                This tool call changed {recordedToolCallFileCount} files. The recorded patch omits{" "}
+                {omittedToolCallFiles} of them.
               </p>
             )}
             {selectedPatchError && !renderablePatch && (
@@ -1031,7 +1047,26 @@ export default function DiffPanel({
                 <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
               </div>
             )}
-            {!renderablePatch && !lazySource ? (
+            {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (
+              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-xs">
+                <p className="text-muted-foreground">
+                  The provider recorded file content without a diff.
+                </p>
+                {toolCallPreview.content.map(({ label, text }) => (
+                  <div key={label} className="space-y-1">
+                    <p className="text-muted-foreground">{label}</p>
+                    <pre
+                      className={cn(
+                        "overflow-auto font-mono text-2xs",
+                        wordWrap && "whitespace-pre-wrap wrap-break-word",
+                      )}
+                    >
+                      {text === "" ? "Empty content." : text}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            ) : !renderablePatch && !lazySource ? (
               isLoadingSelectedPatch ? (
                 <DiffPanelLoadingState
                   label={

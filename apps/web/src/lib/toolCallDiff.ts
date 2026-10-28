@@ -2,7 +2,7 @@ import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 
 type FileChange = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
-export function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes">) {
+function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes">) {
   let patch = item.diffStr;
   if (!patch || patch.startsWith("diff --git ") || patch.startsWith("--- ")) return patch;
   const change = item.changes?.[0];
@@ -21,4 +21,28 @@ export function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "c
   const before = change?.operation === "add" ? "/dev/null" : JSON.stringify(`a/${oldPath}`);
   const after = change?.operation === "delete" ? "/dev/null" : JSON.stringify(`b/${newPath}`);
   return `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${newPath}`)}\n--- ${before}\n+++ ${after}\n${patch.trimStart()}`;
+}
+
+function recordedText(value: string | undefined) {
+  const suffix = "\n… output truncated for transport";
+  const truncated = value !== undefined && value.endsWith(suffix);
+  return { text: truncated ? value.slice(0, -suffix.length) : value, truncated };
+}
+
+export function toolCallDiff(
+  item: Pick<FileChange, "diffStr" | "fileName" | "changes" | "oldStr" | "newStr">,
+) {
+  const diff = recordedText(item.diffStr);
+  const before = recordedText(item.oldStr);
+  const after = recordedText(item.newStr);
+  return {
+    patch: toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
+    content: diff.text?.trim()
+      ? []
+      : [
+          { label: "Recorded content before", text: before.text },
+          { label: "Recorded content after", text: after.text },
+        ].filter((entry): entry is { label: string; text: string } => entry.text !== undefined),
+    truncated: diff.truncated || before.truncated || after.truncated,
+  };
 }

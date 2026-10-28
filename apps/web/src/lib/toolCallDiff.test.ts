@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import { getRenderablePatch, resolveFileDiffPath } from "./diffRendering";
-import { toolCallPatch } from "./toolCallDiff";
+import { toolCallDiff } from "./toolCallDiff";
 
-describe("toolCallPatch", () => {
+describe("toolCallDiff", () => {
   it("renders recorded hunks without reading a repository, including renamed paths", () => {
     for (const changes of [
       undefined,
       [{ operation: "update", oldPath: "old.ts", path: "new.ts" }],
     ]) {
-      const patch = toolCallPatch({
+      const { patch } = toolCallDiff({
         fileName: "old.ts",
         diffStr: "@@ -1 +1 @@\n-before\n+after\n",
         ...(changes ? { changes } : {}),
@@ -27,11 +27,11 @@ describe("toolCallPatch", () => {
     for (const operation of ["add", "delete"]) {
       for (const ending of ["", "\n"]) {
         const rendered = getRenderablePatch(
-          toolCallPatch({
+          toolCallDiff({
             fileName: "file with spaces.ts",
             diffStr: `first\nsecond${ending}`,
             changes: [{ operation, path: "file with spaces.ts" }],
-          }),
+          }).patch,
         );
         expect(rendered?.kind).toBe("files");
         if (rendered?.kind !== "files") throw new Error("Expected a file diff");
@@ -42,6 +42,36 @@ describe("toolCallPatch", () => {
     }
   });
 
+  it("keeps content-only writes out of the patch and preserves empty recorded content", () => {
+    expect(toolCallDiff({ fileName: "a.ts", oldStr: "before", newStr: "" })).toEqual({
+      patch: undefined,
+      content: [
+        { label: "Recorded content before", text: "before" },
+        { label: "Recorded content after", text: "" },
+      ],
+      truncated: false,
+    });
+    expect(toolCallDiff({ fileName: "a.ts", newStr: "after" }).content).toEqual([
+      { label: "Recorded content after", text: "after" },
+    ]);
+  });
+
+  it("removes transport truncation markers before converting file contents", () => {
+    const suffix = "\n… output truncated for transport";
+    const diff = toolCallDiff({
+      fileName: "a.ts",
+      diffStr: `first\nsecond${suffix}`,
+      changes: [{ operation: "add", path: "a.ts" }],
+    });
+    expect(diff.truncated).toBe(true);
+    expect(diff.patch).not.toContain("output truncated");
+    expect(getRenderablePatch(diff.patch)?.kind).toBe("files");
+    expect(toolCallDiff({ fileName: "a.ts", newStr: `content${suffix}` })).toMatchObject({
+      content: [{ label: "Recorded content after", text: "content" }],
+      truncated: true,
+    });
+  });
+
   it("preserves complete patches and unsupported provider output", () => {
     for (const diffStr of [
       undefined,
@@ -50,7 +80,7 @@ describe("toolCallPatch", () => {
       "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n",
     ]) {
       expect(
-        toolCallPatch({ fileName: "a.ts", ...(diffStr === undefined ? {} : { diffStr }) }),
+        toolCallDiff({ fileName: "a.ts", ...(diffStr === undefined ? {} : { diffStr }) }).patch,
       ).toBe(diffStr);
     }
   });
