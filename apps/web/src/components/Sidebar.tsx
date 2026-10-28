@@ -507,7 +507,9 @@ function useSidebarThreads(input: {
             threads: collapsed
               ? routeThreadOnly(folder.threads, routeRowThreadKey)
               : folder.threads,
-            hiddenThreads: collapsed ? folder.threads : EMPTY_THREADS,
+            hiddenThreads: collapsed
+              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+              : EMPTY_THREADS,
           };
         });
   const orderedThreads = [
@@ -1194,19 +1196,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const api = readLocalApi();
       if (!api) return;
       void (async () => {
-        const clicked = await api.contextMenu.show(
-          [
-            { id: "new-thread", label: "New thread" },
-            { id: "copy-path", label: "Copy path" },
-            { id: "project-settings", label: "Project settings", icon: "settings" },
-          ],
-          position,
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            [
+              { id: "new-thread", label: "New thread" },
+              { id: "copy-path", label: "Copy path" },
+              { id: "project-settings", label: "Project settings", icon: "settings" },
+            ],
+            position,
+          ),
         );
-        if (clicked === "new-thread") startThreadInProjectFolder(group);
-        if (clicked === "copy-path") {
-          copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
+        if (clicked._tag === "Failure") return;
+        switch (clicked.value) {
+          case "new-thread":
+            startThreadInProjectFolder(group);
+            return;
+          case "copy-path":
+            copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
+            return;
+          case "project-settings":
+            openProjectSettings(group);
+            return;
         }
-        if (clicked === "project-settings") openProjectSettings(group);
       })();
     },
   );

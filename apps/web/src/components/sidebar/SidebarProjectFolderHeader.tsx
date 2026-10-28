@@ -17,6 +17,13 @@ const FOLDER_DOT_CLASS_NAME = {
   working: "bg-info",
 } as const;
 
+const FOLDER_DOT_LABEL = {
+  attention: ", needs you",
+  failed: ", failed",
+  unread: ", done",
+  working: ", working",
+} as const;
+
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
 export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
@@ -74,10 +81,9 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           {group.displayName}
         </span>
         {dot ? (
-          <span
-            aria-hidden
-            className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}
-          />
+          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
+            <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+          </span>
         ) : null}
         {collapsed && hiddenThreads.length > 0 ? (
           <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible pointer-coarse:invisible">
