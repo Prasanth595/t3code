@@ -9,6 +9,7 @@ describe("classifyChangedFile", () => {
     ["pnpm-lock.yaml", "generated"],
     ["convex/_generated/api.d.ts", "generated"],
     ["src/agent.eval.ts", "tests"],
+    ["src/agent.eval.js", "tests"],
     ["evals/title-generation.ts", "tests"],
     ["src/evals/agent.ts", "tests"],
     ["README.md", "docs"],
