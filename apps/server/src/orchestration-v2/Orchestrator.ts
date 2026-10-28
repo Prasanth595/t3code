@@ -2966,13 +2966,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const records = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "runtimeRequests"])
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "runtimeRequests", "subagents", "providerThreads", "turnItems"],
+          {
+            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
+        )
         .pipe(mapDispatchError(command));
+      // Children inherit the parent's project and workspace; moving only the parent would strand them.
+      if (records.subagents.some((task) => task.childThreadId !== null)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has child threads and cannot move to another project.`,
+        });
+      }
       if (
         records.runs.some((run) =>
           ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
         ) ||
-        records.runtimeRequests.some((request) => request.status === "pending")
+        records.runtimeRequests.some((request) => request.status === "pending") ||
+        derivePendingBackgroundWork({
+          latestRun: records.runs.findLast((run) => run.status !== "queued"),
+          providerThreads: records.providerThreads,
+          turnItems: records.turnItems,
+          activeProviderThreadId: thread.activeProviderThreadId,
+          runs: records.runs,
+        }).length > 0
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -3409,7 +3431,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
-          return {
+          const updated: OrchestrationV2AppThread = {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
@@ -3471,6 +3493,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
+          // Watches read through the project's checkout, which no longer holds these links.
+          return movesProject
+            ? {
+                ...updated,
+                pullRequests: updated.pullRequests?.map((link) =>
+                  withPullRequestWatch(link, undefined),
+                ),
+              }
+            : updated;
         }
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":

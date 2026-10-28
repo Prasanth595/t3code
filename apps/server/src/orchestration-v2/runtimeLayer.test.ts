@@ -1905,6 +1905,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         worktreePath: "/workspace/move-from-worktree",
       });
 
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("runtime-layer-move-watch"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 1,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/1", source: "manual" },
+      });
+      assert.isDefined(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.pullRequests?.[0]?.watch,
+      );
+
       const missingProject = yield* orchestrator
         .dispatch({
           type: "thread.metadata.update",
@@ -1925,6 +1939,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(moved.projectId, toProjectId);
       assert.isNull(moved.branch);
       assert.isNull(moved.worktreePath);
+      assert.lengthOf(moved.pullRequests ?? [], 1);
+      assert.isUndefined(moved.pullRequests?.[0]?.watch);
       const shell = yield* orchestrator.getShellSnapshot();
       assert.equal(
         shell.threads.find((candidate) => candidate.id === threadId)?.projectId,
