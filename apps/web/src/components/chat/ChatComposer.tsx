@@ -2310,8 +2310,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
-  const hasBlockingComposerTopDrawer =
-    activePendingApproval !== null || pendingUserInputs.length > 0;
+  const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const hasImageAttachmentAttention = standaloneComposerImages.some((image) => {
     const upload = uploadsByImageId[image.id];
     const failedInCurrentEnvironment =
@@ -2570,7 +2569,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       getModelDisabledReason={getModelDisabledReason}
     />
   );
-  // An open approval or question owns the space above the composer. Only a machine problem,
+  // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const shelfItems = hasBlockingComposerTopDrawer
     ? props.bannerItems.filter(
