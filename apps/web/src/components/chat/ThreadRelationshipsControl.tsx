@@ -735,7 +735,9 @@ export function ThreadRelationshipsPanel(props: {
                       }
                     >
                       {voiceChat
-                        ? "Live"
+                        ? voiceCall?.state.phase === "live"
+                          ? "Live"
+                          : "Connecting"
                         : calledVoice
                           ? "Ended"
                           : threadRelationshipStatusLabel(rowStatus)}

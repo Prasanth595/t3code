@@ -8249,14 +8249,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const existing = yield* projectionStore
         .getTurnItem({ threadId: command.threadId, itemId })
         .pipe(onError);
+      const thread = yield* projectionStore.getThread(command.threadId).pipe(onError);
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorProjectionError({
+          threadId: command.threadId,
+          cause: "The chat of this call was deleted.",
+        });
+      }
       const now = yield* DateTime.now;
       const startedAt = existing?.startedAt ?? now;
-      const ordinal =
-        existing?.ordinal ??
-        (yield* projectionStore.getThread(command.threadId).pipe(
-          onError,
-          Effect.flatMap((thread) => nextTurnItemOrdinal({ thread })),
-        ));
+      const ordinal = existing?.ordinal ?? (yield* nextTurnItemOrdinal({ thread }));
       const emitEvent = emit(events, command);
       const provenance = {
         createdBy: command.role === "user" ? ("user" as const) : ("agent" as const),

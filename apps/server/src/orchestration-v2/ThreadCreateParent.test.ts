@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -154,5 +155,13 @@ it.effect("records spoken lines in a thread's timeline without starting a run", 
       ],
     );
     assert.deepStrictEqual(runs, []);
+
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("delete:voice-chat"),
+      threadId,
+    });
+    const late = yield* Effect.exit(record("assistant", "too late", false, 3));
+    assert.isTrue(Exit.isFailure(late));
   }).pipe(Effect.provide(layerTest)),
 );
