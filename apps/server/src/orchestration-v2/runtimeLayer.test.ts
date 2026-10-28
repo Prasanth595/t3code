@@ -1,3 +1,12 @@
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -7179,3 +7188,124 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+const browserCapabilityProjectId = ProjectId.make("project:browser-capability-production");
+const layerBrowserCapabilityProductionTest = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(
+    Layer.mock(CloudManagedEndpointRuntime)({ inspectConnector: Effect.succeed(null) }),
+  ),
+  Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+  Layer.provide(Layer.mock(TextGeneration.TextGeneration)({})),
+  Layer.provide(WorktreeSetupTracker.layer),
+  Layer.provide(GitVcsDriver.layer),
+  Layer.provide(VcsProcess.layer),
+  Layer.provide(
+    Layer.mock(WorkspacePaths.WorkspacePaths)({
+      normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+      peek: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      invalidate: () => Effect.void,
+    }),
+  ),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
+      Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(AnalyticsService.AnalyticsService)({}),
+    ),
+  ),
+  Layer.provide(
+    Layer.mock(ServerSecretStore.ServerSecretStore)({
+      directory: "unused-test-secret-store",
+      getOrCreateRandom: (_name, size) => Effect.succeed(new Uint8Array(size)),
+    }),
+  ),
+  Layer.provideMerge(McpSessionRegistryTestkit.layer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  Layer.provide(
+    ServerSettings.layerTest({
+      enableAgentBrowserAccess: false,
+      projectSettingsOverrides: {
+        [browserCapabilityProjectId]: { enableAgentBrowserAccess: true },
+      },
+    }),
+  ),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerPlatformTest),
+);
+
+it.layer(layerBrowserCapabilityProductionTest)("production browser capability", (it) => {
+  it.effect("grants preview for an enabled project when global access is disabled", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = ThreadId.make("thread:browser-capability-production");
+      yield* projects.create({
+        commandId: CommandId.make("project:browser-capability-create"),
+        projectId: browserCapabilityProjectId,
+        title: "Browser capability",
+        workspaceRoot: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("thread:browser-capability-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: browserCapabilityProjectId,
+        title: "Browser capability",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      let preview: boolean | undefined;
+      const issue = mcpRegistry.issue;
+      using _issue = vi.spyOn(mcpRegistry, "issue").mockImplementation((request) => {
+        preview = request.capabilities?.has("preview");
+        return issue(request);
+      });
+      using _open = vi
+        .spyOn(orchestrationAdapter, "openSession")
+        .mockImplementation(() => Effect.die("Stop before launching a real provider"));
+      yield* manager
+        .open({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session:browser-capability-production"),
+          modelSelection,
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          },
+        })
+        .pipe(Effect.exit);
+      assert.equal(_open.mock.calls.length, 1);
+      assert.equal(_issue.mock.calls.length, 1);
+      assert.isTrue(preview);
+    }),
+  );
+});
