@@ -1,4 +1,7 @@
-import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import type {
+  RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
+} from "@t3tools/contracts/relay";
 import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -8,6 +11,7 @@ import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
 export function androidActivityData(
   aggregate: RelayAgentActivityAggregateState | null,
   nowMs = Date.parse(aggregate?.updatedAt ?? ""),
+  lifecycleStates?: ReadonlyArray<RelayAgentActivityState>,
 ) {
   const rows = [...(aggregate?.activities ?? [])].sort(
     (a, b) =>
@@ -44,15 +48,22 @@ export function androidActivityData(
     : failed
       ? "Agent work failed"
       : "All caught up";
+  const pendingResult = lifecycleStates?.some(
+    (state) =>
+      state.retained === true &&
+      state.unread !== false &&
+      (state.phase === "completed" || state.phase === "failed"),
+  );
   const expiresAt =
-    aggregate?.pendingCount === 0
+    aggregate?.pendingCount === 0 || pendingResult
       ? 0
       : Math.max(
           0,
-          ...rows.map((row) =>
+          ...(lifecycleStates ?? rows).map((row) =>
             row.phase === "completed" || row.phase === "failed"
-              ? (aggregate?.pendingCount === undefined ? Date.parse(row.updatedAt) : nowMs) +
-                TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
+              ? "retained" in row && row.retained === true
+                ? 0
+                : Date.parse(row.updatedAt) + TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
               : agentActivityExpiresAt(row),
           ),
         );

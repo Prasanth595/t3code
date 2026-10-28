@@ -268,6 +268,57 @@ describe("Android delivery routing", () => {
     },
   );
 
+  it.effect("retains an unread result without an automatic Android expiry", () => {
+    const h = harness();
+    h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.data).toMatchObject({ active: "true", activity_expires_at: "0" });
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("uses running threads outside the five display rows to set Android expiry", () => {
+    const h = harness();
+    h.current.otherStates = Array.from({ length: 5 }, (_, i) => ({
+      ...state,
+      threadId: ThreadId.make(`failure-${i}`),
+      threadTitle: `Old failure ${i}`,
+      phase: "failed" as const,
+      unread: false,
+      retained: true,
+    }));
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      expect(h.sent[0]?.data.activity_expires_at).toBe(String(2 * 60 * 60_000));
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("alerts a new result outside the five visible rows and keeps replays silent", () => {
+    const h = harness();
+    h.current.otherStates = Array.from({ length: 5 }, (_, i) => ({
+      ...state,
+      threadId: ThreadId.make(`failure-${i}`),
+      threadTitle: `Old failure ${i}`,
+      phase: "failed" as const,
+      unread: true,
+      retained: true,
+    }));
+    h.current.target.last_aggregate_json = encodeJson(
+      aggregateFor([state, ...h.current.otherStates]),
+    );
+    h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.data.alert_title).toBe(state.threadTitle);
+      expect(h.sent[0]?.data.activity_line_4).not.toContain(state.threadTitle);
+      yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it("expires an Android card immediately after its last result is read", () => {
     const read = { ...state, phase: "completed" as const, unread: false, retained: true };
     expect(androidActivityData(aggregateFor([read]), 60_000)).toMatchObject({

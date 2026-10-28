@@ -264,17 +264,29 @@ const make = Effect.gen(function* () {
               allowedEnvironments.add(environmentId);
             }
           }
-          alert = androidAlertForAggregate({
-            previousAggregate,
-            nextAggregate: {
-              ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
-              ),
-            },
-            preferences: preferences.value,
-            nowMs: now.epochMilliseconds,
-          });
+          const hiddenCurrentState =
+            state?.phase === job.state.phase &&
+            state.updatedAt === job.state.updatedAt &&
+            !aggregate.activities.some(
+              (row) => row.environmentId === state.environmentId && row.threadId === state.threadId,
+            ) &&
+            deliveryUser.notificationsEnabled &&
+            !isExpiredAgentActivityState(state, now.epochMilliseconds)
+              ? state
+              : null;
+          alert = hiddenCurrentState
+            ? androidAlertForState(hiddenCurrentState, preferences.value, now.epochMilliseconds)
+            : androidAlertForAggregate({
+                previousAggregate,
+                nextAggregate: {
+                  ...aggregate,
+                  activities: aggregate.activities.filter((row) =>
+                    allowedEnvironments.has(row.environmentId),
+                  ),
+                },
+                preferences: preferences.value,
+                nowMs: now.epochMilliseconds,
+              });
         } else if (
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
@@ -295,7 +307,11 @@ const make = Effect.gen(function* () {
         device_id: job.deviceId,
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
-        ...androidActivityData(displayedAggregate, now.epochMilliseconds),
+        ...androidActivityData(
+          displayedAggregate,
+          now.epochMilliseconds,
+          displayedAggregate ? states : [],
+        ),
         ...alert,
       };
       if (alert) {
