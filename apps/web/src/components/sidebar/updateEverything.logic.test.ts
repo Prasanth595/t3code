@@ -149,7 +149,10 @@ describe("describeUpdateEverything", () => {
     const id = EnvironmentId.make;
     const { rows } = describeUpdateEverything({
       localVersion: "1.1.0",
-      localMachine: { environmentId: id("local"), label: "Mainbook" },
+      localMachines: [
+        { environmentId: id("local"), label: "Mainbook" },
+        { environmentId: id("wsl"), label: "Mainbook WSL" },
+      ],
       servers: [
         {
           environmentId: id("npm"),
@@ -173,6 +176,7 @@ describe("describeUpdateEverything", () => {
       rows.map(({ label, app, skipped, providers }) => [label, app, skipped, providers]),
     ).toEqual([
       ["Mainbook", "this-app", null, ["Codex"]],
+      ["Mainbook WSL", "this-app", null, []],
       ["bb-1", "server", null, ["Codex", "Claude"]],
       ["alvin", null, "needs a manual update", ["Claude"]],
       ["TheoRoom", null, "not connected", []],

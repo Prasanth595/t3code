@@ -78,10 +78,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
 
-  const localMachine = machines.find((machine) => machine.hostedByThisApp) ?? null;
   const view = describeUpdateEverything({
     localVersion: localUpdateVersion,
-    localMachine,
+    localMachines: machines.filter((machine) => machine.hostedByThisApp),
     servers,
     skipped,
     providerMachines: providers.machines.map((machine) => ({

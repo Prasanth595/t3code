@@ -356,11 +356,11 @@ export function getUpdateEverythingToastView(
 
 export interface UpdateEverythingPlan {
   readonly localVersion: string | null;
-  /** The machine whose server this app hosts; this app's update restarts it. */
-  readonly localMachine: {
+  /** Machines whose servers this app hosts; this app's update restarts them. */
+  readonly localMachines: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
-  } | null;
+  }>;
   readonly servers: ReadonlyArray<
     Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
   >;
@@ -389,7 +389,7 @@ function joinList(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-/** One row per machine: this app's machine first, then servers, provider-only, and skipped. */
+/** One row per machine: this app's machines first, then servers, provider-only, and skipped. */
 export function describeUpdateEverything(plan: UpdateEverythingPlan): {
   readonly summary: string;
   readonly version: string | null;
@@ -424,9 +424,10 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     rows.set(environmentId, { ...row, ...change });
   };
   if (plan.localVersion) {
-    update(plan.localMachine?.environmentId ?? null, plan.localMachine?.label ?? "This app", {
-      app: "this-app",
-    });
+    if (plan.localMachines.length === 0) update(null, "This app", { app: "this-app" });
+    for (const machine of plan.localMachines) {
+      update(machine.environmentId, machine.label, { app: "this-app" });
+    }
   }
   for (const server of plan.servers) {
     update(server.environmentId, server.serverLabel, {
