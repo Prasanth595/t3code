@@ -196,6 +196,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Content>
           <span className="shrink-0 text-muted-foreground">{activeQuestion.header}</span>
+          {prompt.remoteEnvironmentLabel ? (
+            <>
+              <ComposerBanner.Separator />
+              <span className="shrink-0 text-muted-foreground">
+                Delegated task on {prompt.remoteEnvironmentLabel}
+              </span>
+            </>
+          ) : null}
           {isCollapsed ? (
             <>
               <ComposerBanner.Separator />
