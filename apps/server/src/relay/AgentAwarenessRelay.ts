@@ -370,6 +370,10 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
+  const publishedTerminalWork = new Map<
+    ThreadId,
+    { phase: RelayAgentActivityState["phase"]; completedAt: number }
+  >();
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
   const readSecretString = (name: string) =>
@@ -568,11 +572,16 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const completedAt = threadShell?.latestRunCompletedAt?.epochMilliseconds;
+    const previousTerminal = publishedTerminalWork.get(threadId);
     const replay =
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId) &&
-      Option.isSome(thread) &&
-      !terminalWorkSinceStart(thread.value, startedAt);
+      ((completedAt !== undefined &&
+        previousTerminal?.completedAt === completedAt &&
+        previousTerminal.phase === snapshot.state.phase) ||
+        (!publishedStateByThread.has(threadId) &&
+          Option.isSome(thread) &&
+          !terminalWorkSinceStart(thread.value, startedAt)));
     if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
@@ -671,6 +680,12 @@ export const make = Effect.gen(function* () {
       reason: snapshot.reason,
       replay,
     }).pipe(withRelayClientTracing);
+    if (
+      completedAt !== undefined &&
+      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed")
+    ) {
+      publishedTerminalWork.set(threadId, { phase: snapshot.state.phase, completedAt });
+    }
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
