@@ -32,8 +32,10 @@ import {
   isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
+  type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
+  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
@@ -61,7 +63,7 @@ import {
   useThreadProjection,
   useThreadRelationshipShells,
 } from "../../state/entities";
-import { useEnvironmentProviders } from "../../state/environments";
+import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -139,11 +141,12 @@ function ThreadLineageGroup(props: {
       {props.label ? (
         <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{props.label}</span>
-          <span aria-hidden className="min-w-2 flex-1" />
+          <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
+            {props.label}
+          </span>
           {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
           {expanded ? null : (
-            <span className="text-xs font-normal tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
               {props.rows.length}
             </span>
           )}
@@ -152,7 +155,7 @@ function ThreadLineageGroup(props: {
             className={cn(
               THREAD_DETAILS_PANEL_CHEVRON_CLASS,
               "transition-transform",
-              !expanded && "rotate-180 redesign:-rotate-90",
+              !expanded && "-rotate-90",
             )}
           />
         </ThreadDetailsControl>
@@ -214,6 +217,74 @@ function currentSubagent<Agent extends RuntimeSubagent>(
     result: null,
     error: null,
   };
+}
+
+/**
+ * A task delegated to a linked environment. It has no thread here, so it opens
+ * the thread there, when this client is connected to that environment.
+ */
+function RemoteSubagentRow(props: {
+  readonly agent: OrchestrationV2Subagent & {
+    readonly remoteChild: OrchestrationV2RemoteTaskChild;
+  };
+  readonly provider: ServerProvider | undefined;
+}) {
+  const navigate = useNavigate();
+  const environment = useEnvironment(props.agent.remoteChild.environmentId);
+  const { remoteChild } = props.agent;
+  const status = props.agent.status;
+  const failed = status === "failed";
+  const title = relationshipThreadTitle({
+    title: props.agent.title ?? "Subagent",
+    isSubagent: true,
+  });
+  return (
+    <li className="group relative flex h-8 items-center rounded-lg">
+      <Tooltip>
+        <TooltipTrigger
+          delay={200}
+          render={
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              disabled={environment === null}
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(
+                    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
+                  ),
+                })
+              }
+            />
+          }
+        >
+          <ThreadRelationshipIcon
+            driver={props.agent.driver}
+            provider={props.provider}
+            fallbackIcon={BotIcon}
+            status={status}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {title}
+            </span>
+          </span>
+          <span
+            className={`shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            on {remoteChild.label} · {threadRelationshipStatusLabel(status)}
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="left">
+          {environment === null
+            ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
+            : `Open on ${remoteChild.label}`}
+        </TooltipPopup>
+      </Tooltip>
+    </li>
+  );
 }
 
 export function ThreadRelationshipsPanel(props: {
@@ -331,12 +402,17 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: active, expanded: true },
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
+  // Tasks running in a linked environment have no thread here; they get their own rows.
+  const remoteSubagents = (projection?.subagents ?? []).filter(
+    (agent): agent is OrchestrationV2Subagent & { remoteChild: OrchestrationV2RemoteTaskChild } =>
+      agent.remoteChild !== undefined,
+  );
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (relationshipRows.length === 0 && runningCount === 0 && remoteSubagents.length === 0) {
     return null;
   }
 
@@ -699,6 +775,20 @@ export function ThreadRelationshipsPanel(props: {
           }
         </ThreadLineageGroup>
       ))}
+      {remoteSubagents.length > 0 ? (
+        <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
+          {remoteSubagents.map((agent) => (
+            <RemoteSubagentRow
+              key={agent.id}
+              agent={agent}
+              // Its provider instance belongs to the environment it runs in.
+              provider={providersByEnvironment
+                .get(agent.remoteChild.environmentId)
+                ?.find((entry) => entry.instanceId === agent.providerInstanceId)}
+            />
+          ))}
+        </ThreadLineageRowList>
+      ) : null}
     </ThreadDetailsSection>
   );
 }
