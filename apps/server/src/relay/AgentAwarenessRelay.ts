@@ -376,6 +376,11 @@ export const make = Effect.gen(function* () {
   const publishedStateByThreadRef = yield* Ref.make(
     new Map<ThreadId, { identity: string; state: RelayAgentActivityState }>(),
   );
+  // Tombstones remove published rows; reopening must still recognize an already announced result.
+  const publishedCompletions = new Map<
+    ThreadId,
+    Pick<RelayAgentActivityState, "phase" | "completedAt">
+  >();
 
   const readSecretString = (name: string) =>
     secrets
@@ -541,9 +546,10 @@ export const make = Effect.gen(function* () {
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const previous = publishedStateByThread.get(threadId);
+    const previousCompletion = publishedCompletions.get(threadId);
     const sameCompletion =
-      previous?.state.phase === snapshot.state?.phase &&
-      previous?.state.completedAt === snapshot.state?.completedAt;
+      previousCompletion?.phase === snapshot.state?.phase &&
+      previousCompletion?.completedAt === snapshot.state?.completedAt;
     const replay =
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       (sameCompletion ||
@@ -615,6 +621,12 @@ export const make = Effect.gen(function* () {
       reason: snapshot.reason,
       replay,
     }).pipe(withRelayClientTracing);
+    if (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") {
+      publishedCompletions.set(threadId, {
+        phase: snapshot.state.phase,
+        completedAt: snapshot.state.completedAt,
+      });
+    }
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);

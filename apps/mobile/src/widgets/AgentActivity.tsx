@@ -192,7 +192,7 @@ function AgentActivity(
   const allDone =
     typeof props.pendingCount === "number" && props.pendingCount >= 0
       ? props.pendingCount === 0
-      : activeCount === 0 && unreadCount === 0;
+      : activeCount === 0 && (unreadCount === 0 || unreadCount === null);
   const hasRows = activities.length > 0;
   const doneLabel = failedRow ? "Failed" : hasRows ? "Done" : "Idle";
   const outcomeLabel = failedRow
@@ -209,10 +209,12 @@ function AgentActivity(
         ? "Working count unavailable"
         : workingCount > 0
           ? `${workingCount} working`
-          : "";
+          : failedRow
+            ? "Agent work failed"
+            : "";
   const agentsLabel = countLabel;
   const attentionSuffix =
-    attentionCount !== null && attentionCount > 0
+    !isSystemStale && attentionCount !== null && attentionCount > 0
       ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you`
       : "";
   const doneSuffix = unreadCount !== null && unreadCount > 0 ? `${unreadCount} done` : "";
@@ -224,7 +226,9 @@ function AgentActivity(
         ? "Count unavailable"
         : workingCount > 0
           ? `${workingCount} working`
-          : "";
+          : failedRow
+            ? "Failed"
+            : "";
   const activeLabel = currentLabel;
   const showCompactGlyph = !attentionRow && !failedRow && !doneSuffix && !allDone && !isSystemStale;
   const summary = attentionSuffix || doneSuffix || activeLabel;

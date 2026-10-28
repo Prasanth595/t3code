@@ -109,7 +109,10 @@ export function makeAggregateState(input: {
     ).length,
     unreadCount,
     // Legacy publishers cannot report reads; keep their existing completion lifecycle.
-    ...(states.every((state) => state.unread !== undefined) ? { pendingCount } : {}),
+    ...(states.every((state) => state.unread !== undefined) ||
+    states.some((state) => state.unread === true)
+      ? { pendingCount }
+      : {}),
     totalCount: states.length,
     updatedAt: newest.updatedAt,
     activities: displayedStates.map(aggregateRowForState),

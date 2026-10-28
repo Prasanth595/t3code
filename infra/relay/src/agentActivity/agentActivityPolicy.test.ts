@@ -79,6 +79,24 @@ describe("shared agent activity policy", () => {
     });
   });
 
+  it.each(["completed", "failed"] as const)(
+    "keeps an unread modern %s pending alongside legacy results",
+    (phase) => {
+      const modern = {
+        ...state,
+        threadId: ThreadId.make("modern"),
+        phase,
+        unread: true,
+        retained: true,
+      };
+      const legacy = { ...state, phase: "completed" as const };
+      const mixed = aggregate([modern, legacy]);
+      expect(mixed.pendingCount).toBe(2);
+      expect(mixed.activeCount).toBe(0);
+      expect(aggregate([legacy]).pendingCount).toBeUndefined();
+    },
+  );
+
   it("does not notify for already read results or marking a result unread again", () => {
     const done = { ...state, phase: "completed" as const, unread: false };
     expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(false);

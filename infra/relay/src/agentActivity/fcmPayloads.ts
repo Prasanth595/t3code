@@ -44,15 +44,18 @@ export function androidActivityData(
     : failed
       ? "Agent work failed"
       : "All caught up";
-  const expiresAt = Math.max(
-    0,
-    ...rows.map((row) =>
-      row.phase === "completed" || row.phase === "failed"
-        ? (aggregate?.pendingCount === undefined ? Date.parse(row.updatedAt) : nowMs) +
-          TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
-        : agentActivityExpiresAt(row),
-    ),
-  );
+  const expiresAt =
+    aggregate?.pendingCount === 0
+      ? 0
+      : Math.max(
+          0,
+          ...rows.map((row) =>
+            row.phase === "completed" || row.phase === "failed"
+              ? (aggregate?.pendingCount === undefined ? Date.parse(row.updatedAt) : nowMs) +
+                TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
+              : agentActivityExpiresAt(row),
+          ),
+        );
   return {
     active: String(active),
     activity_chip: active

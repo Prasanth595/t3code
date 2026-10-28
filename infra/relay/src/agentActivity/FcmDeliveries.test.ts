@@ -250,6 +250,32 @@ describe("Android delivery routing", () => {
     },
   );
 
+  it.effect(
+    "a per-thread replay does not consume another thread's pending completion alert",
+    () => {
+      const h = harness();
+      h.current.otherStates = [secondState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.otherStates = [{ ...secondState, phase: "completed", unread: true }];
+        const baseline = h.current.target.last_aggregate_json;
+        yield* delivery.process({ ...h.job, replay: true });
+        expect(h.current.target.last_aggregate_json).toBe(baseline);
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it("expires an Android card immediately after its last result is read", () => {
+    const read = { ...state, phase: "completed" as const, unread: false, retained: true };
+    expect(androidActivityData(aggregateFor([read]), 60_000)).toMatchObject({
+      active: "false",
+      activity_expires_at: "0",
+    });
+  });
+
   it.effect("filters disabled event types before counting a group", () => {
     const h = harness();
     h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, secondState]));

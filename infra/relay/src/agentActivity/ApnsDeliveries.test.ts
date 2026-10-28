@@ -1133,6 +1133,59 @@ describe("fast completion delivery", () => {
     },
   );
 
+  it.effect.each([true, false])(
+    "preserves a freshly armed token only for a replayed read snapshot: replay=%s",
+    (replay) => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      const read = {
+        ...aggregate,
+        activeCount: 0,
+        pendingCount: 0,
+        unreadCount: 0,
+        activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread: false }],
+      };
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.sendForTarget({ target, aggregate: read, nowMs: 0, replay });
+        expect(queuedJobs).toHaveLength(replay ? 0 : 1);
+      }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+    },
+  );
+
+  it.effect("does not deliver a last-read end after another thread starts", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const read = { ...state, phase: "completed" as const, unread: false };
+    const readAggregate = {
+      ...aggregate,
+      activeCount: 0,
+      pendingCount: 0,
+      unreadCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread: false }],
+    };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({ target, aggregate: readAggregate, nowMs: 20_000 });
+      expect(queuedJobs).toHaveLength(1);
+      yield* deliveries.processSignedJob(queuedJobs[0]!);
+      expect(requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          config: signingConfig,
+          activityStates: [read, { ...state, threadId: ThreadId.make("new-work") }],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, Response.json({}));
+            }),
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps a completion alert when work finishes before running delivery", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const old = {

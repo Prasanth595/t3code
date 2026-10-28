@@ -532,6 +532,40 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
+  it.effect("does not alert again when a completed thread is settled then reopened", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const completedAt = DateTime.makeUnsafe("1970-01-01T00:00:01.000Z");
+      const completed = shell({
+        status: "completed",
+        latestRunCompletedAt: completedAt,
+        lastVisitedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+      });
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.replay, false);
+      yield* Ref.set(currentShell, { ...completed, settledOverride: "settled" });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state?.phase, "completed");
+      assert.equal(publications.at(-1)?.replay, true);
+      const nextCompletedAt = yield* DateTime.now;
+      yield* Ref.set(currentShell, shell({ ...completed, latestRunCompletedAt: nextCompletedAt }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.replay, false);
+    }),
+  );
+
   it.effect("holds a completion through a continuation gap, then publishes it once", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
