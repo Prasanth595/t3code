@@ -37,8 +37,11 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
     if (row === null) return;
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return;
     completeSidebarRouteReveal(reveal);
+    const glide =
+      !mountRevealOwed.current &&
+      !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
-    row.scrollIntoView({ block: "nearest" });
+    row.scrollIntoView({ block: "nearest", behavior: glide ? "smooth" : "instant" });
   };
 }
 

@@ -1,3 +1,5 @@
+import { observeResize } from "../lib/observeResize";
+
 const motionTiming = { duration: 150, easing: "ease-out" };
 const rowTravel = (height: number) => Math.min(height, 40);
 // Fades clone removed rows and animate clones and entries; intervening layout reads force reflows.
@@ -22,6 +24,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
   let released: Map<HTMLElement, number> | null = null;
+  const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  let scrollTop = scroller?.scrollTop ?? 0;
+  const trackScroll = () => {
+    scrollTop = scroller?.scrollTop ?? 0;
+  };
+  scroller?.addEventListener("scroll", trackScroll, { passive: true });
 
   const remainingOffset = (node: HTMLElement) => {
     const current = running.get(node);
@@ -117,22 +125,28 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     );
   };
 
+  const measure = () =>
+    new Map(
+      Array.from(parent.children)
+        .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
+        .map((node) => [
+          node,
+          {
+            top: node.offsetTop,
+            left: node.offsetLeft,
+            width: node.offsetWidth,
+            height: node.offsetHeight,
+          },
+        ]),
+    );
+  const stopObservingResize = observeResize(parent, () => {
+    if (positions !== null) positions = measure();
+  });
+
   return {
     update(animate: boolean) {
       if (disposed) return;
-      const next = new Map(
-        Array.from(parent.children)
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
-          .map((node) => [
-            node,
-            {
-              top: node.offsetTop,
-              left: node.offsetLeft,
-              width: node.offsetWidth,
-              height: node.offsetHeight,
-            },
-          ]),
-      );
+      const next = measure();
       let fadeCount = 0;
       if (positions !== null) {
         for (const [node, position] of positions) {
@@ -142,6 +156,10 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           if (!positions.has(node) && position.height > 0) fadeCount++;
         }
       }
+      const clampShift =
+        scroller !== null && scrollTop > scroller.scrollHeight - scroller.clientHeight
+          ? scroller.scrollTop - scrollTop
+          : 0;
       const shouldAnimate =
         animate &&
         positions !== null &&
@@ -167,13 +185,18 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       else {
         for (const [node, position] of next) {
           const previousTop = positions!.get(node)?.top;
-          if (previousTop === undefined || previousTop === position.top) continue;
-          movedDelta.set(node, previousTop + remainingOffset(node) - position.top);
+          if (previousTop === undefined) continue;
+          const shift = previousTop - position.top + clampShift;
+          if (shift !== 0) movedDelta.set(node, shift + remainingOffset(node));
         }
         for (const [node, position] of positions!) {
           if (next.has(node)) continue;
           const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), (n) => next.has(n));
-          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta);
+          fadeOut(
+            node,
+            { ...position, top: position.top + clampShift },
+            delta === undefined ? rowTravel(position.height) : -delta,
+          );
         }
       }
       for (const [node, entry] of entering) {
@@ -221,12 +244,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         if (!reducedMotion?.matches) {
           for (const [node, position] of next) {
             const top = released.get(node);
-            if (top !== undefined) move(node, top - position.top);
+            if (top !== undefined) move(node, top - position.top + clampShift);
           }
         }
         released = null;
       }
       positions = next;
+      if (scroller !== null) scrollTop = scroller.scrollTop;
     },
     release() {
       suspend();
@@ -240,6 +264,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     suspend,
     dispose() {
       suspend();
+      scroller?.removeEventListener("scroll", trackScroll);
+      stopObservingResize();
       disposed = true;
     },
   };
