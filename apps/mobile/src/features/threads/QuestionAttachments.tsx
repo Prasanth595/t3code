@@ -86,13 +86,11 @@ export function QuestionAttachments(props: {
   };
   const paste = useNativePaste((uris) => {
     const scope = pickerScope.current;
-    if (
-      !selectedThread ||
-      props.disabled ||
-      !props.attachable ||
-      !configs.get(selectedThread.environmentId)
-    )
+    if (!selectedThread || props.disabled || !configs.get(selectedThread.environmentId)) return;
+    if (!props.attachable) {
+      Dialog.alert("Could not paste image", "This question cannot accept attachments.");
       return;
+    }
     const key = questionAttachmentDraftKey(
       selectedThread.environmentId,
       selectedThread.id,

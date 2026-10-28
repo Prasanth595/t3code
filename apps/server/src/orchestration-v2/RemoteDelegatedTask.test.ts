@@ -528,6 +528,47 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
     }),
   );
 
+  it.effect("records nothing when a task there still waits on what the parent shows", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { parent, taskId } = yield* delegateRemotely("unchanged");
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.request",
+        commandId: CommandId.make("command:remote-delegate:unchanged-second"),
+        parentThreadId: parent.threadId,
+        parentRunId: parent.runId,
+        parentNodeId: parent.rootNodeId,
+        task: "Run another check.",
+        driver: ProviderDriverKind.make("remote"),
+        modelSelection,
+        remoteChild,
+      });
+      const secondTaskId = (yield* orchestrator.getThreadProjection(
+        parent.threadId,
+      )).subagents.find((task) => task.id !== taskId)!.id;
+      const now = yield* DateTime.now;
+      const mirror = (name: string, task: NodeId) =>
+        orchestrator.dispatch({
+          type: "delegated_task.remote.requests",
+          commandId: CommandId.make(`command:mirror:unchanged:${name}`),
+          parentThreadId: parent.threadId,
+          taskId: task,
+          requests: [
+            {
+              requestId: RuntimeRequestId.make(`request:there:${task}`),
+              kind: "command",
+              createdAt: now,
+            },
+          ],
+        });
+      yield* mirror("first", taskId);
+      yield* mirror("second", secondTaskId);
+      // A restarted follower mirrors the first task's requests again.
+      const again = yield* mirror("first-again", taskId);
+      assert.deepEqual(again.storedEvents, []);
+    }),
+  );
+
   it.effect("asks again here for an answer that could not reach its thread there", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

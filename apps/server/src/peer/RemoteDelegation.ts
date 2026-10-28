@@ -647,6 +647,9 @@ const make = Effect.gen(function* () {
     // Its own back-off, so stepping the follower's retries never steps this one. A peer from
     // before `t3_link_requests` refuses every pass, and is asked again as it may update.
     return relayRequestsOnce(parentThreadId, taskId, relay).pipe(
+      Effect.tapError((error) =>
+        Effect.logDebug("remote-delegation.relay-requests-retrying", { taskId, error }),
+      ),
       Effect.retry(followBackoff),
       Effect.forever,
       Effect.catchCause((cause) =>

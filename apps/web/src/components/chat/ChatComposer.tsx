@@ -1388,6 +1388,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentTargetKey,
     attachmentTargetKeyRef,
     questionAttachmentTarget,
+    supportsQuestionAttachments,
     pendingUserInputs,
     composerContextRecords,
     composerImages,

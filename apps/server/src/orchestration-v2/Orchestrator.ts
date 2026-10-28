@@ -7906,7 +7906,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const next = [...current.filter((request) => request.taskId !== taskId), ...requests];
       const fingerprint = (entries: ReadonlyArray<OrchestrationV2RemoteTaskRequest>) =>
         JSON.stringify(entries, sortObjectKeys);
-      if (fingerprint(next) === fingerprint(current)) return;
+      const shown = current.filter((request) => request.taskId === taskId);
+      if (fingerprint(requests) === fingerprint(shown)) return;
       const now = yield* DateTime.now;
       yield* emit(
         events,

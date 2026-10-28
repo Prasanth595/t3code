@@ -83,6 +83,7 @@ export function useComposerContextImport(input: {
   readonly attachmentTargetKey: string;
   readonly attachmentTargetKeyRef: RefObject<string>;
   readonly questionAttachmentTarget: DraftId | null;
+  readonly supportsQuestionAttachments: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
@@ -100,6 +101,7 @@ export function useComposerContextImport(input: {
     attachmentTargetKey,
     attachmentTargetKeyRef,
     questionAttachmentTarget,
+    supportsQuestionAttachments,
     pendingUserInputs,
     composerContextRecords,
     composerImages,
@@ -400,6 +402,7 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
+          if (questionAttachmentTarget !== null && !supportsQuestionAttachments) break;
           if (sourceEnvironmentId === null && !conflicts) {
             rewritten.set(record.contextId, record.contextId);
             break;
