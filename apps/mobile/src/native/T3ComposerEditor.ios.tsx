@@ -72,6 +72,7 @@ interface NativeComposerEditorRef {
     readonly value: string;
     readonly selection: ComposerEditorSelection;
     readonly eventCount: number;
+    readonly isPaste: boolean;
   }>;
 }
 
@@ -297,8 +298,8 @@ export function ComposerEditor({
       const state = await Promise.resolve()
         .then(() => nativeRef.current?.readState())
         .catch(() => undefined);
-      // Paste events advance the count without changing text; consuming one here would drop it.
-      if (state && state.value !== props.value) {
+      // Acknowledging a paste's count here would get its own event, and the paste, rejected.
+      if (state && !state.isPaste) {
         applyNativeChange(state.eventCount, state.value, state.selection);
       }
     },
