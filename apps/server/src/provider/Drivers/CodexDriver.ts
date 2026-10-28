@@ -136,10 +136,7 @@ export const CodexDriver: ProviderDriver<
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const homeLayout = yield* resolveCodexHomeLayout(config);
-    const processEnv = codexHomeEnvironment(
-      homeLayout,
-      yield* mergeProviderInstanceEnvironment(environment),
-    );
+    const environmentOverrides = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
       instanceId,
@@ -148,7 +145,8 @@ export const CodexDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    yield* materializeCodexShadowHome(homeLayout).pipe(
+    const processEnv = yield* materializeCodexShadowHome(homeLayout).pipe(
+      Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,9 +9,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
+  codexHomeEnvironment,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -61,6 +66,65 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           continuationKey: `codex:home:${sharedHome}`,
         });
       }),
+    );
+  });
+
+  describe("codexHomeEnvironment", () => {
+    it.effect.each(["live", "interrupted"] as const)(
+      "reads committed shadow WAL data with a %s connection",
+      (connection) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const sharedDatabasePath = path.join(sharedHome, "state_5.sqlite");
+          const shadowDatabasePath = path.join(shadowHome, "state_5.sqlite");
+          {
+            using seed = new NodeSqlite.DatabaseSync(sharedDatabasePath);
+            seed.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (value TEXT);");
+          }
+          // Windows places sidecars beside database links; Unix resolves the target first.
+          if ((yield* HostProcess.isWindows) && symlinksSupported) {
+            yield* fileSystem.symlink(sharedDatabasePath, shadowDatabasePath);
+          } else {
+            yield* fileSystem.copyFile(sharedDatabasePath, shadowDatabasePath);
+          }
+          using writer = new NodeSqlite.DatabaseSync(shadowDatabasePath);
+          writer.exec("PRAGMA wal_autocheckpoint = 0; INSERT INTO entries VALUES ('committed');");
+          const database = yield* fileSystem.readFile(shadowDatabasePath);
+          const walPath = `${shadowDatabasePath}-wal`;
+          const wal = yield* fileSystem.readFile(walPath);
+          expect(wal.byteLength).toBeGreaterThan(0);
+          if (connection === "interrupted") {
+            // Restore the uncheckpointed disk image only after SQLite closes our fixture.
+            writer.close();
+            yield* fileSystem.writeFile(shadowDatabasePath, database);
+            yield* fileSystem.writeFile(walPath, wal);
+          }
+          {
+            using sharedReader = new NodeSqlite.DatabaseSync(sharedDatabasePath);
+            expect(sharedReader.prepare("SELECT value FROM entries").all()).toEqual([]);
+          }
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          const environment = yield* codexHomeEnvironment(layout, {});
+          expect(yield* fileSystem.readFile(walPath)).toEqual(wal);
+          using reader = new NodeSqlite.DatabaseSync(
+            path.join(environment.CODEX_SQLITE_HOME!, "state_5.sqlite"),
+          );
+          expect(reader.prepare("SELECT value FROM entries").all()).toEqual([
+            { value: "committed" },
+          ]);
+          if (connection === "live") {
+            writer.exec("INSERT INTO entries VALUES ('still writable');");
+            expect(reader.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({
+              count: 2,
+            });
+          }
+        }),
     );
   });
 

@@ -68,14 +68,6 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   };
 });
 
-export const codexHomeEnvironment = (layout: CodexHomeLayout, environment: NodeJS.ProcessEnv) =>
-  layout.mode === "authOverlay"
-    ? {
-        ...environment,
-        CODEX_SQLITE_HOME: environment.CODEX_SQLITE_HOME?.trim() || layout.sharedHomePath,
-      }
-    : environment;
-
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
   effectiveHomePath: Schema.String,
@@ -141,6 +133,40 @@ export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
+
+export const codexHomeEnvironment = Effect.fn("codexHomeEnvironment")(function* (
+  layout: CodexHomeLayout,
+  environment: NodeJS.ProcessEnv,
+) {
+  const effectiveHomePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
+  const override = environment.CODEX_SQLITE_HOME?.trim();
+  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed([])
+          : new CodexShadowHomeFileSystemError({
+              sharedHomePath: layout.sharedHomePath,
+              effectiveHomePath,
+              operation: "readDirectory",
+              path: effectiveHomePath,
+              cause,
+            }),
+    }),
+  );
+  // Keep existing databases on their original path so SQLite can recover WAL in place,
+  // including when another Codex process still owns a connection there.
+  return {
+    ...environment,
+    CODEX_SQLITE_HOME: entries.some((entry) => SQLITE_ENTRY_NAME.test(entry))
+      ? effectiveHomePath
+      : layout.sharedHomePath,
+  };
+});
 
 type LinkState =
   | {

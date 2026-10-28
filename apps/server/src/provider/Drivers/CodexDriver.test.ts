@@ -317,7 +317,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(launch.settings.launchArgs).not.toContain("dummy-owned-access");
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
-        expect(launch.environment.CODEX_SQLITE_HOME).toBe(sharedHome);
+        expect(launch.environment.CODEX_SQLITE_HOME).toBe(shadowHome);
         const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);
         expect(Option.getOrThrow(before).phase).toBe("idle");
         yield* instance.auth!.logout(Effect.void);
