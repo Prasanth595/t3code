@@ -105,3 +105,76 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Compare runs with and without a skill
+
+Codex 0.165.0 or newer supports session-scoped skill overrides. An agent can pass
+`target.skillOverrides` to `delegate_task`. API callers can use the same field in
+`modelSelection` when creating a fresh thread. Check
+`orchestrator_capabilities.providers[].supportsSessionSkillOverrides` first.
+
+For example, disable a discovered skill in one child:
+
+```json
+{
+  "task": "Review the patch.",
+  "target": {
+    "providerInstanceId": "codex",
+    "model": "your-model-id",
+    "skillOverrides": [{ "path": "/workspace/skills/review/SKILL.md", "enabled": false }]
+  }
+}
+```
+
+Start a separate child with `enabled: true` for the comparison. Keep the task,
+model, model options, tools, workspace snapshot, and provider version identical.
+Use an absolute `SKILL.md` path from the destination environment's provider skill
+catalog. Unknown paths and conflicting overrides for aliases are rejected.
+Symlink aliases and discovered hardlinks resolve to the same file and receive the
+same override.
+
+Omitting `skillOverrides` preserves normal behavior, or inherits the parent's
+overrides for a T3-managed child. An explicit empty array keeps provider skill
+defaults. Every explicitly configured session disables native Codex subagents,
+including the enabled comparison arm. T3-managed children inherit the policy and
+cannot replace it. Other providers reject overrides rather than silently ignoring
+them. A skill disabled by user or managed configuration cannot be enabled here.
+
+Use `task_status.skillConfiguration` to inspect the provider version, requested
+overrides, and resolved skill inventory after the child starts. For a remote child,
+use `t3_thread_read` with its `environmentId` and `threadId`, then inspect
+`thread.skillConfiguration`. Entries marked
+`enabled: false` are excluded from Codex skill discovery and explicit skill-input
+expansion. This inventory records the configuration T3 applied; Codex does not
+provide a separate per-thread effective-skills readback. Its global `skills/list`
+is not evidence of a particular thread's effective configuration.
+
+Overrides are fixed for a native session, including after resume. Create a new
+thread to change them or return to provider defaults. Native history forks are
+rejected for configured sessions: previously loaded skill instructions cannot be
+removed from conversation history. Keep skill files and configuration unchanged
+throughout a comparison. Paths are environment-local, including for remote
+children. Remote delegation checks the destination's advertised support before
+launching; older servers that do not advertise it are rejected.
+
+This controls Codex's skill machinery, not filesystem access. Tools can still
+read skill files, follow copies, or launch another provider process. Instructions
+copied into the task, project instructions, attachments, or earlier context are
+not removed. Do not treat this as an adversarial sandbox or a guarantee that a
+baseline has never encountered the skill's content.
+
+### Usage attribution
+
+Persisted provider turns include `turnTokenUsage`, with `usageStatus` set to
+`complete`, `partial`, or `unavailable`. Codex attributes cumulative-token deltas
+to native turn IDs. Claude uses result usage and combines steering segments.
+These counts describe the main agent, not a guaranteed total for all native or
+T3-managed children. Inspect `usageScope` and `hasSubagents`; do not treat missing
+usage as zero or add reasoning tokens to output tokens again.
+
+Runs retain requested, started, work-started, and completed timestamps. They can
+measure wall-clock lifecycle time, which includes waits and orchestration, not
+just model execution. Retries, resumed turns, and delegated children require
+aggregation by run and attempt. `task_status` does not expose a complete token or
+elapsed-time evaluation record. The Usage page aggregates provider history and
+is not a substitute for per-run attribution.

@@ -102,8 +102,26 @@ function canonicalModelSelectionOptions(
   );
 }
 
+export function skillOverridesEqual(
+  left: ModelSelection["skillOverrides"],
+  right: ModelSelection["skillOverrides"],
+): boolean {
+  return left === undefined
+    ? right === undefined
+    : right !== undefined &&
+        left.length === right.length &&
+        left.every(
+          (entry, index) =>
+            entry.path === right[index]?.path && entry.enabled === right[index]?.enabled,
+        );
+}
+
 export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
-  if (left.instanceId !== right.instanceId || left.model !== right.model) {
+  if (
+    left.instanceId !== right.instanceId ||
+    left.model !== right.model ||
+    !skillOverridesEqual(left.skillOverrides, right.skillOverrides)
+  ) {
     return false;
   }
   const leftOptions = canonicalModelSelectionOptions(left);

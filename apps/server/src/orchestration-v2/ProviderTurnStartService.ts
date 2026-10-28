@@ -91,6 +91,24 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
   }
 }
 
+class SessionSkillOverridesUnsupportedError extends Schema.TaggedError<SessionSkillOverridesUnsupportedError>()(
+  "SessionSkillOverridesUnsupportedError",
+  {},
+) {
+  override get message() {
+    return "This provider does not support session-scoped skill overrides. Use Codex 0.165.0 or newer.";
+  }
+}
+
+class SessionSkillOverridesHistoryError extends Schema.TaggedError<SessionSkillOverridesHistoryError>()(
+  "SessionSkillOverridesHistoryError",
+  {},
+) {
+  override get message() {
+    return "Session skill overrides require a new thread without inherited conversation history.";
+  }
+}
+
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
 /**
@@ -487,6 +505,32 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if (run.modelSelection.skillOverrides !== undefined && providerThread.driver !== "codex") {
+        const error = new SessionSkillOverridesUnsupportedError();
+        yield* settleStartFailure({
+          signal: "unsupported-skill-overrides",
+          title: "Session skill overrides unavailable",
+          error,
+          message: error.message,
+        });
+        return;
+      }
+      if (
+        run.modelSelection.skillOverrides !== undefined &&
+        providerThread.nativeMetadata?.skillConfiguration === undefined &&
+        (run.ordinal !== 1 ||
+          Boolean(projection.thread.forkedFrom) ||
+          projection.contextHandoffs.length > 0)
+      ) {
+        const error = new SessionSkillOverridesHistoryError();
+        yield* settleStartFailure({
+          signal: "skill-overrides-history",
+          title: "Session skill overrides require a fresh thread",
+          error,
+          message: error.message,
+        });
+        return;
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;

@@ -70,3 +70,14 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+it.effect("preserves session skill overrides, including an explicit empty inventory", () =>
+  Effect.gen(function* () {
+    for (const skillOverrides of [[], [{ path: "/skills/review/SKILL.md", enabled: false }]]) {
+      const input = { instanceId: "codex", model: "gpt-5-codex", skillOverrides };
+      const decoded = yield* decodeModelSelection(input);
+      assert.deepStrictEqual(decoded.skillOverrides, skillOverrides);
+      assert.deepStrictEqual(yield* encodeModelSelection(decoded), input);
+    }
+  }),
+);

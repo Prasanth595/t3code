@@ -2494,6 +2494,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const inherited = {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
+          skillOverrides: [{ path: "/skills/review/SKILL.md", enabled: false }],
           options: [
             { id: "reasoningEffort", value: "high" },
             { id: "serviceTier", value: "priority" },
@@ -2567,6 +2568,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver,
                   model: inherited.model,
                 }),
+                version: "0.165.0",
                 models: [inherited.model, "other-model"].map((model) => ({
                   slug: model,
                   name: model,
@@ -2574,7 +2576,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   capabilities: null,
                 })),
               },
-              providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+              {
+                ...providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+                version: "0.165.0",
+              },
             ]),
             adapterRegistryLayer([codexInstanceId, peerId]),
             Layer.mock(ProjectService.ProjectService)({}),
@@ -2592,9 +2597,18 @@ describe("OrchestratorMcpService provider resolution", () => {
               mode: "async",
               clientRequestId: testCase.name,
             });
+            const refused = yield* service
+              .delegateTask(scope, {
+                task: "Review the change.",
+                target: yield* decodeTarget({ skillOverrides: [] }),
+                mode: "async",
+                clientRequestId: `${testCase.name}-clear-skills`,
+              })
+              .pipe(Effect.flip);
+            assert.equal(refused.code, "invalid_request");
             assert.deepEqual(
               (commands[0] as { modelSelection: unknown }).modelSelection,
-              testCase.expected,
+              { ...testCase.expected, skillOverrides: inherited.skillOverrides },
               testCase.name,
             );
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));

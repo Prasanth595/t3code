@@ -197,14 +197,14 @@ const boxProjects: ReadonlyArray<Project> = [
   },
 ];
 
-const serveBox = (thread: BoxThread) => {
-  return servePeer(box, boxToolkitLayer(thread));
+const serveBox = (thread: BoxThread, version = "0.165.0") => {
+  return servePeer(box, boxToolkitLayer(thread, version));
 };
 
 const boxRunId = RunId.make("run:box");
 const boxLaterRunId = RunId.make("run:box-later");
 
-const boxToolkitLayer = (thread: BoxThread) => {
+const boxToolkitLayer = (thread: BoxThread, version: string) => {
   const runId = boxRunId;
   const interrupts = new Set<string>();
   const shellOf = (threadId: ThreadId) =>
@@ -481,8 +481,30 @@ const boxToolkitLayer = (thread: BoxThread) => {
         Layer.provide(NodeServices.layer),
       ),
     ),
-    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          {
+            instanceId,
+            driver,
+            enabled: true,
+            installed: true,
+            version,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-10-28T00:00:00.000Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ]),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        list: () => Effect.succeed([instanceId]),
+      }),
+    ),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
@@ -823,6 +845,12 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(retried.taskId).toBe(delegated.taskId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
 
+      const remoteRead = yield* a.call("t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: delegated.remoteChild.threadId,
+      });
+      expect(remoteRead.isError, JSON.stringify(remoteRead.content)).toBe(false);
+
       yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
@@ -931,6 +959,38 @@ it.effect("a task named only by environment inherits the parent's model, within 
       expect(broader.isError).toBe(true);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each(["0.164.0", "0.165.0"])(
+  "requires advertised session skill support before launching a restricted remote task (%s)",
+  (version) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread, version);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b);
+        yield* seedParent(a);
+        const skillOverrides = [{ path: "/workspace/skills/review/SKILL.md", enabled: false }];
+        const result = yield* a.call("delegate_task", {
+          task: "Review the patch.",
+          target: { environmentId: box.environmentId, skillOverrides },
+        });
+        expect(result.isError).toBe(version === "0.164.0");
+        if (version === "0.164.0") {
+          expect(yield* Ref.get(thread.launched)).toBeNull();
+        } else {
+          expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+            ...modelSelection,
+            skillOverrides,
+          });
+        }
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses worktree isolation for a task there before launching anything", () =>

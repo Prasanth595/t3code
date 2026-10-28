@@ -1,3 +1,8 @@
+import {
+  assertCodexSkillOverridesUnchanged,
+  CodexSkillOverrideError,
+  resolveCodexSkillOverrides,
+} from "../../provider/CodexSkillOverrides.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -1320,7 +1325,8 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
 function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
-  readonly modelSelection?: { readonly model: string };
+  readonly modelSelection?: ModelSelection;
+  readonly skillConfig?: ReadonlyArray<Schema.Json>;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): {
   readonly cwd?: string;
@@ -1333,6 +1339,9 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(input.skillConfig === undefined
+        ? {}
+        : { "skills.config": input.skillConfig, "features.multi_agent": false }),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -1615,6 +1624,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const path = yield* Path.Path;
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1698,6 +1708,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const initialized = yield* Ref.make(false);
         // Codex rejects a second initialize on the shared app-server.
         const initializePermit = yield* Semaphore.make(1);
+        const initializedUserAgent = yield* Ref.make("");
         const ensureInitialized = initializePermit.withPermit(
           Effect.gen(function* () {
             const alreadyInitialized = yield* Ref.get(initialized);
@@ -1705,7 +1716,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
-            yield* client
+            const initializedResponse = yield* client
               .request("initialize", {
                 clientInfo: buildCodexInitializeParams().clientInfo,
                 capabilities: CODEX_CLIENT_CAPABILITIES,
@@ -1719,10 +1730,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       : Effect.fail(error),
                 }),
               );
+            if (initializedResponse !== undefined)
+              yield* Ref.set(initializedUserAgent, initializedResponse.userAgent);
             yield* client.notify("initialized", undefined);
             yield* Ref.set(initialized, true);
           }),
         );
+        const resolveThreadSkills = Effect.fn("CodexAdapterV2.resolveThreadSkills")(function* (
+          selection: Pick<ModelSelection, "skillOverrides"> | undefined,
+          cwd: string | null | undefined,
+        ) {
+          if (selection?.skillOverrides === undefined) return undefined;
+          yield* ensureInitialized;
+          const workspace = cwd ?? input.runtimePolicy.cwd ?? process.cwd();
+          const inventory = yield* client.request("skills/list", {
+            cwds: [workspace],
+            forceReload: true,
+          });
+          if (inventory.data.some((entry) => entry.errors.length > 0)) {
+            return yield* new CodexSkillOverrideError({ reason: "discovery-failed" });
+          }
+          const base = yield* client.request("config/read", {
+            cwd: workspace,
+            includeLayers: false,
+          });
+          return yield* resolveCodexSkillOverrides({
+            overrides: selection.skillOverrides,
+            skills: inventory.data.flatMap((entry) => entry.skills),
+            baseConfig: base.config.skills,
+            userAgent: yield* Ref.get(initializedUserAgent),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+        });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -6478,6 +6519,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
             codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
           ) {
+            yield* assertCodexSkillOverridesUnchanged(
+              turnInput.modelSelection.skillOverrides,
+              turnInput.providerThread.nativeMetadata?.skillConfiguration?.overrides,
+            );
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
@@ -6767,45 +6812,68 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          ensureThread: (threadInput) =>
-            ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
-                client.request(
-                  "thread/start",
-                  codexThreadRuntimeParams({
-                    mcpSession,
-                    modelSelection: threadInput.modelSelection,
-                    runtimePolicy: threadInput.runtimePolicy,
-                  }),
+          ensureThread: Effect.fn("CodexAdapterV2.ensureThread")(
+            function* (threadInput) {
+              yield* ensureInitialized;
+              const skillConfiguration = yield* resolveThreadSkills(
+                threadInput.modelSelection,
+                threadInput.runtimePolicy.cwd,
+              );
+              const response = yield* client.request(
+                "thread/start",
+                codexThreadRuntimeParams({
+                  mcpSession: yield* mcpSessions.read(threadInput.threadId),
+                  modelSelection: threadInput.modelSelection,
+                  runtimePolicy: threadInput.runtimePolicy,
+                  ...(skillConfiguration === undefined
+                    ? {}
+                    : { skillConfig: skillConfiguration.config }),
+                }),
+              );
+              const thread = providerThreadFromCodexThread({
+                appThreadId: threadInput.threadId,
+                idAllocator,
+                ownerNodeId: null,
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: adapterOptions.instanceId,
+                thread: response.thread,
+              });
+              if (skillConfiguration === undefined) return thread;
+              const { config: _config, ...configuration } = skillConfiguration;
+              return { ...thread, nativeMetadata: { skillConfiguration: configuration } };
+            },
+            (effect, threadInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                      driver: CODEX_PROVIDER,
+                      threadId: threadInput.threadId,
+                      cause,
+                    }),
                 ),
               ),
-              Effect.map((response): OrchestrationV2ProviderThread =>
-                providerThreadFromCodexThread({
-                  appThreadId: threadInput.threadId,
-                  idAllocator,
-                  ownerNodeId: null,
-                  providerSessionId: input.providerSessionId,
-                  providerInstanceId: adapterOptions.instanceId,
-                  thread: response.thread,
-                }),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterEnsureThreadError({
-                    driver: CODEX_PROVIDER,
-                    threadId: threadInput.threadId,
-                    cause,
-                  }),
-              ),
-            ),
+          ),
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const configured =
+                threadInput.providerThread.nativeMetadata?.skillConfiguration?.overrides;
+              const selection =
+                threadInput.modelSelection ??
+                (configured === undefined ? undefined : { skillOverrides: configured });
+              yield* assertCodexSkillOverridesUnchanged(selection?.skillOverrides, configured);
+              const skillConfiguration = yield* resolveThreadSkills(
+                selection,
+                threadInput.runtimePolicy?.cwd,
+              );
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  ...(skillConfiguration === undefined
+                    ? {}
+                    : { skillConfig: skillConfiguration.config }),
                   mcpSession: yield* readMcpSession(
                     threadInput.threadId ?? threadInput.providerThread.appThreadId,
                   ),
@@ -6840,6 +6908,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
               return {
                 ...threadInput.providerThread,
+                ...(skillConfiguration === undefined
+                  ? {}
+                  : {
+                      nativeMetadata: {
+                        ...threadInput.providerThread.nativeMetadata,
+                        skillConfiguration: {
+                          providerVersion: skillConfiguration.providerVersion,
+                          overrides: skillConfiguration.overrides,
+                          skills: skillConfiguration.skills,
+                        },
+                      },
+                    }),
                 providerSessionId: input.providerSessionId,
                 providerInstanceId: adapterOptions.instanceId,
                 status: "idle",
@@ -6867,6 +6947,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
+              yield* assertCodexSkillOverridesUnchanged(
+                turnInput.modelSelection.skillOverrides,
+                turnInput.providerThread.nativeMetadata?.skillConfiguration?.overrides,
+              );
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
@@ -7588,11 +7672,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               // thread/revert requires the thread loaded in this app-server; resume after restart or idle release.
               if (!loaded) {
+                yield* assertCodexSkillOverridesUnchanged(
+                  input.modelSelection.skillOverrides,
+                  threadInput.providerThread.nativeMetadata?.skillConfiguration?.overrides,
+                );
+                const skillConfiguration = yield* resolveThreadSkills(
+                  input.modelSelection,
+                  input.runtimePolicy.cwd,
+                );
                 yield* client.raw.request("thread/resume", {
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
+                    ...(skillConfiguration === undefined
+                      ? {}
+                      : { skillConfig: skillConfiguration.config }),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                   }),
@@ -7634,6 +7729,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           forkThread: Effect.fn("CodexAdapterV2.forkThread")(
             function* (threadInput) {
+              if (
+                threadInput.modelSelection?.skillOverrides !== undefined ||
+                threadInput.sourceProviderThread.nativeMetadata?.skillConfiguration !== undefined
+              ) {
+                return yield* new CodexSkillOverrideError({ reason: "session-policy-changed" });
+              }
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
