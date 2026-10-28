@@ -1036,8 +1036,12 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
   it.effect("registers the APNs device when cloud auth becomes available", () => {
     vi.mocked(agentWidgetToken).mockReturnValue("a".repeat(64));
+    let recoveryAtRegistration: Parameters<typeof configureAgentWidgetRefresh> | undefined;
     const fetchMock = vi.fn((request: RequestInfo | URL) => {
       const url = request instanceof Request ? request.url : String(request);
+      if (url.endsWith("/v1/mobile/devices")) {
+        recoveryAtRegistration = vi.mocked(configureAgentWidgetRefresh).mock.lastCall;
+      }
       return Promise.resolve(
         Response.json(
           url.endsWith("/v1/client/dpop-token")
@@ -1064,6 +1068,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
 
+      expect(recoveryAtRegistration).toEqual(["https://relay.example.test", "a".repeat(64)]);
       const deviceCall = fetchMock.mock.calls.find((call) => {
         const request = call[0];
         const url = request instanceof Request ? request.url : String(request);

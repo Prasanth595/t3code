@@ -189,11 +189,7 @@ export function AgentActivity(
       : tint;
 
   // Derive terminal outcomes from all rows so a failure dominates a newer success in every presentation.
-  const allDone =
-    activeCount === 0 ||
-    (props.isExpired === true &&
-      activities.length > 0 &&
-      activities.every((row) => row.phase === "completed" || row.phase === "failed"));
+  const allDone = activeCount === 0;
   const hasRows = activities.length > 0;
   const doneLabel = failedRow ? "Failed" : hasRows ? "Done" : "Idle";
   const outcomeLabel = failedRow

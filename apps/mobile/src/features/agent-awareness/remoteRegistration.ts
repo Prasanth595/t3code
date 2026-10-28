@@ -404,6 +404,8 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     Platform.OS === "ios" && supportsAgentAwarenessPush() && identity
       ? agentWidgetToken(identity)
       : null;
+  // Persist the revocation URL before exposing this credential to the relay.
+  if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
   const payload = widgetToken ? { ...body, widgetAccessToken: widgetToken } : body;
   // The relay URL participates so pointing the app at a different relay
   // invalidates the record and re-registers there.
@@ -421,7 +423,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
     setRegistrationStatus("registered");
     return;
   }
@@ -437,7 +438,6 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     // stale success must not overwrite either.
     return;
   }
-  if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
   if (body.platform === "android") androidDeviceReplayedAt = Date.now();
   setRegistrationStatus("registered");
   yield* Effect.promise(() =>

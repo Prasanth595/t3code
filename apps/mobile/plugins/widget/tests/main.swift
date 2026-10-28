@@ -151,3 +151,19 @@ assert(props(countedEntries[1])["workingCount"] == nil)
 assert(props(countedEntries.last!)["attentionCount"] == nil)
 print("Agent widget counts: working, attention, overflow, and stale merges passed")
 assert(durableRevocation && invalidatedGeneration)
+
+// Direct-only JS observations carry unknown counts as JSON null.
+let storageGeneration = AgentWidgetStorage.generation(in: defaults)
+let unknownCounts: [[String: Any]] = [["timestamp": 0, "props": [
+  "activeCount": -1, "workingCount": NSNull(), "attentionCount": NSNull(),
+  "totalCount": NSNull(), "activities": [row("direct", "running")]
+]]]
+assert(AgentWidgetStorage.commit(unknownCounts, generation: storageGeneration, in: defaults))
+let storedEntries = defaults.array(forKey: AgentWidgetStorage.timelineKey) as! [[String: Any]]
+assert(PropertyListSerialization.propertyList(storedEntries, isValidFor: .binary))
+let storedProps = props(storedEntries[0])
+for key in ["workingCount", "attentionCount", "totalCount"] { assert(storedProps[key] == nil) }
+assert(storedProps["activeCount"] as? Int == -1)
+assert((storedProps["activities"] as? [[String: Any]])?.count == 1)
+assert(AgentWidgetStorage.owns(storedProps, in: defaults))
+print("Unknown direct-only counts persist without invalid property-list nulls")

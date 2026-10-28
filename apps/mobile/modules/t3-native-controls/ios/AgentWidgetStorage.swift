@@ -41,7 +41,7 @@ enum AgentWidgetStorage {
     guard defaults.string(forKey: generationKey) == generation else { return false }
     defaults.set(entries.map { entry in
       var entry = entry
-      var props = entry["props"] as? [String: Any] ?? [:]
+      var props = (entry["props"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) }
       props[generationKey] = generation
       entry["props"] = props
       return entry
