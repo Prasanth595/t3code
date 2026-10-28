@@ -13,11 +13,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { workflowReviewTargetLabel } from "@t3tools/client-runtime/state/workflowReview";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -43,9 +39,7 @@ export function WorkflowPresetsSettings({ environmentId }: { environmentId: Envi
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const presets = settings.workflowPresets;
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  );
+  const instanceEntries = providerInstanceEntriesFor(providers, settings, null);
   const activeEntry = instanceEntries.find(
     (entry) => entry.instanceId === draft?.target.providerInstanceId,
   );
