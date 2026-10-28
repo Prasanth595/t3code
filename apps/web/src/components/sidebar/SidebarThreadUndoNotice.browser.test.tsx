@@ -23,7 +23,7 @@ describe("SidebarThreadUndoNotice", () => {
 
     await showSettled();
     await act(async () => vi.advanceTimersByTime(300));
-    expect(spoken()).toMatch(/^Settled 1 thread, /);
+    expect(spoken()).toMatch(/^Conversație finalizată, /);
 
     await act(async () => useThreadUndoNotice.setState({ notice: null }));
     for (const region of document.querySelectorAll('body > [aria-live="polite"]')) {

@@ -71,7 +71,7 @@ describe("queued message file edits", () => {
         uploadFiles: async () => [],
         readImage: async () => "image",
       }),
-    ).rejects.toThrow("Retry or remove");
+    ).rejects.toThrow("Reîncearcă sau elimină");
   });
 
   it("keeps file-only edits when another client starts the queued run", () => {

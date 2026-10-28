@@ -207,7 +207,7 @@ describe("KeybindingsSettings.logic", () => {
     });
     expect(parseWhenExpressionDraft("editorFocus &&")).toEqual({
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: "Folosește variabile cu !, &&, || și paranteze.",
     });
 
     expect(parseWhenExpressionDraft("!(terminalFocus || modelPickerOpen)")).toEqual({

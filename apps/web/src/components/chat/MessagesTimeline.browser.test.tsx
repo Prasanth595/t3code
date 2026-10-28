@@ -228,7 +228,7 @@ describe("MessagesTimeline automation prompts", () => {
     await using screen = await renderTimeline([
       message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
     ]);
-    const row = screen.button(/^Automation/);
+    const row = screen.button(/^Automatizare/);
     expect(row.textContent).toContain("Nightly triage");
     expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(screen.text()).not.toContain("close duplicates");
@@ -236,7 +236,7 @@ describe("MessagesTimeline automation prompts", () => {
     await click(row);
     expect(screen.text()).toContain("Label every new issue and close duplicates.");
     const link = [...screen.container.querySelectorAll("a")].find(
-      (anchor) => anchor.textContent === "Open automation",
+      (anchor) => anchor.textContent === "Deschide automatizarea",
     );
     expect(link?.getAttribute("href")).toContain(`taskId=${TASK_ID}`);
     expect(screen.buttons(/copy/i)).not.toHaveLength(0);
@@ -247,13 +247,13 @@ describe("MessagesTimeline automation prompts", () => {
     await using screen = await renderTimeline([
       message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
     ]);
-    expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
+    expect(screen.button(/^Automatizare/).textContent).toContain("Triage the inbox");
   });
 
   it("leaves ordinary user messages as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
-    expect(screen.buttons(/^Automation/)).toHaveLength(0);
+    expect(screen.buttons(/^Automatizare/)).toHaveLength(0);
     expect(screen.text()).toContain("Label every new issue and close duplicates.");
   });
 
@@ -266,7 +266,7 @@ describe("MessagesTimeline automation prompts", () => {
       activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
     });
     await vi.waitFor(() =>
-      expect(screen.button(/^Automation/).getAttribute("aria-expanded")).toBe("true"),
+      expect(screen.button(/^Automatizare/).getAttribute("aria-expanded")).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
     const details = screen.container.querySelector("[data-thread-find-text]")!;
@@ -307,7 +307,7 @@ describe("MessagesTimeline automation prompts", () => {
       },
     );
     expect(screen.buttons("Edit from here")).toHaveLength(0);
-    await click(screen.button(/^Automation/));
+    await click(screen.button(/^Automatizare/));
     expect(screen.buttons("Edit from here")).toHaveLength(1);
   });
 });
@@ -327,11 +327,11 @@ describe("MessagesTimeline agent messages", () => {
     expect(row.textContent).toContain("Review finished");
     expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(screen.text()).not.toContain("drops the index");
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+    expect(screen.buttons("Deschide conversația")).toHaveLength(0);
 
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
-    await click(screen.button("Open thread"));
+    await click(screen.button("Deschide conversația"));
     expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
 
     await click(screen.button(/^Agent/));
@@ -446,20 +446,20 @@ it("renders automatic compaction as one live divider that finishes with its reas
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
   await using screen = await render(ui(false), { container });
   await expect
-    .element(screen.getByRole("separator", { name: "Compacting before the cache expires…" }))
+    .element(screen.getByRole("separator", { name: "Se compactează înainte să expire cache-ul…" }))
     .toBeVisible();
   expect(container.textContent).not.toContain("/compact");
-  expect(container.textContent).not.toContain("Thinking");
-  expect(container.textContent).not.toContain("Working");
+  expect(container.textContent).not.toContain("Se gândește");
+  expect(container.textContent).not.toContain("Lucrează");
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   await screen.rerender(ui(true));
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Context compactat automat înainte să expire cache-ul 899K → 19K tokens",
       }),
     )
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
-  expect(container.textContent).not.toContain("Compacting before");
+  expect(container.textContent).not.toContain("Se compactează înainte");
 });

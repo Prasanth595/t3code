@@ -125,7 +125,7 @@ describe("ChatMarkdown streaming", () => {
     );
     await using screen = await render(message("```bash\necho hello\n```", true));
     const { container, rerender } = screen;
-    const runButtons = () => buttonsLabelled(container, "Run in terminal");
+    const runButtons = () => buttonsLabelled(container, "Rulează în terminal");
     expect(runButtons()).toHaveLength(0);
 
     await rerender(message("```bash\necho hello\n```"));

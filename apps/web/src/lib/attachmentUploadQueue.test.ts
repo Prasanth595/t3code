@@ -261,7 +261,7 @@ describe("attachmentUploadQueue", () => {
     expect(TestXmlHttpRequest.requests).toHaveLength(0);
     expect(readAttachmentUpload(image.id)).toMatchObject({
       status: "failed",
-      reason: "This connection cannot upload attachments.",
+      reason: "Această conexiune nu poate încărca atașamente.",
       attachmentId: "pending-revoked",
     });
     retryAttachmentUpload({ environmentId: firstEnvironment, image });
@@ -504,7 +504,8 @@ describe("attachmentUploadQueue", () => {
       await awaitAttachmentUploads([file.id]);
       expect(readAttachmentUpload(file.id)).toMatchObject({
         status: "failed",
-        reason: "Uploaded file could not be verified. Retry when the server reconnects.",
+        reason:
+          "Fișierul încărcat nu a putut fi verificat. Reîncearcă după ce serverul se reconectează.",
       });
       expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.files).toMatchObject([
         {

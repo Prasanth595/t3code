@@ -111,7 +111,7 @@ describe("composer attachment files", () => {
         supportsAttachmentUploads: false,
         maxFileAttachmentBytes: null,
       }),
-    ).toBe("Waiting for the server before file attachments can send");
+    ).toBe("Se așteaptă serverul înainte de trimiterea fișierelor");
   });
 
   it("keeps draft-persisted file uploads when the upload capability flips off", () => {

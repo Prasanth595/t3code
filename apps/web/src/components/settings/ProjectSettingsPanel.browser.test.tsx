@@ -295,12 +295,12 @@ async function mountSettings(search: SettingsScopeSearch) {
 }
 
 const nameInput = (screen: Screen) =>
-  screen.container.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
+  screen.container.querySelector<HTMLInputElement>('[aria-label="Numele proiectului"]')!;
 const removeCheckout = (screen: Screen, root: string) =>
-  screen.container.querySelector<HTMLButtonElement>(`[aria-label="Remove checkout ${root}"]`)!;
+  screen.container.querySelector<HTMLButtonElement>(`[aria-label="Elimină checkout-ul ${root}"]`)!;
 const removeAll = (screen: Screen) =>
   [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Remove all entries"),
+    button.textContent?.includes("Elimină toate intrările"),
   )!;
 
 async function grant(id: EnvironmentId, result: SessionResult) {
@@ -477,7 +477,7 @@ describe("project settings scope", () => {
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using _screen = await mountSettings({ project: projectKey() });
 
-    await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+    await expect.element(page.getByRole("textbox", { name: "Numele proiectului" })).toBeVisible();
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).not.toBeInTheDocument();
@@ -518,21 +518,19 @@ describe("project settings scope", () => {
 
     await expect.element(page.getByText(message, { exact: true })).toBeVisible();
     await expect.element(page.getByRole("button", { name: /^Project scope:/ })).toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: "Environment scope: remote" }))
-      .toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "Show all environments" }));
+    await expect.element(page.getByRole("button", { name: "Domeniu mediu: remote" })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Arată toate mediile" }));
 
     await expect
-      .element(page.getByRole("textbox", { name: "Project name" }))
+      .element(page.getByRole("textbox", { name: "Numele proiectului" }))
       .toHaveValue("Shared repo");
     expect(screen.router.state.location.search).toEqual({ project: key });
     await expect
-      .element(page.getByRole("button", { name: "Environment scope: All environments" }))
+      .element(page.getByRole("button", { name: "Domeniu mediu: Toate mediile" }))
       .toBeVisible();
     await expect.element(page.getByText(message, { exact: true })).not.toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: "Remove project", exact: true }))
+      .element(page.getByRole("button", { name: "Elimină proiectul", exact: true }))
       .toBeEnabled();
   });
 });
@@ -542,7 +540,7 @@ it("returns to the project overview after removal, clearing the selection but ke
   state.projects = [state.projects[1]!];
   await using screen = await mountPanel({ machine: remoteId, checkout: "remote:/work/remote" });
   const removeProject = [...screen.container.querySelectorAll("button")].find(
-    (button) => button.textContent === "Remove project",
+    (button) => button.textContent === "Elimină proiectul",
   )!;
 
   await userEvent.click(removeProject);

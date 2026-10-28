@@ -44,13 +44,13 @@ describe("nextThreadAnnouncement", () => {
   it("follows a turn from start to finish", () => {
     expect(
       speak([idle(firstRun, "completed"), busy(), busy(), idle(secondRun, "completed")]),
-    ).toEqual(["Working", "Done"]);
+    ).toEqual(["Lucrează", "Gata"]);
   });
 
   it("says Working once when a send looks idle before its run appears", () => {
     expect(
       speak([idle(null, null), busy(), idle(null, null), busy(), idle(secondRun, "completed")]),
-    ).toEqual(["Working", "Done"]);
+    ).toEqual(["Lucrează", "Gata"]);
   });
 
   it("announces a queued message that starts as the last turn ends", () => {
@@ -64,7 +64,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", thirdRun, "starting"),
         idle(thirdRun, "completed"),
       ]),
-    ).toEqual(["Working", "Working", "Done"]);
+    ).toEqual(["Lucrează", "Lucrează", "Gata"]);
     // The last turn's run is still settling when the follow-up is sent.
     expect(
       speak([
@@ -72,7 +72,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", firstRun, "running"),
         busy("working", secondRun, "starting"),
       ]),
-    ).toEqual(["Working"]);
+    ).toEqual(["Lucrează"]);
     expect(
       speak([
         idle(firstRun, "running"),
@@ -81,7 +81,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", secondRun, "starting"),
         idle(secondRun, "completed"),
       ]),
-    ).toEqual(["Working", "Done"]);
+    ).toEqual(["Lucrează", "Gata"]);
     expect(
       speak([
         busy("working", firstRun, "running"),
@@ -89,7 +89,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", firstRun, "running"),
         busy("working", secondRun, "starting"),
       ]),
-    ).toEqual(["Working"]);
+    ).toEqual(["Lucrează"]);
   });
 
   it("treats a run that starts while the thread looks idle as the next turn", () => {
@@ -102,7 +102,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", secondRun, "running"),
         idle(secondRun, "completed"),
       ]),
-    ).toEqual(["Working", "Done"]);
+    ).toEqual(["Lucrează", "Gata"]);
     // A queued message waiting to start after the last turn.
     expect(
       speak([
@@ -113,7 +113,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", thirdRun, "running"),
         idle(thirdRun, "completed"),
       ]),
-    ).toEqual(["Working", "Working", "Done"]);
+    ).toEqual(["Lucrează", "Lucrează", "Gata"]);
   });
 
   it("stays silent when a thread opens mid-turn or after one", () => {
@@ -122,7 +122,7 @@ describe("nextThreadAnnouncement", () => {
   });
 
   it("announces the end of a turn that was already running when the thread opened", () => {
-    expect(speak([busy(), idle(secondRun, "failed")])).toEqual(["Failed"]);
+    expect(speak([busy(), idle(secondRun, "failed")])).toEqual(["Eșuat"]);
   });
 
   it("says how the turn ended when a queued message was cancelled before it started", () => {
@@ -150,7 +150,7 @@ describe("nextThreadAnnouncement", () => {
       run(secondRun, 1, "completed"),
       run(cancelledRun, 2, "cancelled"),
     ]);
-    expect(speak([busy(), idle(ended?.runId ?? null, ended?.status ?? null)])).toEqual(["Done"]);
+    expect(speak([busy(), idle(ended?.runId ?? null, ended?.status ?? null)])).toEqual(["Gata"]);
   });
 
   it("waits for the run to settle before announcing how the turn ended", () => {
@@ -161,7 +161,7 @@ describe("nextThreadAnnouncement", () => {
         idle(secondRun, "running"),
         idle(secondRun, "interrupted"),
       ]),
-    ).toEqual(["Working", "Stopped"]);
+    ).toEqual(["Lucrează", "Oprit"]);
   });
 
   it("does not report the previous turn's ending when work stops before a new run exists", () => {
@@ -173,7 +173,7 @@ describe("nextThreadAnnouncement", () => {
         busy(),
         idle(secondRun, "completed"),
       ]),
-    ).toEqual(["Working", "Working", "Done"]);
+    ).toEqual(["Lucrează", "Lucrează", "Gata"]);
     // The previous run finished while this client looked idle.
     expect(
       speak([
@@ -182,7 +182,7 @@ describe("nextThreadAnnouncement", () => {
         busy("working", secondRun, "completed"),
         idle(secondRun, "completed"),
       ]),
-    ).toEqual(["Working"]);
+    ).toEqual(["Lucrează"]);
   });
 
   it("lets the next turn start after one is rolled back", () => {
@@ -193,7 +193,7 @@ describe("nextThreadAnnouncement", () => {
         idle(secondRun, "rolled_back"),
         busy("working", RunId.make("run-3")),
       ]),
-    ).toEqual(["Working", "Working"]);
+    ).toEqual(["Lucrează", "Lucrează"]);
   });
 
   it("announces each request once without repeating that work resumed", () => {
@@ -206,7 +206,7 @@ describe("nextThreadAnnouncement", () => {
         busy("input"),
         idle(secondRun, "completed"),
       ]),
-    ).toEqual(["Needs approval", "Needs your input", "Done"]);
+    ).toEqual(["Necesită aprobare", "Necesită răspunsul tău", "Gata"]);
   });
 
   it("announces a second request of the same kind once the first is answered", () => {
@@ -216,6 +216,6 @@ describe("nextThreadAnnouncement", () => {
         busy("approval", secondRun, "running", "request-1"),
         busy("approval", secondRun, "running", "request-2"),
       ]),
-    ).toEqual(["Needs approval", "Needs approval"]);
+    ).toEqual(["Necesită aprobare", "Necesită aprobare"]);
   });
 });

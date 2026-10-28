@@ -604,7 +604,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   );
   const summary =
     sentenceLabels.length < 3
-      ? sentenceLabels.join(" and ")
+      ? sentenceLabels.join(" și ")
       : `${sentenceLabels.slice(0, -1).join(", ")} și ${sentenceLabels.at(-1)}`;
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }

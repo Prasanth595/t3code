@@ -29,7 +29,7 @@ describe("project removal confirmation", () => {
     });
     expect(plan.projectThreads).toHaveLength(1);
     expect(plan.confirmationMessage).toBe(
-      'Remove checkout "Repo" and delete its 1 thread?\nPath: /work/repo\nEnvironment: Local\nThis permanently clears conversation history for those threads and any archived threads.\nOther entries in this grouped project are unaffected.\nThis action cannot be undone.',
+      "Elimini checkout-ul „Repo” și ștergi conversația lui?\nCale: /work/repo\nMediu: Local\nSe șterge definitiv istoricul acestor conversații și al celor arhivate.\nCelelalte intrări din acest proiect grupat nu sunt afectate.\nAcțiunea nu poate fi anulată.",
     );
   });
 
@@ -42,12 +42,12 @@ describe("project removal confirmation", () => {
       threads: [],
     });
     expect(plan.targetKind).toBe("checkout");
-    expect(plan.confirmationMessage).toContain("Environment: Remote");
+    expect(plan.confirmationMessage).toContain("Mediu: Remote");
     expect(plan.confirmationMessage).toContain(
-      "Other entries in this grouped project are unaffected.",
+      "Celelalte intrări din acest proiect grupat nu sunt afectate.",
     );
     expect(plan.confirmationMessage).toContain(
-      "This permanently clears any archived conversation history.",
+      "Se șterge definitiv istoricul conversațiilor arhivate.",
     );
   });
 
@@ -61,9 +61,9 @@ describe("project removal confirmation", () => {
       threads: [],
     });
     expect(plan.targetKind).toBe("project");
-    expect(plan.confirmationMessage).toContain("This removes 2 grouped project entries.");
+    expect(plan.confirmationMessage).toContain("Se elimină 2 intrări de proiect grupate.");
     expect(plan.confirmationMessage).toContain(
-      "This removes only the project entries, not the files on disk.",
+      "Se elimină doar intrările proiectului, nu și fișierele de pe disc.",
     );
   });
 });

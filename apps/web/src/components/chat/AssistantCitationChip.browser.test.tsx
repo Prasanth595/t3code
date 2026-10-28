@@ -65,7 +65,9 @@ function mount(sourceAnchor: AssistantCitationSourceAnchor, onSave: () => boolea
 }
 
 const textarea = () =>
-  document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment on selected text"]');
+  document.querySelector<HTMLTextAreaElement>(
+    'textarea[aria-label="Comentariu la textul selectat"]',
+  );
 
 async function typeComment(value: string) {
   const input = textarea()!;

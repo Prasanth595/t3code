@@ -16,7 +16,7 @@ describe("navigateAfterThreadDeletion", () => {
     expect(addToast).toHaveBeenCalledOnce();
     expect(addToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Thread deleted, but navigation failed",
+        title: "Conversația a fost ștearsă, dar navigarea a eșuat",
         description: "route unavailable",
       }),
     );

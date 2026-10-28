@@ -54,7 +54,7 @@ describe("SidebarProviderUpdatePill exit", () => {
     setup([provider("succeeded")]);
     await screen.rerender(<SidebarProviderUpdatePill />);
     await advance(180);
-    expect(screen.container.textContent).toContain("Pi updated: v2.1.303");
+    expect(screen.container.textContent).toContain("Pi a fost actualizat: v2.1.303");
     expect(screen.container.querySelector('[role="status"]')).toBeNull();
 
     await advance(3_000);
@@ -66,7 +66,7 @@ describe("SidebarProviderUpdatePill exit", () => {
     setup([provider("failed")]);
     await using screen = await render(<SidebarProviderUpdatePill />);
     using _timers = fakeTimers();
-    expect(screen.container.textContent).toContain("Pi update failed");
+    expect(screen.container.textContent).toContain("Pi nu a putut fi actualizat");
 
     await act(() =>
       screen.container

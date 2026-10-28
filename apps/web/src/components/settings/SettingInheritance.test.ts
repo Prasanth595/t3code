@@ -21,10 +21,10 @@ describe("settingInheritanceLayers", () => {
       "defaultThreadEnvMode",
     );
     expect(fromFile.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
-      ["Project", "Inherits", false],
-      ["Laptop", "Inherits", false],
-      ["t3.json", "New worktree", true],
-      ["Default", "Current checkout", false],
+      ["Proiect", "Moștenește", false],
+      ["Laptop", "Moștenește", false],
+      ["t3.json", "Worktree nou", true],
+      ["Implicit", "Checkout curent", false],
     ]);
     const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" as const };
     const fromEnvironment = settingInheritanceLayers(
@@ -38,10 +38,10 @@ describe("settingInheritanceLayers", () => {
       "defaultThreadEnvMode",
     );
     expect(fromEnvironment.map((layer) => [layer.value, layer.effective])).toEqual([
-      ["Inherits", false],
-      ["Current checkout", true],
-      ["Inherits", false],
-      ["Current checkout", false],
+      ["Moștenește", false],
+      ["Checkout curent", true],
+      ["Moștenește", false],
+      ["Checkout curent", false],
     ]);
   });
 });

@@ -19,6 +19,6 @@ describe("attachmentUploadBlockReason", () => {
           },
         },
       }),
-    ).toBe("Attachment still uploading");
+    ).toBe("Atașamentul încă se încarcă");
   });
 });

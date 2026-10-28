@@ -110,7 +110,7 @@ const panel = () => (
 );
 const deleteButton = (container: HTMLElement) =>
   Array.from(container.querySelectorAll("button")).find(
-    (button) => button.textContent === "Delete now",
+    (button) => button.textContent === "Șterge acum",
   )!;
 
 it("keeps cleanup disabled when settled retention and all other rules are off", async () => {

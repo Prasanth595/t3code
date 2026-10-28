@@ -844,7 +844,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "git-fetch-interval",
-    title: "Interval git fetch",
+    title: "Git fetch: interval",
     to: "/settings/source-control",
     searchTerms: [
       "automatic remote branch refresh background credentials security keys seconds off",

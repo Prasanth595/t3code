@@ -32,7 +32,7 @@ describe("loadBalancingSendWarning", () => {
         threadContexts: [localThread, remoteThread],
         candidateEnvironmentIds: [],
       }).title,
-    ).toBe("Checking machine resources");
+    ).toBe("Se verifică resursele calculatorului");
   });
 
   it("blames the attached threads when no machine can read all of them", () => {
@@ -42,7 +42,7 @@ describe("loadBalancingSendWarning", () => {
         threadContexts: [localThread, remoteThread],
         candidateEnvironmentIds: [local, remote],
       }).description,
-    ).toMatch(/No machine can read every attached thread/);
+    ).toMatch(/Niciun calculator nu poate citi toate conversațiile atașate/);
   });
 
   it("blames resources when one machine can read every attached thread", () => {
@@ -52,7 +52,7 @@ describe("loadBalancingSendWarning", () => {
         threadContexts: [localThread],
         candidateEnvironmentIds: [remote, local],
       }).description,
-    ).toMatch(/No eligible machine has available resources/);
+    ).toMatch(/Niciun calculator eligibil nu are resurse disponibile/);
   });
 });
 
@@ -99,22 +99,22 @@ describe("approvalRedirectNotice", () => {
 
   it("says the decline went through when the draft changed after it", () => {
     expect(approvalRedirectNotice({ ...settled, draftChanged: true })).toBe(
-      "Approval declined. Your message changed, so it wasn't sent.",
+      "Aprobare refuzată. Mesajul tău s-a schimbat, așa că nu a fost trimis.",
     );
     expect(approvalRedirectNotice({ ...settled, draftChanged: true, declined: false })).toBe(
-      "Your message changed, so it wasn't sent.",
+      "Mesajul tău s-a schimbat, așa că nu a fost trimis.",
     );
   });
 
   it("explains an approval already being answered", () => {
     expect(
       approvalRedirectNotice({ ...settled, declined: false, approvalResponding: true }),
-    ).toMatch(/already being answered/);
+    ).toMatch(/Se răspunde deja/);
   });
 
   it("explains an approval that arrived during the decline", () => {
     expect(approvalRedirectNotice({ ...settled, approvalArrived: true })).toMatch(
-      /Another approval arrived/,
+      /A sosit altă aprobare/,
     );
   });
 

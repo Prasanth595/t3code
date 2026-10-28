@@ -117,7 +117,7 @@ async function setup() {
     return element!;
   }
 
-  const primaryButton = () => byLabel("Open file in preferred editor");
+  const primaryButton = () => byLabel("Deschide fișierul în editorul preferat");
   const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
 
   async function click(element: HTMLElement) {
@@ -178,7 +178,7 @@ describe("host editor access", () => {
 
     await renderPicker();
     expect(primaryButton().disabled).toBe(true);
-    expect(byLabel("Choose editor").disabled).toBe(true);
+    expect(byLabel("Alege editorul").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
 });
@@ -204,7 +204,7 @@ describe("open in editor announcement", () => {
     await pressOpenFavorite();
     expect(await spoken()).toBe("");
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(await spoken()).toBe("Deschis în VS Code");
 
     for (const region of regions()) region.textContent = "";
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
@@ -212,6 +212,6 @@ describe("open in editor announcement", () => {
     await pressOpenFavorite();
     expect(await spoken()).toBe("");
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(await spoken()).toBe("Deschis în VS Code");
   });
 });

@@ -54,16 +54,16 @@ describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
-    expect(searchSettings("connections", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
+    expect(searchSettings("conexiuni", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
     expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
-    expect(searchSettings("panel animations").map((item) => item.id)).toEqual(["panel-animations"]);
-    expect(searchSettings("thè\u{1ab0}mes")[0]?.id).toBe("theme");
+    expect(searchSettings("sticlă").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
+    expect(searchSettings("animații panouri").map((item) => item.id)).toEqual(["panel-animations"]);
+    expect(searchSettings("tê\u{1ab0}me")[0]?.id).toBe("theme");
     const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
     try {
       expect(searchSettings("GIT")[0]?.id).toBe("git-fetch-interval");
@@ -204,7 +204,7 @@ describe("auto-settlement search availability", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
     });
-    expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
+    expect(searchSettings("finaliz automat", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",

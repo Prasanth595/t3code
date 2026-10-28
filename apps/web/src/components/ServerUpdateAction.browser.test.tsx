@@ -164,7 +164,7 @@ describe("ServerUpdateAction", () => {
       testState.updateServer.mockResolvedValue(success());
 
       await using screen = await renderAction();
-      expect(button(screen, "Update")!.disabled).toBe(!allowed);
+      expect(button(screen, "Actualizează")!.disabled).toBe(!allowed);
       await click(screen, "Update");
 
       expect(testState.updateServer).toHaveBeenCalledTimes(allowed ? 1 : 0);
@@ -175,7 +175,7 @@ describe("ServerUpdateAction", () => {
     using _state = setup();
     await using screen = await renderAction();
     await act(() => setSession(AsyncResult.success({ ...currentSession, scopes: [] })));
-    expect(button(screen, "Update")!.disabled).toBe(true);
+    expect(button(screen, "Actualizează")!.disabled).toBe(true);
     await click(screen, "Update");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
@@ -226,6 +226,6 @@ describe("ServerUpdatesAction", () => {
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({ type: "success", title: "Office updated" }),
     );
-    expect(button(screen, "Update all")!.disabled).toBe(false);
+    expect(button(screen, "Actualizează tot")!.disabled).toBe(false);
   });
 });
