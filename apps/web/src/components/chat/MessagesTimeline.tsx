@@ -1552,19 +1552,18 @@ function ContextCompactionTimelineRow({
   );
 }
 
-function TurnFoldButtonContent({
+function TurnFoldLabel({
   row,
   compact,
 }: {
   row: Extract<TimelineRow, { kind: "turn-fold" }>;
   compact: boolean;
 }) {
-  return (
-    <>
-      <span>{compact ? compactTrajectoryLabel(row.label) : row.label}</span>
-      <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
-    </>
-  );
+  return <span>{compact ? compactTrajectoryLabel(row.label) : row.label}</span>;
+}
+
+function TurnFoldChevron({ expanded }: { expanded: boolean }) {
+  return <MorphIcon className="size-3.5" icon={expanded ? ChevronDown : ChevronRight} />;
 }
 
 function useFittedInlineContent() {
@@ -1603,10 +1602,13 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
             ref={contentRef}
             className="inline-flex w-max items-center gap-x-1 whitespace-nowrap text-sm leading-relaxed text-muted-foreground tabular-nums"
           >
-            <span className="inline-flex items-center gap-1 px-1">
-              <TurnFoldButtonContent row={row} compact={false} />
+            <span className="inline-flex items-center px-1">
+              <TurnFoldLabel row={row} compact={false} />
             </span>
             <AgentTrajectorySegments summary={row.trajectory} measurement />
+            <span className="inline-flex items-center px-1">
+              <TurnFoldChevron expanded={row.expanded} />
+            </span>
           </span>
         </span>
         <Tooltip>
@@ -1622,7 +1624,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
               />
             }
           >
-            <TurnFoldButtonContent row={row} compact={compact} />
+            <TurnFoldLabel row={row} compact={compact} />
           </TooltipTrigger>
           <TooltipPopup>
             Elapsed time for this response, including thinking and tool calls. Click to{" "}
@@ -1630,6 +1632,15 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           </TooltipPopup>
         </Tooltip>
         <AgentTrajectorySegments summary={row.trajectory} compact={compact} />
+        <button
+          type="button"
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={() => ctx.onToggleTurnFold(row.runId)}
+          className="flex cursor-pointer select-none items-center rounded-md px-1 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <TurnFoldChevron expanded={row.expanded} />
+        </button>
       </div>
       <TimelineRowTimestamp
         createdAt={row.createdAt}

@@ -1337,6 +1337,7 @@ function ThreadRunFoldRow(props: {
 
   const content = (compactLabel: boolean, measurement = false) => {
     const FoldButton = measurement ? View : Pressable;
+    const FoldChevron = measurement ? View : Pressable;
     const label = compactLabel ? compactTrajectoryLabel(props.entry.label) : props.entry.label;
     return (
       <>
@@ -1346,7 +1347,7 @@ function ThreadRunFoldRow(props: {
           accessibilityLabel={props.entry.label}
           onPress={measurement ? undefined : () => props.onToggleTurnFold(props.entry.runId)}
           hitSlop={4}
-          className="min-h-11 min-w-0 flex-row items-center gap-2"
+          className="min-h-11 min-w-0 flex-row items-center"
           style={{ minHeight }}
         >
           <Text
@@ -1359,18 +1360,25 @@ function ThreadRunFoldRow(props: {
           >
             {label}
           </Text>
-          <ThreadDisclosureChevron
-            expanded={props.entry.expanded}
-            collapsedDirection="right"
-            size={15}
-            tintColor={props.iconSubtleColor}
-          />
         </FoldButton>
         <ThreadTrajectorySegments
           summary={props.entry.trajectory}
           compact={compactLabel}
           measurement={measurement}
         />
+        <FoldChevron
+          accessible={false}
+          onPress={measurement ? undefined : () => props.onToggleTurnFold(props.entry.runId)}
+          hitSlop={8}
+          className="min-h-11 justify-center"
+        >
+          <ThreadDisclosureChevron
+            expanded={props.entry.expanded}
+            collapsedDirection="right"
+            size={15}
+            tintColor={props.iconSubtleColor}
+          />
+        </FoldChevron>
       </>
     );
   };
