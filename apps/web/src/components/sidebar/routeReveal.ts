@@ -42,21 +42,15 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
       !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
     const scroller = glide ? row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') : null;
+    const from = scroller?.scrollTop ?? 0;
+    row.scrollIntoView({ block: "nearest", behavior: "instant" });
     const list = row.closest("li")?.parentElement;
-    if (!scroller || !list) {
-      row.scrollIntoView({ block: "nearest", behavior: "instant" });
-      return;
-    }
-    requestAnimationFrame(() => {
-      const from = scroller.scrollTop;
-      row.scrollIntoView({ block: "nearest", behavior: "instant" });
-      const moved = scroller.scrollTop - from;
-      const offset = Math.sign(moved) * Math.min(Math.abs(moved), scroller.clientHeight / 4);
-      if (offset === 0) return;
-      list.animate([{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }], {
-        duration: 200,
-        easing: "ease-out",
-      });
+    if (!scroller || !list) return;
+    const moved = scroller.scrollTop - from;
+    if (moved === 0 || Math.abs(moved) > scroller.clientHeight / 4) return;
+    list.animate([{ transform: `translateY(${moved}px)` }, { transform: "translateY(0px)" }], {
+      duration: 200,
+      easing: "ease-out",
     });
   };
 }
