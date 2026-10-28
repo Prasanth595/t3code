@@ -52,9 +52,10 @@ export function installTimelineControls(root: HTMLElement) {
   const onFocusIn = (event: FocusEvent) => {
     ownsFocus = root.contains(event.target as Node);
   };
-  // A click on text drops focus to the body too, and must not pull it back.
-  const onPointerDown = () => {
-    ownsFocus = false;
+  // A click on text elsewhere drops focus to the body too, and must not pull it back.
+  const onPointerDown = (event: PointerEvent) => {
+    const active = document.activeElement;
+    if (active === document.body || !active?.contains(event.target as Node)) ownsFocus = false;
   };
   const controlsOf = (id: string) =>
     Array.from(

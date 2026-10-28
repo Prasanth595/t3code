@@ -613,6 +613,9 @@ describe("MessagesTimeline keyboard navigation", () => {
     await userEvent.tab();
     await userEvent.keyboard("{ArrowUp}");
     expect(focusedText()).toContain("Second question");
+    // Clicking the focused message keeps it focused, so the list still owns focus.
+    await userEvent.click(focusedItem()!);
+    expect(focusedText()).toContain("Second question");
 
     await screen.rerender(timeline(CONVERSATION.filter((entry) => entry.id !== "entry-q2")));
     await vi.waitFor(() => expect(focusedText()).toContain("Second answer"));
