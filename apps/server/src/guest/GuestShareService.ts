@@ -78,7 +78,7 @@ const SNAPSHOT_ROW_LIMIT = 600;
 const SNAPSHOT_USER_TURN_LIMIT = 20;
 // Parsed replies kept across guest media requests; each holds only a reply's image sources.
 const PARSED_REPLY_LIMIT = 2_000;
-// Shared threads with no open guest stream whose sent image replies are still kept.
+// Shares with no open guest stream whose sent image replies are still kept.
 const SHARED_THREAD_REPLIES_LIMIT = 64;
 // How soon an open read notices that its link stopped working, such as Connect no longer serving
 // the host. Closing or replacing the link ends the main stream at once.
@@ -480,31 +480,32 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  // The image replies each shared thread's guest stream has sent, in its opening snapshot or
-  // live, so an image loads while the guest's page can show its reply, inherited ones included.
-  // A thread with an open stream keeps its record; past the limit, closed ones are dropped.
+  // The image replies each share's guest stream has sent, in its opening snapshot or live, so an
+  // image loads while the guest's page can show its reply, inherited ones included. Keyed by
+  // share, so a new link on the thread starts empty. A share with an open stream keeps its
+  // record; past the limit, closed ones are dropped.
   const sentImageReplies = new Map<
-    ThreadId,
+    GuestShareId,
     { openStreams: number; readonly replies: Map<string, AssistantReply> }
   >();
-  const sentRecord = (threadId: ThreadId) => {
-    let record = sentImageReplies.get(threadId);
+  const sentRecord = (shareId: GuestShareId) => {
+    let record = sentImageReplies.get(shareId);
     if (record === undefined) {
       record = { openStreams: 0, replies: new Map() };
-      sentImageReplies.set(threadId, record);
+      sentImageReplies.set(shareId, record);
       for (const [id, other] of sentImageReplies) {
         if (sentImageReplies.size <= SHARED_THREAD_REPLIES_LIMIT) break;
-        if (other.openStreams === 0 && id !== threadId) sentImageReplies.delete(id);
+        if (other.openStreams === 0 && id !== shareId) sentImageReplies.delete(id);
       }
     }
     return record;
   };
-  const rememberSent = (threadId: ThreadId, items: Iterable<OrchestrationV2TurnItem>) => {
+  const rememberSent = (shareId: GuestShareId, items: Iterable<OrchestrationV2TurnItem>) => {
     for (const item of items) {
       // Only replies with image syntax can show an image; the rest are not kept.
       if (item.type !== "assistant_message") continue;
       if (!item.text.includes("![") && !/<img/i.test(item.text)) continue;
-      sentRecord(threadId).replies.set(`${item.threadId}\u0000${item.id}`, item);
+      sentRecord(shareId).replies.set(`${item.threadId}\u0000${item.id}`, item);
     }
   };
 
@@ -555,8 +556,7 @@ const make = Effect.gen(function* () {
         Stream.map((item): ReadonlyArray<GuestStreamEvent> => {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
-          if (item.event.type === "turn-item.updated")
-            rememberSent(thread.id, [item.event.payload]);
+          if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
@@ -578,10 +578,10 @@ const make = Effect.gen(function* () {
       snapshotSequence: snapshot.snapshotSequence,
       projection: snapshot.projection,
     });
-    const record = sentRecord(thread.id);
+    const record = sentRecord(share.id);
     record.openStreams += 1;
     rememberSent(
-      thread.id,
+      share.id,
       openingSnapshot.projection.visibleTurnItems.map((row) => row.item),
     );
     const opening: ReadonlyArray<GuestStreamEvent> = [
@@ -703,10 +703,10 @@ const make = Effect.gen(function* () {
   };
 
   const media = Effect.fn("GuestShareService.media")(function* (session: string, path: string) {
-    const { thread } = yield* authorize(session, "session");
+    const { share } = yield* authorize(session, "session");
     const mimeType = guestHostImageType(path);
     if (mimeType === null) return yield* unavailable;
-    const sent = sentImageReplies.get(thread.id)?.replies.values() ?? [];
+    const sent = sentImageReplies.get(share.id)?.replies.values() ?? [];
     if (!repliesShowImage(path, [...sent], imageSourcesOf)) return yield* unavailable;
     // The bytes must be the image the name says, as for a guest's own upload.
     const header = yield* fileSystem.open(path, { flag: "r" }).pipe(

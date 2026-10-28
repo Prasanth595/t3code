@@ -1076,5 +1076,15 @@ it.effect("keeps a connected guest's images while other shares come and go", () 
       yield* Stream.runDrain(Stream.take(yield* guestShares.stream(other.token), 2));
     }
     assert.equal((yield* guestShares.media(token, shot)).mimeType, "image/png");
+
+    // A new link on the thread starts empty: its guest gets nothing the last guest was sent.
+    const { url } = yield* guestShares.create({ threadId });
+    const next = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Kim",
+    });
+    assert.equal((yield* Effect.flip(guestShares.media(next.token, shot))).reason, "unavailable");
+    yield* Stream.runDrain(Stream.take(yield* guestShares.stream(next.token), 2));
+    assert.equal((yield* guestShares.media(next.token, shot)).mimeType, "image/png");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
