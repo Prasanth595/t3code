@@ -184,6 +184,22 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(foreign.isError).toBe(true);
       expect(foreign.content.map((entry) => entry.type)).toEqual(["text"]);
 
+      const listed = yield* server
+        .callTool({ name: "device_list", arguments: { hostId: "THIS MACHINE" } })
+        .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
+      expect(listed.structuredContent).toMatchObject({
+        hosts: [{ id: "local" }],
+        devices: [device],
+      });
+
+      const unknownHost = yield* server
+        .callTool({ name: "device_screenshot", arguments: { hostId: "oliverMac" } })
+        .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
+      expect(unknownHost.isError).toBe(true);
+      expect(unknownHost.content).toEqual([
+        { type: "text", text: "No device host oliverMac. Known hosts: This machine (local)." },
+      ]);
+
       const denied = yield* server
         .callTool({ name: "device_list", arguments: {} })
         .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
