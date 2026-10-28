@@ -1061,7 +1061,11 @@ function AdaptiveWorkspaceLayoutContent(
                     drawer.closeDrawer();
                     handleSelectThread(thread);
                   }}
-                  onOpenThreadPullRequests={handleOpenThreadPullRequests}
+                  // Close first, so the pull request opens with the page already behind it.
+                  onOpenThreadPullRequests={(thread, pr) => {
+                    drawer.closeDrawer();
+                    handleOpenThreadPullRequests(thread, pr);
+                  }}
                   onSearchQueryChange={setPrimarySidebarSearchQuery}
                   searchQuery={primarySidebarSearchQuery}
                 />
