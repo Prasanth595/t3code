@@ -2945,7 +2945,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.metadata.update" && command.projectId !== thread.projectId
         ? command.projectId
         : undefined;
-    const movesProject = targetProjectId !== undefined;
     if (targetProjectId !== undefined) {
       const project = yield* projects.get(targetProjectId).pipe(mapDispatchError(command));
       if (Option.isNone(project) || project.value.deletedAt !== null) {
@@ -3147,7 +3146,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const changesWorkspace =
-      movesProject ||
+      targetProjectId !== undefined ||
       (command.type === "thread.metadata.update" &&
         command.worktreePath !== undefined &&
         command.worktreePath !== thread.worktreePath);
@@ -3477,7 +3476,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
           // Watches read through the project's checkout, which no longer holds these links.
-          return movesProject
+          return targetProjectId !== undefined
             ? {
                 ...updated,
                 pullRequests: updated.pullRequests?.map((link) =>

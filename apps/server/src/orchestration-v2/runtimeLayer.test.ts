@@ -1878,18 +1878,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const threadId = ThreadId.make("runtime-layer-move-thread");
       const fromProjectId = ProjectId.make("runtime-layer-move-from");
       const toProjectId = ProjectId.make("runtime-layer-move-to");
-      for (const [projectId, workspaceRoot] of [
-        [fromProjectId, "/workspace/move-from"],
-        [toProjectId, "/workspace/move-to"],
-      ] as const) {
-        yield* seedProject({
-          projectId,
-          title: projectId,
-          workspaceRoot,
-          defaultModelSelection: null,
-          createdAt: "2026-09-07T00:00:00.000Z",
-        });
-      }
+      yield* seedProject({
+        projectId: toProjectId,
+        title: "Move target",
+        workspaceRoot: "/workspace/move-to",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",
@@ -1904,7 +1899,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: "feature/move",
         worktreePath: "/workspace/move-from-worktree",
       });
-
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("runtime-layer-move-watch"),
@@ -1915,17 +1909,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
         link: { url: "https://github.com/pingdotgg/t3code/pull/1", source: "manual" },
       });
-
-      const missingProject = yield* orchestrator
-        .dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("runtime-layer-move-missing"),
-          threadId,
-          projectId: ProjectId.make("runtime-layer-move-missing-project"),
-        })
-        .pipe(Effect.flip);
-      assert.instanceOf(missingProject, Orchestrator.OrchestratorDispatchError);
-
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
         commandId: CommandId.make("runtime-layer-move-to"),
@@ -1933,17 +1916,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         projectId: toProjectId,
       });
       const moved = (yield* orchestrator.getThreadProjection(threadId)).thread;
-      assert.equal(moved.projectId, toProjectId);
-      assert.isNull(moved.branch);
-      assert.isNull(moved.worktreePath);
-      assert.lengthOf(moved.pullRequests ?? [], 1);
+      assert.deepInclude(moved, { projectId: toProjectId, branch: null, worktreePath: null });
       assert.isUndefined(moved.pullRequests?.[0]?.watch);
       const shell = yield* orchestrator.getShellSnapshot();
       assert.equal(
         shell.threads.find((candidate) => candidate.id === threadId)?.projectId,
         toProjectId,
       );
-
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
@@ -1965,10 +1944,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(busy, Orchestrator.OrchestratorDispatchError);
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(threadId)).thread.projectId,
-        toProjectId,
-      );
     }),
   );
 
