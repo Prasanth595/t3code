@@ -71,7 +71,8 @@ runs:
           echo "namespace=filtered-$(printf '%s' "$INSTALL_ARGS" | cksum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
         fi
 
-    # Filtered installs fall back to the full store, which holds every package.
+    # Filtered installs prefer the current full store, which holds every package,
+    # over an older store of their own.
     # The pnpm store stays a cache tarball on the runner's own disk. A store on a
     # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
     # package across filesystems instead of hard-linking it: install took 28-49s
@@ -84,13 +85,17 @@ runs:
         path: ${{ steps.pnpm_store.outputs.path }}
         key: pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
         restore-keys: |
+          pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
           pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-
           pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install dependencies
       if: inputs.install == 'true'
       shell: bash
-      run: vp install ${{ inputs.install-args }}
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      # Unquoted so each filter is its own argument.
+      run: vp install $INSTALL_ARGS
 
     # A filtered install that started from the current full store adds nothing
     # worth a second copy of it.
