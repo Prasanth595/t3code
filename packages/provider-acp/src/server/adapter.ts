@@ -185,6 +185,8 @@ export interface AcpAdapterV2ExtensionContext {
     readonly output?: string;
     readonly report?: BackgroundWork;
   }) => Effect.Effect<void>;
+  /** For compactions reported outside ACP `compaction_update`; ignores non-root sessions. */
+  readonly markSessionCompacted: (sessionId: string) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
     requestContext: EffectAcpProtocol.AcpRequestContext,
@@ -1597,6 +1599,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
+        // The next prompt in a compacted root session resends T3's instructions and runtime notes.
+        const markSessionCompacted = Effect.fn("AcpAdapterV2.markSessionCompacted")(function* (
+          sessionId: string,
+        ) {
+          if (sessionId !== (yield* Ref.get(activeSessionId))) return;
+          yield* Ref.update(compactionMarkers, (current) =>
+            new Map(current).set(sessionId, Symbol()),
+          );
+        });
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
@@ -3670,11 +3681,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 updated.delete(context.nativeThreadId);
                 return updated;
               });
-              yield* Ref.update(compactionMarkers, (current) => {
-                const updated = new Map(current);
-                updated.set(context.nativeThreadId, Symbol());
-                return updated;
-              });
+              yield* markSessionCompacted(context.nativeThreadId);
             }
           } else if (mcpIdentity !== undefined) {
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
@@ -5826,6 +5833,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ) ?? Effect.void
                 );
               }
+              // Turn projection misses compactions that finish while idle or after settlement.
+              if (
+                notification.update.sessionUpdate === "compaction_update" &&
+                notification.update.status === "completed"
+              ) {
+                yield* markSessionCompacted(notification.sessionId);
+              }
               yield* handleSessionUpdate(
                 flavor.normalizeSessionUpdate?.(notification) ?? notification,
               );
@@ -6288,6 +6302,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
                     yield* finishSubagentFromNotice(notice);
                   }),
+                ).pipe(Effect.asVoid),
+              markSessionCompacted: (sessionId) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  markSessionCompacted(sessionId),
                 ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>
                 runRuntimeCallbackAtGeneration(
@@ -7019,11 +7038,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             settledStatus === "completed"
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
-            yield* Ref.update(compactionMarkers, (current) => {
-              const updated = new Map(current);
-              updated.set(context.nativeThreadId, Symbol());
-              return updated;
-            });
+            yield* markSessionCompacted(context.nativeThreadId);
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver,

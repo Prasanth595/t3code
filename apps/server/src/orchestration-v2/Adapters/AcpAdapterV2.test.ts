@@ -345,12 +345,18 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     authorizationHeader: "Bearer instruction-compaction-token",
     browserToolsAvailable: true,
   });
+  type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  let sessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+  let copilotSessionEvent:
+    | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+    | undefined;
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       supportsCompaction: true,
+      registerExtensions: makeCopilotSubagentRouting().registerExtensions,
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
@@ -358,6 +364,17 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         environment,
         wrapRuntime: (runtime) => ({
           ...runtime,
+          // The captured handlers deliver frames between turns, while no prompt is in flight.
+          handleSessionUpdate: (next) =>
+            Effect.sync(() => {
+              sessionUpdate = next;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+          handleExtNotification: (method, payload, next) =>
+            Effect.sync(() => {
+              if (method === "github.com/copilot/sessionEvent") {
+                copilotSessionEvent = next as typeof copilotSessionEvent;
+              }
+            }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
             runtime.prompt(payload, options).pipe(Effect.tap(() => runtime.drainEvents)),
@@ -381,30 +398,45 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const now = yield* DateTime.now;
   let ordinal = 0;
-  return Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
-    yield* runtime.startTurn(
-      makeTurnInput({
-        threadId,
-        providerThread,
-        instanceId,
-        runtimePolicy,
-        now,
-        ordinal: ++ordinal,
-        messageText,
-      }),
-    );
-    const terminal = yield* runtime.events.pipe(
-      Stream.filter((event) => event.type === "turn.terminal"),
-      Stream.runHead,
-    );
-    assert.equal(Option.getOrThrow(terminal).status, expectedStatus);
-    while (true) {
-      const event = yield* Queue.take(protocolEvents);
-      if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
-        return rawProtocolPromptTextBlocks(event);
+  const sessionId = "mock-session-1";
+  return {
+    runTurn: Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: ++ordinal,
+          messageText,
+        }),
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal(Option.getOrThrow(terminal).status, expectedStatus);
+      while (true) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+          return rawProtocolPromptTextBlocks(event);
+        }
       }
-    }
-  });
+    }),
+    idleSessionUpdate: Effect.fnUntraced(function* (update: EffectAcpSchema.SessionUpdate) {
+      assert.isDefined(sessionUpdate);
+      yield* sessionUpdate({ sessionId, update });
+    }),
+    idleCopilotSessionEvent: Effect.fnUntraced(function* (event: {
+      readonly type: string;
+      readonly agentId?: string;
+      readonly data: Record<string, unknown>;
+    }) {
+      assert.isDefined(copilotSessionEvent);
+      yield* copilotSessionEvent({ sessionId, ...event });
+    }),
+  };
 });
 
 function assertReinjectedInstructions(
@@ -1044,12 +1076,13 @@ describe("AcpAdapterV2", () => {
   );
 
   it.live(
-    "reinjects ACP instructions after protocol compaction, including during reinjection",
+    "reinjects ACP instructions after protocol compaction, during reinjection or while idle",
     () =>
       Effect.gen(function* () {
-        const runTurn = yield* makeInstructionCompactionHarness({
-          T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
-        });
+        const { runTurn, idleSessionUpdate, idleCopilotSessionEvent } =
+          yield* makeInstructionCompactionHarness({
+            T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
+          });
         yield* runTurn("Start work.");
         yield* runTurn("Continue until context compacts.");
         assert.deepEqual(yield* runTurn("  /repro-skill"), [
@@ -1064,6 +1097,33 @@ describe("AcpAdapterV2", () => {
           "Continue after the second compaction.",
         );
         assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
+
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-idle",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after idle compaction."),
+          "Continue after idle compaction.",
+        );
+        const copilotCompaction = { success: true, outcome: "applied", trigger: "threshold" };
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          agentId: "agent-a",
+          data: copilotCompaction,
+        });
+        assert.deepEqual(yield* runTurn("Continue after subagent compaction."), [
+          { type: "text", text: "Continue after subagent compaction." },
+        ]);
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          data: copilotCompaction,
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after Copilot compaction."),
+          "Continue after Copilot compaction.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1071,7 +1131,7 @@ describe("AcpAdapterV2", () => {
     "reinjects ACP instructions after successful native compact, but not failed compact",
     () =>
       Effect.gen(function* () {
-        const runTurn = yield* makeInstructionCompactionHarness({
+        const { runTurn } = yield* makeInstructionCompactionHarness({
           T3_ACP_FAIL_PROMPT_ORDINAL: "2",
         });
         yield* runTurn("Start work.");
