@@ -202,8 +202,9 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const cloneRepository = async (repository: PromptLinkRepository) => {
     const environmentId = lastActiveEnvironmentId();
     const environment = environments.find((entry) => entry.environmentId === environmentId);
-    const newProjectsRoot = environment?.serverConfig?.newProjectsRoot ?? null;
-    if (environmentId === null || newProjectsRoot === null) {
+    const serverConfig = environment?.serverConfig ?? null;
+    const newProjectsRoot = serverConfig?.newProjectsRoot ?? null;
+    if (environmentId === null || serverConfig === null || newProjectsRoot === null) {
       setState({
         status: "failed",
         message:
@@ -214,7 +215,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     setState({ status: "opening" });
     const projectId = newProjectId();
     const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
-    const settings = environment.serverConfig.settings;
+    const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
       input: {

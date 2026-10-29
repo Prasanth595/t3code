@@ -35,8 +35,6 @@ export function useEnvironmentQuery<A, E>(
     successResult: result._tag === "Success" && !result.waiting ? result : null,
     failure: result._tag === "Failure" ? Cause.squash(result.cause) : null,
     error: result._tag === "Failure" ? formatError(result.cause) : null,
-    failure:
-      result._tag === "Failure" ? Option.getOrNull(Cause.findErrorOption(result.cause)) : null,
     isPending: atom !== null && result.waiting,
     isSuccess: result._tag === "Success",
     refresh,
