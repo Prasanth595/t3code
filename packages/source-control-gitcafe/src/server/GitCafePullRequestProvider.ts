@@ -684,8 +684,10 @@ export const make = Effect.gen(function* () {
     const key = `${input.host} ${input.repository.toLowerCase()} ${input.number} ${revision.baseOid} ${revision.headOid}`;
     const held = lineTotals.get(key);
     const { headOid } = revision;
+    // A listing that stopped before its last page counts only part of the diff, so nothing is held.
+    const listed = after === null;
     if (held !== undefined)
-      return { headOid, complete: true, stats: { changedFiles: files.length, ...held } };
+      return { headOid, complete: listed, stats: { changedFiles: files.length, ...held } };
     const tooMany = files.length > LINE_STATS_MAX_FILES;
     const details = files.some((file) => file.additions !== undefined)
       ? Option.some(files)
@@ -701,14 +703,14 @@ export const make = Effect.gen(function* () {
           );
     // Unread hunks leave the lines unknown rather than zero; the file count still stands.
     if (Option.isNone(details))
-      return { headOid, complete: tooMany, stats: { changedFiles: files.length } };
+      return { headOid, complete: listed && tooMany, stats: { changedFiles: files.length } };
     const counted = details.value;
     const totals = {
       additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
       deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
     };
-    remember(lineTotals, key, totals);
-    return { headOid, complete: true, stats: { changedFiles: files.length, ...totals } };
+    if (listed) remember(lineTotals, key, totals);
+    return { headOid, complete: listed, stats: { changedFiles: files.length, ...totals } };
   });
 
   const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
