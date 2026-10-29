@@ -19,11 +19,7 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | {
-      readonly kind: "checks-finished";
-      readonly count: number;
-      readonly failed: ReadonlyArray<PullRequestCheck>;
-    }
+  | { readonly kind: "checks-finished"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "conflicting" };
 
 export interface PullRequestWatchReport {
@@ -67,11 +63,12 @@ export function evaluatePullRequestWatch(
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     // A rerun can go pending or pass between reads; either arms the final notice again.
+    // The notice ends the watch, so it waits for a complete read of the remarks.
     const pending = detail.checks.some((check) => check.status === "pending");
     if (pending || passedNow) {
       finished = false;
     } else if (remarks !== null && newlyFailed.length === 0 && !finished) {
-      changes.push({ kind: "checks-finished", count: detail.checks.length, failed });
+      changes.push({ kind: "checks-finished", checks: detail.checks });
       finished = true;
     }
     const gateNames = gate.map((check) => check.name);
@@ -215,11 +212,13 @@ function changeLines(
       return [
         `- No checks have reported${context.commit} after ${change.minutes} minutes. None may be configured to run on this change.`,
       ];
-    case "checks-finished":
+    case "checks-finished": {
+      const passed = change.checks.filter((check) => check.status === "success").length;
       return [
-        `- All ${change.count} checks finished${context.commit}. ${change.count - change.failed.length} passed. Still failing:`,
-        ...listed(change.failed, checkLine),
+        `- All ${change.checks.length} checks finished${context.commit}. ${passed} passed. Still failing:`,
+        ...listed(change.checks.filter(isFailedCheck), checkLine),
       ];
+    }
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
   }

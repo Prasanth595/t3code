@@ -87,6 +87,8 @@ interface LastRead {
 interface ReadPlan {
   readonly detail: boolean;
   readonly activity: boolean;
+  /** The final check notice may end a watch on this read, so cached remarks cannot stand in. */
+  readonly finishing: boolean;
 }
 
 const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
@@ -138,26 +140,34 @@ function planRead(
   now: number,
 ): ReadPlan {
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
-    return { detail: true, activity: true };
+    return { detail: true, activity: true, finishing: false };
   }
-  const finishing = group.targets.some(
-    ({ watch }) => watch.failedChecks.length > 0 && !watch.passed && !watch.finished,
-  );
+  // Fingerprints miss edits inside review threads, so the notice that ends a watch goes out with a
+  // full read. Reading activity on every sweep while checks run would spend host quota, so it waits
+  // for the sweep after they settled.
+  const finishing =
+    !last.inFlight &&
+    group.targets.some(
+      ({ watch }) => watch.failedChecks.length > 0 && !watch.passed && !watch.finished,
+    );
   if (fingerprint === null) {
     const read =
+      finishing ||
       last.inFlight ||
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
       now - last.at >= QUIET_REREAD_MS;
-    return { detail: finishing || read, activity: read };
+    return { detail: read, activity: read, finishing };
   }
   const activity =
+    finishing ||
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
   return {
-    detail: finishing || activity || last.status !== fingerprint.status || last.inFlight,
+    detail: activity || last.status !== fingerprint.status || last.inFlight,
     activity,
+    finishing,
   };
 }
 
@@ -459,9 +469,10 @@ export const make = Effect.gen(function* () {
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
-      (fingerprint !== null && last.remarks !== fingerprint.remarks)
+      (fingerprint !== null && last.remarks !== fingerprint.remarks) ||
+      plan.finishing
     ) {
-      // A new watch or changed host remarks needs a fresh view of every tail.
+      // A new watch, changed host remarks, or the final notice needs a fresh view of every tail.
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
@@ -523,7 +534,6 @@ export const make = Effect.gen(function* () {
           fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
         )
       : null;
-    const remarksComplete = plan.activity ? remarks !== null : (last?.remarksComplete ?? false);
     lastReads.set(group.key, {
       at:
         plan.activity || last === undefined
@@ -533,18 +543,13 @@ export const make = Effect.gen(function* () {
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
-      remarksComplete,
+      remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(
-        target.watch,
-        detail,
-        remarks ?? (remarksComplete ? [] : null),
-        now,
-      );
+      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
       if (report.changes.length > 0) {
         const wake = pullRequestWatchMessage({
           number: target.link.number,

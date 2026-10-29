@@ -241,7 +241,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(incomplete.changes, []);
     assert.isFalse(incomplete.next.finished);
     const final = evaluatePullRequestWatch(incomplete.next, done, noRemarks);
-    assert.deepEqual(final.changes, [{ kind: "checks-finished", count: 3, failed: [labels] }]);
+    assert.deepEqual(final.changes, [{ kind: "checks-finished", checks: done.checks }]);
     assert.isTrue(final.finished);
     assert.isTrue(final.next.finished);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
@@ -268,9 +268,7 @@ describe("evaluatePullRequestWatch", () => {
     ]);
     assert.isFalse(first.finished);
     const final = evaluatePullRequestWatch(first.next, done, noRemarks);
-    assert.deepEqual(final.changes, [
-      { kind: "checks-finished", count: 2, failed: [check("test", "failure")] },
-    ]);
+    assert.deepEqual(final.changes, [{ kind: "checks-finished", checks: done.checks }]);
     const pushed = detail({ headSha: "bbbbbbbbbb", checks: [check("test", "pending")] });
     assert.isFalse(evaluatePullRequestWatch(final.next, pushed, noRemarks).next.finished);
   });
@@ -304,7 +302,9 @@ describe("evaluatePullRequestWatch", () => {
   });
 
   it("ends the message with the stop notice when the checks finished", () => {
-    const done = detail({ checks: [check("lint", "success"), check("test", "failure")] });
+    const done = detail({
+      checks: [check("lint", "success"), check("test", "failure"), check("docs", "skipped")],
+    });
     const first = evaluatePullRequestWatch(watch(), done, noRemarks);
     const report = evaluatePullRequestWatch(first.next, done, noRemarks);
     const { text, notification } = pullRequestWatchMessage({
@@ -314,7 +314,7 @@ describe("evaluatePullRequestWatch", () => {
       headSha: report.next.headSha,
       report,
     });
-    assert.include(text, "- All 2 checks finished on aaaaaaa. 1 passed. Still failing:");
+    assert.include(text, "- All 3 checks finished on aaaaaaa. 1 passed. Still failing:");
     assert.include(text, "  - test https://ci.example/test");
     assert.include(text, "T3 Code stopped watching: every check has finished");
     assert.equal(notification.outcome, "failed");

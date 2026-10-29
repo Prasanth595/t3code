@@ -3033,7 +3033,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
           });
         yield* watch("start");
+        const link = Effect.map(
+          orchestrator.getThreadShell(threadId),
+          (thread) => thread?.pullRequests?.[0],
+        );
+        const started = DateTime.makeUnsafe((yield* link)!.watch!.startedAt);
         let reads = 0;
+        // Fingerprints carry the review-thread count, not edits inside a thread.
+        const edited: PullRequestComment = {
+          id: "review-1",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Edited after the failure.",
+          createdAt: DateTime.formatIso(DateTime.subtract(started, { minutes: 1 })),
+          editedAt: DateTime.formatIso(DateTime.add(started, { minutes: 1 })),
+          url: null,
+          path: "src/index.ts",
+          reviewState: null,
+        };
+        let comments: Array<PullRequestComment> = [];
         const host = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(PullRequestService.PullRequestService)({
@@ -3050,13 +3068,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 });
               }),
             activity: () =>
-              Effect.succeed({
-                comments: [],
-                commentCount: 0,
+              Effect.sync(() => ({
+                comments,
+                commentCount: comments.length,
                 commentsTruncated: false,
                 reviewThreads: [],
                 commits: [],
-              }),
+              })),
           }),
         );
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
@@ -3064,22 +3082,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           orchestrator.getThreadRecords(threadId, ["messages"]),
           ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
         );
-        const link = Effect.map(
-          orchestrator.getThreadShell(threadId),
-          (thread) => thread?.pullRequests?.[0],
-        );
         yield* reactor.sweep;
         yield* worker.drain();
         assert.deepEqual(yield* summaries, ["#15: checks failed"]);
+        comments = [edited];
         yield* TestClock.adjust("2 minutes");
         yield* reactor.sweep;
         yield* worker.drain();
         assert.deepEqual(yield* summaries, [
           "#15: checks failed",
-          "#15: checks finished, stopped watching",
+          "#15: checks finished, new comments, stopped watching",
         ]);
         assert.isUndefined((yield* link)?.watch);
         assert.isTrue((yield* link)?.endedWatch?.finished);
+        assert.equal((yield* link)?.endedWatch?.remarksThrough, edited.editedAt);
         assert.equal(reads, 2);
         yield* TestClock.adjust("2 minutes");
         yield* watch("again");
@@ -3790,7 +3806,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const pagesBefore = pagesRead;
       yield* TestClock.adjust("2 minutes");
       yield* reactor.sweep;
-      assert.equal(pagesRead, pagesBefore);
+      // The final read pages every tail again; cached tails cannot show an edit.
+      assert.equal(pagesRead - pagesBefore, incomplete || mode === "single page" ? 0 : 2);
 
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(
