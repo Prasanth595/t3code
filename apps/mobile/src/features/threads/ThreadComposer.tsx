@@ -906,6 +906,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
               ></Animated.View>
+              {/* TalkBack orders siblings by position; outside this row the editor reads after Send. */}
               <Animated.View
                 style={[
                   compactEditor.editorStyle,
