@@ -3405,9 +3405,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", branch]);
           const sparsePath = pathService.join(pathService.dirname(worktreePath), branch);
+          // A relative path also covers the git commands that run inside the new worktree.
           yield* driver.createWorktree({
             cwd,
-            path: sparsePath,
+            path: pathService.relative(cwd, sparsePath),
             refName: initialBranch,
             newRefName: branch,
           });

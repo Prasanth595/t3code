@@ -3868,6 +3868,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
+    // Later steps run git inside the worktree, so resolve a relative path the way worktree add does.
+    worktreePath = path.resolve(input.cwd, worktreePath);
     // Read before the branch exists, so a missing pattern file leaves nothing behind.
     const sparsePatterns = yield* readWorktreeSparsePatterns(input.cwd, input.refName);
     if (input.newRefName) {
@@ -3915,19 +3917,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
     if (sparsePatterns !== null) {
-      // worktree add resolved a relative path against input.cwd; these commands run in it.
-      const createdPath = path.resolve(input.cwd, worktreePath);
       yield* Effect.gen(function* () {
         // The first sparse-checkout in a repository enables extensions.worktreeConfig.
         yield* runGit(
           "GitVcsDriver.createWorktree.sparseCheckout",
-          createdPath,
+          worktreePath,
           ["sparse-checkout", "set", "--no-cone", "--stdin"],
           { stdin: sparsePatterns, writesSharedConfig: true },
         );
         yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.createWorktree.checkout",
-          createdPath,
+          worktreePath,
           ["-c", `checkout.workers=${checkoutWorkers}`, "checkout"],
           {
             fallbackErrorDetail: "git checkout failed",
@@ -3937,7 +3937,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
       }).pipe(
         Effect.onError(() =>
-          removeWorktree({ cwd: input.cwd, path: createdPath, force: true }).pipe(Effect.ignore),
+          removeWorktree({ cwd: input.cwd, path: worktreePath, force: true }).pipe(Effect.ignore),
         ),
       );
     }
