@@ -17,7 +17,6 @@ import {
   ServerSettings,
   ServerSettingsError,
   ServerSettingsOperation,
-  OnePasswordSecretProviderConfig,
   ServerSettingsPatch,
   withIdleCompaction,
   requiredScopesForServerSettingsPatch,
@@ -29,7 +28,6 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-const decodeOnePasswordConfig = Schema.decodeUnknownSync(OnePasswordSecretProviderConfig);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("workflow preset settings", () => {
@@ -332,13 +330,14 @@ describe("ServerSettings secret providers", () => {
     ).toThrow();
   });
 
-  it("rejects a 1Password account op could misread", () => {
+  it("rejects writes of an unknown kind or an account op could misread", () => {
+    const write = (entry: unknown) => () =>
+      decodeServerSettingsPatch({ secretProviders: { personal: entry } });
     for (const account of ["", "my account", "--help"]) {
-      expect(() => decodeOnePasswordConfig({ account })).toThrow();
+      expect(write(onePassword(account))).toThrow();
     }
-    expect(decodeOnePasswordConfig({ account: "my.1password.com" }).account).toBe(
-      "my.1password.com",
-    );
+    expect(write({ kind: "one_password", label: "Personal" })).toThrow();
+    expect(write({ kind: "openbao", label: "Vault", config: { address: "https://x" } })).toThrow();
   });
 });
 
