@@ -76,7 +76,12 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
-import { shouldRecedeThreadRow } from "./thread-row-emphasis";
+import {
+  hasThreadRowAsyncQuestion,
+  shouldRecedeThreadRow,
+  threadRowAccessibilityLabel,
+  threadRowStatusText,
+} from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -688,7 +693,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
-  const hasAsyncQuestion = status === "working" && thread.hasPendingAsyncQuestion === true;
+  const hasAsyncQuestion = hasThreadRowAsyncQuestion({
+    status,
+    hasPendingAsyncQuestion: thread.hasPendingAsyncQuestion,
+  });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
@@ -696,7 +704,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
-  const recede = !hasAsyncQuestion && shouldRecedeThreadRow({ status, selected });
+  const recede = shouldRecedeThreadRow({ status, selected, hasAsyncQuestion });
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1170,8 +1178,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
-                {/* Beside Input the spinner and timer already say Working; Goal says more. */}
-                {hasAsyncQuestion && statusLabel.label === "Working" ? null : statusLabel.label}
+                {threadRowStatusText({ hasAsyncQuestion, label: statusLabel.label })}
                 {status === "working" ? (
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (
@@ -1319,13 +1326,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
-  const rowAccessibilityLabel = [
-    thread.title,
-    hasAsyncQuestion ? `Input, ${statusLabel?.label === "Goal" ? "Goal" : "still working"}` : null,
-    props.hasQueuedMessages ? "messages queued to send" : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  const rowAccessibilityLabel = threadRowAccessibilityLabel({
+    title: thread.title,
+    hasAsyncQuestion,
+    statusLabel: statusLabel?.label ?? null,
+    hasQueuedMessages: props.hasQueuedMessages === true,
+  });
 
   const rowContent = (close: () => void) =>
     variant === "card" ? (
