@@ -28,6 +28,47 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
+  it("gives an image on its own line the standalone image slot next to caption lines", async () => {
+    type NativeNode = { type: string; children?: NativeNode[] };
+    const standaloneImages = async (markdown: string) => {
+      const flags: boolean[] = [];
+      const visit = (node: NativeNode) =>
+        node.children?.forEach((child) => {
+          if (child.type === "Image")
+            flags.push(node.type === "Paragraph" && node.children!.length === 1);
+          visit(child);
+        });
+      visit(
+        (await parseMarkdown(
+          markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        )) as NativeNode,
+      );
+      return flags;
+    };
+    const shot = "https://github.com/user-attachments/assets/0f3c";
+    expect(await standaloneImages(`<sub>Before — overview</sub>\n![](${shot})`)).toEqual([true]);
+    expect(await standaloneImages(`Before\n![before](${shot})\nAfter\n![after](${shot})`)).toEqual([
+      true,
+      true,
+    ]);
+    expect(await standaloneImages(`![](${shot})\n<sub>Caption below</sub>`)).toEqual([true]);
+    expect(await standaloneImages(`> Before\n> ![](${shot})`)).toEqual([true]);
+    expect(await standaloneImages(`Before\r\n![](${shot})\r\nAfter`)).toEqual([true]);
+    expect(await standaloneImages(`- ![](${shot})\n  Caption below`)).toEqual([true]);
+    expect(await standaloneImages(`- Before\n  ![](${shot})`)).toEqual([true]);
+    expect(await standaloneImages(`Before\r![](${shot})`)).toEqual([true]);
+    expect(await standaloneImages(`Before  \n![](${shot})`)).toEqual([true]);
+    expect(await standaloneImages(`Before ![](${shot}) inline`)).toEqual([false]);
+    for (const lazy of [
+      `> Before\n![](${shot})\nAfter`,
+      `> > Before\n> ![](${shot})`,
+      `- Before\n  ![](${shot})\nAfter`,
+      `- Before\n![](${shot})\nAfter`,
+      `Before\\\n![](${shot})`,
+    ])
+      expect(markdownForNativeRendering(lazy, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(lazy);
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';

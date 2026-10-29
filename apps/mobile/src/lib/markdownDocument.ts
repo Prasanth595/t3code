@@ -306,11 +306,74 @@ function transformNativeMarkdown(
       }
     }
   }
-  if (!linkFiles && !breakTables) return markdown;
+  const breakImages = tableBreaks && markdown.includes("![");
+  if (!linkFiles && !breakTables && !breakImages) return markdown;
   const edits: MarkdownEdit[] = [];
   const fileEdits: MarkdownEdit[] = [];
   let rewritesPipe = false;
+  const breakOffsets = new Set<number>();
+  const containerPrefix = /[ \t>]*/y;
+  const prefixAt = (lineStart: number) => {
+    containerPrefix.lastIndex = lineStart;
+    return containerPrefix.exec(markdown)![0];
+  };
+  const quoteDepth = (prefix: string) => prefix.split(">").length - 1;
+  // After a blank line, a line stays in its quote or list item only at the same quote depth
+  // and the item's content indent; four more spaces would open an indented code block.
+  const staysInContainer = (lineStart: number, depth: number, indent: number) => {
+    const prefix = prefixAt(lineStart);
+    return (
+      !prefix.includes("\t") &&
+      quoteDepth(prefix) === depth &&
+      prefix.length >= indent &&
+      prefix.length - indent < 4
+    );
+  };
+  const breakBefore = (lineStart: number) => {
+    if (breakOffsets.has(lineStart)) return;
+    breakOffsets.add(lineStart);
+    const prefix = prefixAt(lineStart);
+    const ending =
+      markdown.slice(lineStart - 2, lineStart) === "\r\n" ? "\r\n" : markdown[lineStart - 1]!;
+    edits.push({ start: lineStart, end: lineStart, content: `${prefix.trimEnd()}${ending}` });
+  };
+  // The native renderer only gives an image its full-size, authenticated slot when it is
+  // the paragraph's only child, so an image on its own line becomes its own paragraph.
+  // Siblings decide "alone on its line", which keeps lines full of images linear.
+  const breakImageLines = (paragraph: Extract<MarkdownNode, { type: "paragraph" }>) => {
+    const first = paragraph.position?.start;
+    if (first?.offset === undefined) return;
+    const indent = first.column - 1;
+    const depth = quoteDepth(prefixAt(first.offset - indent));
+    paragraph.children.forEach((child, index) => {
+      const start = child.position?.start;
+      const end = child.position?.end.offset;
+      if (child.type !== "image" && child.type !== "imageReference") return;
+      if (start?.offset === undefined || end === undefined) return;
+      const previous = paragraph.children[index - 1];
+      const next = paragraph.children[index + 1];
+      const startsLine =
+        previous === undefined ||
+        // A backslash break would show as a literal `\` once the image leaves its paragraph.
+        (previous.type === "break" && markdown[previous.position?.start.offset ?? -1] !== "\\") ||
+        (previous.type === "text" && /[\r\n]$/.test(previous.value));
+      if (!startsLine) return;
+      let newline = end;
+      while (markdown[newline] === " " || markdown[newline] === "\t") newline += 1;
+      const endsLine =
+        next === undefined ||
+        ((next.type === "text" || next.type === "break") && /[\r\n]/.test(markdown[newline] ?? ""));
+      if (!endsLine) return;
+      const lineStart = start.offset - (start.column - 1);
+      const nextLineStart = newline + (markdown.startsWith("\r\n", newline) ? 2 : 1);
+      if (previous !== undefined && !staysInContainer(lineStart, depth, indent)) return;
+      if (next !== undefined && !staysInContainer(nextLineStart, depth, indent)) return;
+      if (previous !== undefined) breakBefore(lineStart);
+      if (next !== undefined) breakBefore(nextLineStart);
+    });
+  };
   const visit = (node: MarkdownNode) => {
+    if (breakImages && node.type === "paragraph") breakImageLines(node);
     if (linkFiles && node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
@@ -359,7 +422,11 @@ function transformNativeMarkdown(
   // Rewritten pipes can change table structure, so preserve the original pass ordering.
   if (breakTables && rewritesPipe)
     return markdownWithTableBreaks(applyMarkdownEdits(markdown, fileEdits));
-  return applyMarkdownEdits(markdown, edits);
+  // Image breaks are recorded at their paragraph, ahead of edits to its children.
+  return applyMarkdownEdits(
+    markdown,
+    [...edits].sort((left, right) => left.start - right.start || left.end - right.end),
+  );
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
