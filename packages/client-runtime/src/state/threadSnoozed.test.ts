@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canSnooze,
+  effectiveSettled,
   effectiveSnoozed,
   hasQueuedTurnStart,
   pickSnoozePreset,
@@ -164,6 +165,33 @@ describe("threadRaisedHandWhileSnoozed", () => {
     expect(
       threadRaisedHandWhileSnoozed(
         makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("effectiveSettled", () => {
+  const settled = (input: Parameters<typeof makeShell>[0]) => ({
+    ...makeShell(input),
+    settledOverride: "settled" as const,
+    settledAt: SNOOZED_AT,
+  });
+
+  it("shows a run that started after settling only while it needs the user", () => {
+    const afterSettle = { turnRequestedAt: PAST_WAKE, turnCompletedAt: null };
+    expect(effectiveSettled(settled(afterSettle))).toBe(true);
+    expect(effectiveSettled(settled({ ...afterSettle, pending: "approval" }))).toBe(false);
+    expect(effectiveSettled(settled({ ...afterSettle, sessionStatus: "error" }))).toBe(false);
+  });
+
+  it("keeps requests from before the settle hidden", () => {
+    expect(
+      effectiveSettled(
+        settled({
+          turnRequestedAt: "2026-04-10T08:00:00.000Z",
+          turnCompletedAt: null,
+          pending: "approval",
+        }),
       ),
     ).toBe(true);
   });

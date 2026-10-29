@@ -190,6 +190,7 @@ interface ScheduledTaskRow {
   readonly schedule_json: string;
   readonly project_id: string;
   readonly thread_id: string | null;
+  readonly quiet: number;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -335,6 +336,7 @@ const decodeRow = Effect.fnUntraced(
       schedule,
       projectId: row.project_id,
       threadId: row.thread_id,
+      quiet: row.quiet === 1,
       workspaceStrategy,
       modelSelection,
       runtimeMode: row.runtime_mode,
@@ -473,6 +475,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        quiet,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -510,6 +513,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        quiet,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -585,6 +589,7 @@ export const layer = Layer.effect(
           schedule_json,
           project_id,
           thread_id,
+          quiet,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -609,6 +614,7 @@ export const layer = Layer.effect(
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
           ${task.threadId},
+          ${task.quiet ? 1 : 0},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -634,6 +640,7 @@ export const layer = Layer.effect(
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           thread_id = excluded.thread_id,
+          quiet = excluded.quiet,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -863,6 +870,7 @@ export const layer = Layer.effect(
               threadId,
               messageId,
               scheduledTaskId: active.id,
+              quiet: active.quiet,
               text: prompt,
               attachments: [],
               mode: "queue",
@@ -1232,6 +1240,7 @@ export const layer = Layer.effect(
         schedule,
         projectId: input.projectId,
         threadId: input.threadId ?? null,
+        quiet: input.quiet ?? existingTask?.quiet ?? false,
         workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,

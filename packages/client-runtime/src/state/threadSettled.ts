@@ -84,6 +84,27 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
  * until its timer.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
+  return threadRaisedHandSince(shell, shell.snoozedAt);
+}
+
+export interface ThreadSettledShell extends ThreadSnoozeShell {
+  readonly settledOverride: EnvironmentThreadShell["settledOverride"];
+  readonly settledAt: string | null;
+}
+
+/**
+ * Only a quiet scheduled run starts while a thread stays settled. Like a snooze, it shows the
+ * thread outside Settled while that run needs the user.
+ */
+export function effectiveSettled(shell: ThreadSettledShell): boolean {
+  if (shell.settledOverride !== "settled") return false;
+  const requestedAt = (shell.latestRun ?? shell.latestTurn)?.requestedAt;
+  if (shell.settledAt == null || requestedAt == null) return true;
+  if (Date.parse(requestedAt) <= Date.parse(shell.settledAt)) return true;
+  return !threadRaisedHandSince(shell, shell.settledAt);
+}
+
+function threadRaisedHandSince(shell: ThreadSnoozeShell, since: string | null | undefined) {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   if (shell.source?.pendingRuntimeRequest != null) return true;
   if (shell.pendingSubagentRequest != null) return true;
@@ -91,8 +112,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   const failedAt = failureEdgeAt(shell);
   return (
     failedAt !== undefined &&
-    (shell.snoozedAt == null ||
-      (failedAt != null && Date.parse(failedAt) > Date.parse(shell.snoozedAt)))
+    (since == null || (failedAt != null && Date.parse(failedAt) > Date.parse(since)))
   );
 }
 

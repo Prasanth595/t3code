@@ -71,6 +71,11 @@ environment's time zone, which may differ from your phone's.
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
+A task that posts into a thread brings that thread back to your inbox on each
+run. To leave a settled or snoozed thread where it is, turn on **Keep thread in
+place** in the task's editor. The thread still comes back when a run asks for
+approval or input, or fails.
+
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
