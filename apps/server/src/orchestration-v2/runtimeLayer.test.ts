@@ -53,6 +53,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -7258,8 +7259,8 @@ const layerWorkflowTurnTest = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
   ProjectionStore.layer,
 ).pipe(
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(McpProviderSessions.layer),
+  Layer.provideMerge(McpSessionRegistryTestkit.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
@@ -7302,6 +7303,14 @@ it.layer(layerWorkflowTurnTest)("workflow approval in the runtime composition", 
         branch: null,
         worktreePath: process.cwd(),
       });
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: modelSelection.instanceId,
+        capabilities: new Set(["orchestration", "workflows"]),
+      });
+      yield* sessions.set(issued.config);
     });
 
   /** What a person types in the client, run through the real turn start. */

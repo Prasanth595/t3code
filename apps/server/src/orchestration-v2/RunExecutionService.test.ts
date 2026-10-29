@@ -77,7 +77,9 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
 const layerWorkflowApprovalGateTest = WorkflowApprovalGate.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      McpProviderSessions.layer,
+      Layer.mock(McpProviderSessions.McpProviderSessions)({
+        read: () => Effect.succeed({ capabilities: new Set(["workflows"]) } as never),
+      }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getThreadRecords: () =>
           Effect.succeed({

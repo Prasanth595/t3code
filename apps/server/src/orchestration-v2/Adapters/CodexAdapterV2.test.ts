@@ -2202,6 +2202,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           environmentId: EnvironmentId.make("test"),
           threadId: harness.threadId,
           providerSessionId: "member-context-session",
+          workflowMember: true,
           providerInstanceId: ProviderInstanceId.make("codex"),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
