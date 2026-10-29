@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  SecretProviderId,
   ServerSettings,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
@@ -1366,6 +1367,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         for (const name of secretNames) {
           assert.isTrue(Option.isSome(yield* store.get(name)), name);
         }
+        const secret = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Antigravity/token",
+        };
+        const referenced = yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            ...client.providerInstances[instanceId]!,
+            environment: [
+              { name: "API_TOKEN", value: secret, sensitive: true, valueRedacted: true },
+            ],
+          },
+        });
+        assert.isTrue(Option.isNone(yield* store.get(secretNames[1]!)));
+        assert.deepEqual(
+          ServerSettingsModule.redactServerSettingsForClient(referenced).providerInstances[
+            instanceId
+          ]?.environment,
+          [{ name: "API_TOKEN", value: secret, sensitive: true }],
+        );
         yield* service.updateSettings({
           providerInstances: {},
           sourceControlHosts: {
