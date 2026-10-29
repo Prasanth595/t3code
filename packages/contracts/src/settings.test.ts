@@ -119,13 +119,13 @@ describe("ServerSettings usage price overrides", () => {
 
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
-    kind: "1password",
+    kind: "one_password",
     label: "Personal",
     config: { account },
   });
 
-  it("keeps an unknown provider kind from invalidating the rest of the settings", () => {
-    const openbao = { kind: "openbao", label: "Vault", config: { address: "https://x" } };
+  it("keeps an unknown kind or a longer label from invalidating the rest of the settings", () => {
+    const openbao = { kind: "openbao", label: "V".repeat(65), config: { address: "https://x" } };
     const decoded = decodeServerSettings({
       worktreesDirectory: "/work",
       secretProviders: { vault: openbao, personal: onePassword("my.1password.com") },
@@ -140,14 +140,19 @@ describe("ServerSettings secret providers", () => {
   it("accepts slug ids and null removals but no id that is not a slug", () => {
     expect(
       decodeServerSettingsPatch({
-        secretProviders: { personal: onePassword("my.1password.com"), work: null },
+        secretProviders: { "1password": onePassword("my.1password.com"), work: null },
       }).secretProviders,
-    ).toEqual({ personal: onePassword("my.1password.com"), work: null });
-    for (const id of ["", "My Vault", "a/b", "1password"]) {
+    ).toEqual({ "1password": onePassword("my.1password.com"), work: null });
+    for (const id of ["", "My Vault", "a/b", "-vault"]) {
       expect(() =>
         decodeServerSettingsPatch({ secretProviders: { [id]: onePassword("my.1password.com") } }),
       ).toThrow();
     }
+    expect(() =>
+      decodeServerSettingsPatch({
+        secretProviders: { work: { ...onePassword("my.1password.com"), label: "V".repeat(65) } },
+      }),
+    ).toThrow();
   });
 
   it("rejects a 1Password account op could misread", () => {

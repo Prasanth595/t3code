@@ -533,7 +533,7 @@ describe("serverSettings helpers", () => {
     const personal = SecretProviderId.make("personal");
     const work = SecretProviderId.make("work");
     const onePassword = (label: string, account: string) => ({
-      kind: SecretProviderKind.make("1password"),
+      kind: SecretProviderKind.make("one_password"),
       label,
       config: { account: OnePasswordAccount.make(account) },
     });

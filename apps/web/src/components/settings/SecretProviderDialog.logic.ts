@@ -6,38 +6,35 @@ import {
   type OnePasswordAccount,
   type SecretProviderConfig,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-const decodeSecretProviderId = Schema.decodeResult(SecretProviderId);
+const decodeSecretProviderId = Schema.decodeOption(SecretProviderId);
 const decodeOnePasswordConfig = Schema.decodeUnknownOption(OnePasswordSecretProviderConfig);
 
 export type ClassifiedSecretProvider =
-  | { readonly kind: "1password"; readonly account: OnePasswordAccount }
+  | { readonly kind: "one_password"; readonly account: OnePasswordAccount }
   | { readonly kind: "unsupported" };
 
 /** Unknown kinds and configs that no longer decode are shown read-only; removal stays available. */
 export function classifySecretProvider(provider: SecretProviderConfig): ClassifiedSecretProvider {
-  if (provider.kind !== "1password") return { kind: "unsupported" };
+  if (provider.kind !== "one_password") return { kind: "unsupported" };
   const decoded = decodeOnePasswordConfig(provider.config);
   return decoded._tag === "Some"
-    ? { kind: "1password", account: decoded.value.account }
+    ? { kind: "one_password", account: decoded.value.account }
     : { kind: "unsupported" };
 }
 
-/** Stable and readable in settings.json; the id must also be a valid slug, which starts with a letter. */
-function secretProviderIdFromName(name: string): Result.Result<SecretProviderId, string> {
+/** Stable and readable in settings.json, so re-adding a provider under the same name restores its variables. */
+function secretProviderIdFromName(name: string): SecretProviderId | null {
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 64)
     .replace(/-$/, "");
-  if (slug.length === 0) return Result.fail("The name needs at least one letter or digit.");
-  return Result.mapError(
-    decodeSecretProviderId(slug),
-    () => "The name needs to start with a letter.",
-  );
+  return Option.getOrNull(decodeSecretProviderId(slug));
 }
 
 export interface SecretProviderDraft {
@@ -49,7 +46,7 @@ export function draftFromSecretProvider(provider: SecretProviderConfig): SecretP
   const classified = classifySecretProvider(provider);
   return {
     name: provider.label,
-    account: classified.kind === "1password" ? classified.account : "",
+    account: classified.kind === "one_password" ? classified.account : "",
   };
 }
 
@@ -92,16 +89,10 @@ export function secretProviderFromDraft(
   if (Result.isFailure(label)) {
     nameIssue = label.failure;
   } else {
-    if (target.mode === "edit") {
-      id = target.id;
-    } else {
-      const generated = secretProviderIdFromName(label.success);
-      if (Result.isFailure(generated)) nameIssue = generated.failure;
-      else {
-        id = generated.success;
-        if (existingIds.has(id)) nameIssue = "A secret provider with this name exists.";
-      }
-    }
+    id = target.mode === "edit" ? target.id : secretProviderIdFromName(label.success);
+    if (id === null) nameIssue = "The name needs at least one letter or digit.";
+    else if (target.mode === "add" && existingIds.has(id))
+      nameIssue = "A secret provider with this name exists.";
   }
 
   if (
@@ -118,7 +109,7 @@ export function secretProviderFromDraft(
   return Result.succeed({
     id,
     config: {
-      kind: SecretProviderKind.make("1password"),
+      kind: SecretProviderKind.make("one_password"),
       label: label.success,
       config: { account: account.success },
     },

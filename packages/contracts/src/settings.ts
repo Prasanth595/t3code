@@ -46,7 +46,6 @@ import {
   ProviderInstanceConfig,
   ProviderInstanceId,
   ProviderDriverKind,
-  SlugSchema,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -853,14 +852,17 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
-export const SecretProviderId = SlugSchema.pipe(Schema.brand("SecretProviderId"));
-export type SecretProviderId = typeof SecretProviderId.Type;
-
-// Same shape as a slug but may start with a digit, because the first kind is "1password".
-export const SecretProviderKind = TrimmedNonEmptyString.check(
+// Final once shipped: a key or field that fails here fails the whole settings decode on older builds.
+// Unlike provider slugs it may start with a digit, so a provider named "1Password" fits.
+const SecretProviderSlug = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
-).pipe(Schema.brand("SecretProviderKind"));
+);
+
+export const SecretProviderId = SecretProviderSlug.pipe(Schema.brand("SecretProviderId"));
+export type SecretProviderId = typeof SecretProviderId.Type;
+
+export const SecretProviderKind = SecretProviderSlug.pipe(Schema.brand("SecretProviderKind"));
 export type SecretProviderKind = typeof SecretProviderKind.Type;
 
 const ONE_PASSWORD_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -889,10 +891,16 @@ export type OnePasswordSecretProviderConfig = typeof OnePasswordSecretProviderCo
 /** Kinds decode their own config; unknown-kind envelopes round-trip verbatim across versions. */
 export const SecretProviderConfig = Schema.Struct({
   kind: SecretProviderKind,
-  label: SecretProviderLabel,
+  label: TrimmedNonEmptyString,
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type SecretProviderConfig = typeof SecretProviderConfig.Type;
+
+// Limits that may change later are enforced on writes only, never on the stored envelope.
+const SecretProviderConfigWrite = Schema.Struct({
+  ...SecretProviderConfig.fields,
+  label: SecretProviderLabel,
+});
 
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
@@ -1661,7 +1669,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
   secretProviders: Schema.optionalKey(
-    Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfig)),
+    Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 

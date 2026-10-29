@@ -7,17 +7,17 @@ const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const ENVIRONMENT_VARIABLE_NAME_MAX_CHARS = 128;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-export const SlugSchema = TrimmedNonEmptyString.check(
+const slugSchema = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PROVIDER_SLUG_MAX_CHARS),
   Schema.isPattern(PROVIDER_SLUG_PATTERN),
 );
 
-export const ProviderDriverKind = SlugSchema.pipe(Schema.brand("ProviderDriverKind"));
+export const ProviderDriverKind = slugSchema.pipe(Schema.brand("ProviderDriverKind"));
 export type ProviderDriverKind = typeof ProviderDriverKind.Type;
 
 export const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
-export const ProviderInstanceId = SlugSchema.pipe(Schema.brand("ProviderInstanceId"));
+export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
 
 export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(

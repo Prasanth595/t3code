@@ -30,7 +30,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 const SECRET_PROVIDER_KINDS: Readonly<
   Record<string, { readonly name: string; readonly icon: Icon }>
 > = {
-  "1password": { name: "1Password", icon: OnePasswordIcon },
+  one_password: { name: "1Password", icon: OnePasswordIcon },
 };
 
 export function SecretsSettingsPanel() {
@@ -127,7 +127,7 @@ function EnvironmentSecretProviders({
                   </span>
                 }
                 description={
-                  classified.kind === "1password" && kind ? (
+                  classified.kind === "one_password" && kind ? (
                     <span className="flex min-w-0 items-center gap-1">
                       <span className="shrink-0">{kind.name} ·</span>
                       <RedactedSensitiveText
