@@ -79,6 +79,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
 import {
@@ -125,6 +126,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
+import { registerCommands } from "../shortcuts/dispatcher";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -241,6 +243,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { isAppModalPage } from "./sidebar/mainAppLocation";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -886,7 +889,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open: sidebarOpen, setOpen: setSidebarOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -2884,6 +2887,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   };
+
+  const onFocusSearchShortcut = useStableCallback((event: KeyboardEvent) => {
+    if (isAppModalPage(router.state.location.pathname)) return false;
+    if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    // The collapsed sidebar is inert until the expanded state commits, and an inert input cannot take focus.
+    if (!isMobile && !sidebarOpen) flushSync(() => setSidebarOpen(true));
+    threadSearchInputRef.current?.focus();
+    threadSearchInputRef.current?.select();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase thread search shortcut while the sidebar is mounted
+  useEffect(
+    () => registerCommands({ "sidebar.focusSearch": onFocusSearchShortcut }, { capture: true }),
+    [onFocusSearchShortcut],
+  );
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
