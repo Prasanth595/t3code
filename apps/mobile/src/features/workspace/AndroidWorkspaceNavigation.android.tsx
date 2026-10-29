@@ -86,13 +86,6 @@ export function AndroidWorkspaceNavigation(props: {
   const rail = Boolean(props.rail);
   const floating = !rail && Boolean(props.floating);
   const tabs = [...visibleNavigationTabs(order, hidden, rail ? 5 : 4), "settings"];
-  const metrics = floatingTabsMetrics(
-    tabs.length,
-    scale,
-    fabSize,
-    props.paneWidth ?? window.width,
-    props.fillWidth,
-  );
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail, floating);
   const selectedTab = selectedNavigationTab(
@@ -101,6 +94,15 @@ export function AndroidWorkspaceNavigation(props: {
     root?.settingsOpen ?? false,
     hidden,
     rail ? 5 : 4,
+  );
+  // Only the Chats list draws the compose button beside the bar.
+  const metrics = floatingTabsMetrics(
+    tabs.length,
+    scale,
+    fabSize,
+    props.paneWidth ?? window.width,
+    props.fillWidth,
+    selectedTab === "threads" && connectionState.hasConnections,
   );
   if (!rail && keyboardVisible) return null;
 
