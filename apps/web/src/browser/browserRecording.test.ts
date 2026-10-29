@@ -54,7 +54,7 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => {
           save,
           startScreencast: async (tabId: string) => {
             const result = await startScreencast(tabId);
-            if (result === undefined) requestDisplayMediaCapture(tabId);
+            if (result === undefined) await requestDisplayMediaCapture(tabId);
             return result;
           },
           stopScreencast,
