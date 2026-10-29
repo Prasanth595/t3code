@@ -458,6 +458,11 @@ async function runCheck(
         schema: JUDGMENT_RESULT_SCHEMA,
       },
     });
+  } catch (error) {
+    return {
+      outcome: "error",
+      detail: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     if (stored !== undefined) {
       await Effect.runPromise(

@@ -482,6 +482,27 @@ describe("workflow runner", () => {
       expect(harness.spawned()).toBe(0);
     }),
   );
+  it.effect("settles a worker when its judge exceeds the agent limit", () =>
+    Effect.gen(function* () {
+      const { runner, completed, workflowUpdates } = yield* makeHarness();
+      yield* launch(
+        runner,
+        'for (let i = 0; i < 999; i++) await agent("a" + i); return await agent("judged", { verify: { type: "judgment", rubric: ["Correct"] } })',
+      );
+      yield* Deferred.await(completed);
+      const worker = workflowUpdates.at(-1)?.agents.at(-1);
+      expect(worker).toMatchObject({
+        state: "failed",
+        outcomeCategory: "check_failed",
+        verification: {
+          type: "judgment",
+          outcome: "error",
+          detail: "This workflow reached its limit of 1000 agents.",
+        },
+      });
+      expect(worker?.runnerSettledAt).toBeDefined();
+    }),
+  );
   it.effect("refuses the agent past the per-workflow limit of 1000", () =>
     Effect.gen(function* () {
       const { runner, completed, spawned } = yield* makeHarness();
