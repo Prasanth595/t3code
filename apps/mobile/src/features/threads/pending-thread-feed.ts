@@ -5,10 +5,10 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import {
-  threadHasCaughtUpTo,
-  type AcknowledgedThreadMessage,
-  type QueuedThreadMessage,
+import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/thread-state";
+import type {
+  AcknowledgedThreadMessage,
+  QueuedThreadMessage,
 } from "../../state/thread-outbox-model";
 
 /**
