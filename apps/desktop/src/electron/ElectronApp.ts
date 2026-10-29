@@ -6,6 +6,8 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+import { toIntlLocale } from "./systemLocale.ts";
+
 export interface ElectronAppMetadata {
   readonly appVersion: string;
   readonly appPath: string;
@@ -122,8 +124,7 @@ export const make = ElectronApp.of({
     };
   }),
   name: Effect.sync(() => Electron.app.name),
-  // NSLocale returns en_GB-style tags; Intl requires hyphens.
-  systemLocale: Effect.sync(() => Electron.app.getSystemLocale().replace(/_/g, "-")),
+  systemLocale: Effect.sync(() => toIntlLocale(Electron.app.getSystemLocale())),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({
