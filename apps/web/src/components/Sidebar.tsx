@@ -382,23 +382,6 @@ function resolveDraggedOrders(input: {
   };
 }
 
-function createDepartureStore() {
-  let threadKey: string | null = null;
-  const listeners = new Set<() => void>();
-  return {
-    get: () => threadKey,
-    set(next: string | null) {
-      if (next === threadKey) return;
-      threadKey = next;
-      for (const listener of listeners) listener();
-    },
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-}
-
 function routeThreadOnly(
   threads: readonly EnvironmentThreadShell[],
   routeThreadKey: string | null,
@@ -1132,16 +1115,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
-  const [departure] = useState(createDepartureStore);
-  const departingThreadKey = useSyncExternalStore(departure.subscribe, departure.get);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forgets the departed thread once the route has left it, so returning to it shows its shelf row again
-  useEffect(() => {
-    if (departure.get() !== routeThreadKey) departure.set(null);
-  }, [departure, routeThreadKey]);
-  const departRouteThread = (threadKey: string) => departure.set(threadKey);
-  const stayOnRouteThread = (threadKey: string) => {
-    if (departure.get() === threadKey) departure.set(null);
-  };
+  const [departingThreadKey, setDepartingThreadKey] = useState<string | null>(null);
+  if (departingThreadKey !== null && departingThreadKey !== routeThreadKey) {
+    setDepartingThreadKey(null);
+  }
+  const departRouteThread = (threadKey: string) => setDepartingThreadKey(threadKey);
+  const stayOnRouteThread = (threadKey: string) =>
+    setDepartingThreadKey((current) => (current === threadKey ? null : current));
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
