@@ -1,5 +1,6 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { PendingUserInputAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
@@ -8,7 +9,7 @@ import {
   type ProviderApprovalOption,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { CircleCheckIcon, SparklesIcon } from "lucide-react";
+import { CheckIcon, CircleCheckIcon, SparklesIcon } from "lucide-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -64,6 +65,13 @@ const APPROVAL_OPTIONS = [
   { decision: "decline", label: "Decline" },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
+interface QuestionProgress {
+  readonly requestId: string;
+  readonly index: number;
+  readonly answers: Record<string, PendingUserInputAnswer>;
+  readonly picked: ReadonlyArray<string>;
+}
+
 interface CardOption {
   readonly label: string;
   readonly description?: string | undefined;
@@ -73,7 +81,7 @@ const threadKeyOf = (entry: AdhdQueueEntry) =>
   scopedThreadKey(scopeThreadRef(entry.thread.environmentId, entry.thread.id));
 
 const OVERLAY_SELECTOR =
-  '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot$="-popup"]';
+  '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot$="-popup"]';
 
 // Keys typed into a field or an open dialog or menu belong there, not to the card underneath.
 function ignoresCardKeys(target: EventTarget | null): boolean {
@@ -110,8 +118,16 @@ export function AdhdModeView() {
     })),
   );
   const projectNames = new Map(projectKeys.map((project) => [project.key, project.name]));
+  const visibleThreads = new Set(
+    filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent),
+  );
   const queue = buildAdhdQueue({
-    threads: filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent),
+    threads: threads.filter(
+      (thread) =>
+        visibleThreads.has(thread) ||
+        // Subagents hide under their parent, but a question of theirs needs its own card.
+        (thread.archivedAt === null && (thread.hasPendingApprovals || thread.hasPendingUserInput)),
+    ),
     lastVisitedAt: (thread) =>
       resolveThreadLastVisitedAt(
         thread.lastVisitedAt,
@@ -240,8 +256,7 @@ function AdhdCard(props: {
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [progress, setProgress] = useState<QuestionProgress | null>(null);
 
   const requestSuggestions = useEffectEvent(() =>
     suggestNextPrompts({ environmentId: thread.environmentId, input: { threadId: thread.id } }),
@@ -269,6 +284,11 @@ function AdhdCard(props: {
     entry.kind === "input" && pending
       ? (derivePendingUserInputs(pending.userInputs)[0] ?? null)
       : null;
+  // Progress belongs to one request; a follow-up request on the same thread starts over.
+  const requestProgress =
+    userInput !== null && progress?.requestId === userInput.requestId ? progress : null;
+  const questionIndex = requestProgress?.index ?? 0;
+  const picked = requestProgress?.picked ?? [];
   const question = userInput?.questions[questionIndex] ?? null;
 
   const approvalOptions = (approval?.options ?? APPROVAL_OPTIONS).filter(
@@ -304,11 +324,12 @@ function AdhdCard(props: {
     title: string,
     action: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
   ) => {
-    if (busy || !canOperate) return;
+    if (busy || !canOperate) return false;
     setBusy(true);
     const result = await action();
     setBusy(false);
     reportFailure(title, result);
+    return result._tag === "Success";
   };
 
   const sendPrompt = (text: string) =>
@@ -324,21 +345,41 @@ function AdhdCard(props: {
       }),
     );
 
-  const answerQuestion = (value: string) => {
-    if (userInput === null || question === null) return;
-    const next = { ...answers, [question.id]: value };
+  const answerQuestion = async (value: PendingUserInputAnswer) => {
+    if (userInput === null || question === null) return false;
+    const answers = { ...requestProgress?.answers, [question.id]: value };
     if (questionIndex + 1 < userInput.questions.length) {
-      setAnswers(next);
-      setQuestionIndex(questionIndex + 1);
+      setProgress({
+        requestId: userInput.requestId,
+        index: questionIndex + 1,
+        answers,
+        picked: [],
+      });
       setHighlight(null);
-      return;
+      return true;
     }
-    void run("Could not send the answer", () =>
+    return run("Could not send the answer", () =>
       respondToUserInput({
         environmentId: thread.environmentId,
-        input: { threadId: thread.id, requestId: userInput.requestId, answers: next },
+        input: { threadId: thread.id, requestId: userInput.requestId, answers },
       }),
     );
+  };
+
+  const optionValue = (index: number) => {
+    const raw = question?.options[index];
+    return raw === undefined ? null : (raw.value ?? raw.label);
+  };
+
+  const togglePick = (index: number) => {
+    const value = optionValue(index);
+    if (userInput === null || value === null) return;
+    setProgress({
+      requestId: userInput.requestId,
+      index: questionIndex,
+      answers: requestProgress?.answers ?? {},
+      picked: picked.includes(value) ? picked.filter((item) => item !== value) : [...picked, value],
+    });
   };
 
   const accept = (index: number) => {
@@ -354,8 +395,10 @@ function AdhdCard(props: {
         }),
       );
     } else if (entry.kind === "input") {
-      const raw = question?.options[index];
-      if (raw) answerQuestion(raw.value ?? raw.label);
+      const value = optionValue(index);
+      if (value === null) return;
+      // With nothing picked, E answers a multi-select question with the highlighted option alone.
+      void answerQuestion(question?.multiSelect ? (picked.length > 0 ? picked : [value]) : value);
     } else {
       void sendPrompt(option.label);
     }
@@ -364,8 +407,12 @@ function AdhdCard(props: {
   const sendReply = () => {
     const text = reply.trim();
     if (text.length === 0) return;
-    setReplying(false);
-    setReply("");
+    // The draft stays until the send goes through, so a failed send can be retried.
+    const clearOnSuccess = (sent: boolean) => {
+      if (!sent) return;
+      setReplying(false);
+      setReply("");
+    };
     if (entry.kind === "approval") {
       if (approval === null || approval.responseCapability !== "live") return;
       if (!approval.supportsFeedback) {
@@ -382,15 +429,15 @@ function AdhdCard(props: {
             feedback: text,
           },
         }),
-      );
+      ).then(clearOnSuccess);
     } else if (entry.kind === "input") {
       if (question?.allowCustomAnswer === false) {
         toastManager.add({ type: "info", title: "This question only takes the listed answers." });
         return;
       }
-      answerQuestion(text);
+      void answerQuestion(text).then(clearOnSuccess);
     } else {
-      void sendPrompt(text);
+      void sendPrompt(text).then(clearOnSuccess);
     }
   };
 
@@ -420,6 +467,7 @@ function AdhdCard(props: {
     if (/^[1-9]$/.test(key)) props.onJump(Number(key) - 1);
     else if (key === "arrowdown") setHighlight(Math.min(selected + 1, options.length - 1));
     else if (key === "arrowup") setHighlight(Math.max(selected - 1, 0));
+    else if (key === " " && question?.multiSelect) togglePick(selected);
     else if (key === "e" || key === "enter") accept(selected);
     else if (key === "r") {
       // A suggested prompt starts as the draft, so a small tweak is a small edit.
@@ -508,7 +556,7 @@ function AdhdCard(props: {
               role="option"
               aria-selected={index === selected}
               onMouseEnter={() => setHighlight(index)}
-              onClick={() => accept(index)}
+              onClick={() => (question?.multiSelect ? togglePick(index) : accept(index))}
               className={cn(
                 "flex items-center gap-3 rounded-md px-2 py-1.5 text-start",
                 index === selected && "bg-accent",
@@ -524,6 +572,9 @@ function AdhdCard(props: {
                   <span className="block text-xs text-muted-foreground">{option.description}</span>
                 ) : null}
               </span>
+              {question?.multiSelect && picked.includes(optionValue(index) ?? "") ? (
+                <CheckIcon aria-label="Picked" className="size-4" />
+              ) : null}
               {index === recommended ? (
                 <span className="text-xs text-muted-foreground">Recommended</span>
               ) : null}
@@ -572,6 +623,11 @@ function AdhdCard(props: {
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> choose
         </span>
+        {question?.multiSelect ? (
+          <span className="flex items-center gap-1">
+            <Kbd>Space</Kbd> pick
+          </span>
+        ) : null}
         <span className="flex items-center gap-1">
           <Kbd>E</Kbd> accept
         </span>

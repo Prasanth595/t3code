@@ -26,9 +26,10 @@ function resolveCardKind(
   lastVisitedAt: string | undefined,
   now: string,
 ): AdhdCardKind | null {
-  const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval") return "approval";
-  if (status === "input") return "input";
+  if (thread.hasPendingApprovals) return "approval";
+  if (thread.hasPendingUserInput) return "input";
+  // A subagent's request is answered in its own thread, which gets its own card.
+  const status = resolveSidebarThreadStatus({ ...thread, pendingSubagentRequest: null });
   if (status === "failed") return "failed";
   if (status !== "ready") return null;
   const wokeAt = threadWokeAt(thread, { now });

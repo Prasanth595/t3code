@@ -79,9 +79,13 @@ describe("buildAdhdQueue", () => {
     ]);
   });
 
-  it("leaves out working, seen, settled, and snoozed threads", () => {
+  it("leaves out working, seen, settled, and snoozed threads, and parents of asking subagents", () => {
     expect(
       queueIds([
+        thread("parent-of-asking", "project-a", {
+          pendingSubagentRequest: "approval",
+          lastVisitedAt: "2026-03-09T11:30:00.000Z",
+        }),
         thread("working", "project-a", {
           runtime: { ...failedRuntime, status: "running", activeRunId: "run-1" as never },
         }),
