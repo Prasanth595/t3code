@@ -3024,6 +3024,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    /** Quiet-wait limit for this watch; null disables it. The owning server supplies the default. */
+    quietTimeoutMinutes: Schema.optional(Schema.NullOr(PositiveInt)),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,
@@ -3348,6 +3350,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
+    expectedQuietDeadline: Schema.optional(Schema.NullOr(IsoDateTime)),
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),

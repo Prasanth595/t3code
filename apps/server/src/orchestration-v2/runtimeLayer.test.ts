@@ -2623,6 +2623,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const started = yield* watchOf;
       assert.isDefined(started);
       if (started === undefined) return;
+      assert.isUndefined(started.quietDeadline);
 
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -3333,6 +3334,155 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-no-checks-end"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+    }),
+  );
+
+  it.effect("persists one quiet wake across restarts and unchanged host fingerprints", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("pr-watch-quiet");
+      const projectId = ProjectId.make("pr-watch-quiet-project");
+      yield* seedProject({
+        projectId,
+        title: "Quiet watch",
+        workspaceRoot: "/workspace/quiet-watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("quiet-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId,
+        title: "Quiet watch",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+      const watching = (id: string, quietTimeoutMinutes?: number | null) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`quiet-watch-${id}`),
+          threadId,
+          ...key,
+          watching: true,
+          ...(quietTimeoutMinutes === undefined ? {} : { quietTimeoutMinutes }),
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+        });
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const wakes = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.filter((message) => message.notification != null),
+      );
+      let state: PullRequestDetail["state"] = "open";
+      let reads = 0;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () => Effect.succeed({ status: "running", remarks: "unchanged" }),
+          invalidate: () => Effect.void,
+          detail: () =>
+            Effect.sync(() => {
+              reads++;
+              return {
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: key.number,
+                  at: "2026-10-01T00:00:00.000Z",
+                }),
+                state,
+                capabilities: {
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: key.number,
+                    at: "2026-10-01T00:00:00.000Z",
+                  }).capabilities,
+                  checksAlwaysReport: false,
+                },
+                checks: [],
+              };
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      yield* watching("start", 5);
+      const initial = yield* watchOf;
+      assert.equal(initial?.quietDeadline?.timeoutMinutes, 5);
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      yield* TestClock.adjust("4 minutes");
+      yield* watching("idempotent");
+      assert.deepEqual((yield* watchOf)?.quietDeadline, initial?.quietDeadline);
+      const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* restarted.sweep;
+      assert.lengthOf(yield* wakes, 0);
+      assert.equal(reads, 2);
+      yield* TestClock.adjust("1 minute");
+      yield* restarted.sweep;
+      assert.equal(reads, 3, "the deadline bypasses the unchanged fingerprint cache");
+      const delivered = yield* watchOf;
+      assert.deepEqual(delivered?.quietDeadline, { timeoutMinutes: 5, dueAt: null });
+      assert.lengthOf(yield* wakes, 1);
+      assert.include((yield* wakes)[0]!.text, "No actionable update");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual((yield* watchOf)?.quietDeadline, delivered?.quietDeadline);
+
+      const stale = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("quiet-stale"),
+          threadId,
+          ...key,
+          startedAt: initial!.startedAt,
+          expectedQuietDeadline: initial!.quietDeadline!.dueAt,
+          watch: delivered!,
+          wake: {
+            messageId: MessageId.make("quiet-duplicate"),
+            text: "Duplicate",
+            notification: { source: { kind: "monitor" }, outcome: "updated", summary: "Duplicate" },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(stale._tag, "OrchestratorDispatchError");
+      yield* TestClock.adjust("1 hour");
+      const again = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* again.sweep;
+      assert.lengthOf(yield* wakes, 1);
+
+      yield* watching("rearm");
+      assert.isString((yield* watchOf)?.quietDeadline?.dueAt);
+      state = "closed";
+      yield* TestClock.adjust("5 minutes");
+      yield* again.sweep;
+      assert.isUndefined(yield* watchOf);
+      assert.lengthOf(yield* wakes, 2);
+      assert.include((yield* wakes)[1]!.text, "was closed");
+
+      yield* watching("disabled", null);
+      assert.isUndefined((yield* watchOf)?.quietDeadline);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("quiet-end"),
         threadId,
         ...key,
         watching: false,

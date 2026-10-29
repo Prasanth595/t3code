@@ -19,6 +19,7 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
+  | { readonly kind: "quiet"; readonly minutes: number }
   | { readonly kind: "conflicting" };
 
 export interface PullRequestWatchReport {
@@ -136,10 +137,23 @@ export function evaluatePullRequestWatch(
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
+  let quietDeadline = watch.quietDeadline;
+  if (quietDeadline !== undefined) {
+    if ((headMoved && watch.headSha !== null) || changes.length > 0) {
+      quietDeadline = {
+        ...quietDeadline,
+        dueAt: DateTime.formatIso(DateTime.makeUnsafe(now + quietDeadline.timeoutMinutes * 60_000)),
+      };
+    } else if (quietDeadline.dueAt !== null && now >= Date.parse(quietDeadline.dueAt)) {
+      changes.push({ kind: "quiet", minutes: quietDeadline.timeoutMinutes });
+      quietDeadline = { ...quietDeadline, dueAt: null };
+    }
+  }
   return {
     changes,
     next: {
       startedAt: watch.startedAt,
+      ...(quietDeadline === undefined ? {} : { quietDeadline }),
       headSha,
       failedChecks,
       passed,
@@ -201,6 +215,10 @@ function changeLines(
       return [
         `- No checks have reported${context.commit} after ${change.minutes} minutes. None may be configured to run on this change.`,
       ];
+    case "quiet":
+      return [
+        `- No actionable update has arrived for ${change.minutes} minutes. Check whether CI or review is still progressing; this notice does not satisfy any review or merge requirement.`,
+      ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
   }
@@ -211,6 +229,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-passed": "checks passed",
   remarks: "new comments",
   "no-checks": "no checks reported",
+  quiet: "still waiting",
   conflicting: "merge conflict",
 };
 
