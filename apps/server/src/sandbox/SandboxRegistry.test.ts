@@ -22,7 +22,7 @@ import * as SandboxRegistry from "./SandboxRegistry.ts";
 
 const decodeEmpty = Schema.decodeUnknownEffect(Schema.Struct({}));
 
-const memoryDriver = (kind: string) => {
+const memoryDriver = (kind: string, options?: { readonly probeFails?: boolean }) => {
   let opens = 0;
   const driverKind = SandboxDriverKind.make(kind);
   const driver = defineSandboxDriver({
@@ -38,13 +38,22 @@ const memoryDriver = (kind: string) => {
           instanceId: input.instanceId,
           driverKind,
           displayName: kind,
-          probe: Effect.succeed({
-            driver: driverKind,
-            instanceId: input.instanceId,
-            displayName: kind,
-            enabled: true,
-            available: true,
-          }),
+          probe: options?.probeFails
+            ? Effect.fail(
+                new SandboxDriverError({
+                  driver: driverKind,
+                  instanceId: input.instanceId,
+                  operation: "probe",
+                  cause: "unreadable",
+                }),
+              )
+            : Effect.succeed({
+                driver: driverKind,
+                instanceId: input.instanceId,
+                displayName: kind,
+                enabled: true,
+                available: true,
+              }),
           list: Effect.sync(() => [...sandboxes.values()]),
           create: (request) =>
             Effect.sync(() => {
@@ -135,6 +144,32 @@ describe("SandboxRegistry", () => {
         SandboxRegistry.layerWith({
           drivers: [memory.driver],
           instances: [instance("one", "memory", true), instance("two", "memory", true)],
+        }),
+      ),
+    );
+  });
+
+  it.effect("lists an instance whose probe fails as unavailable", () => {
+    const healthy = memoryDriver("memory");
+    const broken = memoryDriver("broken", { probeFails: true });
+    return Effect.gen(function* () {
+      const registry = yield* SandboxRegistry.SandboxRegistry;
+      const snapshots = yield* registry.listInstances;
+      assert.equal(
+        snapshots.find((snapshot) => snapshot.instanceId === SandboxInstanceId.make("bad"))
+          ?.available,
+        false,
+      );
+      assert.equal((yield* registry.list(SandboxInstanceId.make("ok"))).length, 0);
+      const created = yield* registry.create({ instanceId: SandboxInstanceId.make("ok") });
+      assert.equal(created.instanceId, SandboxInstanceId.make("ok"));
+      assert.equal(healthy.opens(), 1);
+      assert.equal(broken.opens(), 1);
+    }).pipe(
+      Effect.provide(
+        SandboxRegistry.layerWith({
+          drivers: [healthy.driver, broken.driver],
+          instances: [instance("ok", "memory", true), instance("bad", "broken", true)],
         }),
       ),
     );

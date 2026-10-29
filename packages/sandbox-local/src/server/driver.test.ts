@@ -37,7 +37,7 @@ describe("LocalSandboxDriver", () => {
       assert.equal(created.state, "ready");
       assert.equal(created.displayName, "One");
       assert.equal(created.endpoint, null);
-      assert.equal(created.workspacePath, path.join(root, created.id));
+      assert.equal(created.workspacePath, path.join(yield* fs.realPath(root), created.id));
       assert.equal(
         yield* fs.exists(path.join(created.workspacePath ?? root, "sandbox.json")),
         true,

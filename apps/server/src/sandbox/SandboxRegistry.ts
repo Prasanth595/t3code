@@ -239,7 +239,19 @@ const make = Effect.fn("SandboxRegistry.make")(function* <R>(input: {
             available: false,
           } satisfies SandboxDriverSnapshot);
         }
-        return entry.instance.probe;
+        const instance = entry.instance;
+        return instance.probe.pipe(
+          Effect.orElseSucceed(
+            () =>
+              ({
+                driver: entry.spec.driver,
+                instanceId: entry.spec.instanceId,
+                displayName: instance.displayName,
+                enabled: entry.spec.enabled,
+                available: false,
+              }) satisfies SandboxDriverSnapshot,
+          ),
+        );
       },
       { concurrency: "unbounded" },
     );
