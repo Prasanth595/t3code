@@ -30,7 +30,10 @@ function canStartSwipe(event: WheelEvent, direction: SwipeNavigationDirection): 
   if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
   for (const target of event.composedPath()) {
     if (!(target instanceof Element)) continue;
-    if (target.matches('[role="dialog"], [role="alertdialog"]')) return false;
+    // Settings and Usage are route modals, where history navigation still applies.
+    if (target.matches('[role="dialog"]:not([data-app-modal]), [role="alertdialog"]')) {
+      return false;
+    }
     if (target.scrollWidth - target.clientWidth < 1) continue;
     const style = getComputedStyle(target);
     const scroller = {
@@ -87,7 +90,10 @@ export function SwipeNavigation() {
 
     const show = (direction: SwipeNavigationDirection) => {
       window.clearTimeout(exitTimer);
-      const rect = document.querySelector('[data-slot="sidebar-inset"]')?.getBoundingClientRect();
+      const rect = (
+        document.querySelector("[data-app-modal]") ??
+        document.querySelector('[data-slot="sidebar-inset"]')
+      )?.getBoundingClientRect();
       overlay.style.left = `${rect?.left ?? 0}px`;
       overlay.style.top = `${rect?.top ?? 0}px`;
       overlay.style.width = rect ? `${rect.width}px` : "100vw";
@@ -183,7 +189,7 @@ export function SwipeNavigation() {
       ref={overlayRef}
       hidden
       aria-hidden
-      className="group pointer-events-none fixed z-40 overflow-hidden"
+      className="group pointer-events-none fixed z-60 overflow-hidden"
     >
       <div
         ref={scrimRef}
