@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -47,6 +47,25 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
+  // Only the chat competes for J/K, so the guide holds them until the user clicks or focuses the
+  // chat column, and takes them back whenever it is shown again.
+  const [engaged, setEngaged] = useState(true);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (active) setEngaged(true);
+  }
+  useEffect(() => {
+    const record = (event: Event) =>
+      setEngaged(!(event.target instanceof Element && event.target.closest("[data-chat-column]")));
+    window.addEventListener("pointerdown", record, true);
+    window.addEventListener("focusin", record, true);
+    return () => {
+      window.removeEventListener("pointerdown", record, true);
+      window.removeEventListener("focusin", record, true);
+    };
+  }, []);
+
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
     environmentId,
     reference,
@@ -140,7 +159,7 @@ export function PullRequestGuideTab({
         reference={reference}
         guide={guide}
         banner={banner}
-        active={active}
+        active={active && engaged}
         commenting={commenting}
         onAsk={
           onAskAboutStop === null

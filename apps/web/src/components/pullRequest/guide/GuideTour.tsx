@@ -80,7 +80,8 @@ export function GuideTour({
 
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // Shift+J is "J" and types; Caps Lock+Shift+J is "j", which type-to-focus leaves to us.
     if (event.key !== "j" && event.key !== "k") return;
     if (isEditableFocused(event.target)) return;
     event.preventDefault();
@@ -95,7 +96,11 @@ export function GuideTour({
   }, [active]);
 
   return (
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
+    <div
+      ref={scrollRef}
+      data-claimed-keys={active && stopCount > 1 ? "jk" : undefined}
+      className="@container/guide h-full overflow-y-auto scrollbar-gutter-both"
+    >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
         <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
           <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />
