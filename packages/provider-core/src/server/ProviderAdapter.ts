@@ -358,6 +358,15 @@ const ProviderAdapterFailureReason = Schema.Literals([
   "attachment_unreadable",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
+export class ProviderAdapterSessionDetached extends Schema.TaggedError<ProviderAdapterSessionDetached>()(
+  "ProviderAdapterSessionDetached",
+  {
+    driver: ProviderDriverKind,
+    providerSessionId: ProviderSessionId,
+    threadId: ThreadId,
+    reason: Schema.Literal("workspace_changed"),
+  },
+) {}
 
 export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAdapterProtocolError>()(
   "ProviderAdapterProtocolError",
@@ -389,6 +398,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterInterruptError,
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterEventStreamError,
+  ProviderAdapterSessionDetached,
   ProviderAdapterProtocolError,
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
@@ -545,8 +555,10 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
-  /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
-  readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
+  /** Manager subscriptions broadcast independently; a thread ID limits detach to its stream. */
+  readonly subscribeEvents?: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (
