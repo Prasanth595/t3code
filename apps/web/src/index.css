@@ -2176,6 +2176,22 @@ code {
   background: transparent !important;
 }
 
+/* Plain text has no syntax to color, so it keeps the color of the text around it.
+   !important outranks the highlighter's inline colors and the code surface color. */
+:is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  color: inherit !important;
+
+  & :is(pre, pre *) {
+    color: inherit !important;
+  }
+}
+
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
    when an element is first inserted, and the rule is gated on data-streaming,
