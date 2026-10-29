@@ -94,6 +94,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
+import { VoiceInputSettingsSection } from "./VoiceInputSettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
@@ -1167,6 +1168,8 @@ export function ChatSettingsPanel() {
           />
         </AdvancedSettings>
       </SettingsSection>
+
+      <VoiceInputSettingsSection />
 
       <SettingsSection id="follow-ups" title="Follow-ups">
         <SettingsRow

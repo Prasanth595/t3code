@@ -725,6 +725,23 @@
       }
     },
     {
+      "repositoryUrl": "https://github.com/microsoft/onnxruntime",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Microsoft Corporation"]
+      }
+    },
+    {
+      "name": "guid-typescript",
+      "version": "1.0.9",
+      "license": "ISC",
+      "sourceUrl": "https://github.com/NicolasDeveloper/guid-typescript",
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": ["Copyright (c) nicolas"]
+      }
+    },
+    {
       "repositoryUrl": "https://github.com/dmtrKovalenko/fff",
       "generatedNotice": {
         "licenseId": "MIT",

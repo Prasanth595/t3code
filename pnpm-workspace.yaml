@@ -23,6 +23,8 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  # onnxruntime-web's protobufjs runs only a version check after install.
+  protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
   sharp: true
   "@tsc-rs/typescript": true
@@ -259,6 +261,9 @@ overrides:
   expo-modules-core: 58.0.22
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
+  # Voice input runs Transformers.js's browser build only; never install its Node runtimes.
+  "@huggingface/transformers>onnxruntime-node": "-"
+  "@huggingface/transformers>sharp": "-"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   # Move this with @react-navigation/native: an older core than it requires crashes
   # every native stack at launch.

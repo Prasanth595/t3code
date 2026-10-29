@@ -288,6 +288,8 @@ export default defineConfig(() => {
       include: [
         "@clerk/clerk-js",
         "@clerk/react/internal",
+        // Only the voice input worker imports it; discovering it there would reload the page.
+        "@huggingface/transformers",
         "@pierre/diffs",
         "@pierre/diffs/edit",
         "@pierre/diffs/react",
@@ -328,6 +330,8 @@ export default defineConfig(() => {
           "./src/components/files/office/fonts-cjk.ts",
           import.meta.url,
         ).pathname,
+        // Voice input runs on the CPU runtime only; the WebGPU build would also ship a 27 MB WASM.
+        "onnxruntime-web/webgpu": "onnxruntime-web/wasm",
       },
       dedupe: ["react", "react-dom"],
     },

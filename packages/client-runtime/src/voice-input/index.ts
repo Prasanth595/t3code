@@ -1,5 +1,6 @@
 export {
   VoiceInputController,
+  VoiceInputError,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,

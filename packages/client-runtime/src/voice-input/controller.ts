@@ -12,6 +12,21 @@ export type VoiceInputState = {
   readonly errorAction: "retry" | "settings" | null;
 };
 
+/** Thrown by capture dependencies to show the user a specific failure instead of a generic one. */
+export class VoiceInputError extends Error {
+  readonly errorAction: VoiceInputState["errorAction"];
+
+  constructor(
+    message: string,
+    errorAction: VoiceInputState["errorAction"],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "VoiceInputError";
+    this.errorAction = errorAction;
+  }
+}
+
 export function voiceInputBlocksSubmission(state: VoiceInputState): boolean {
   return (
     state.phase === "preparing" || state.phase === "recording" || state.phase === "transcribing"
@@ -128,8 +143,12 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const token = { abandoned: false, released: promise, release: resolve };
+  // Not Promise.withResolvers: the web app still targets ES2023 runtimes.
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const token = { abandoned: false, released, release };
   activeSession = token;
   return token;
 }
@@ -161,6 +180,7 @@ function errorCode(error: unknown): string | null {
 }
 
 function preparationErrorMessage(error: unknown): string {
+  if (error instanceof VoiceInputError) return error.message;
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
@@ -250,7 +270,12 @@ export class VoiceInputController {
           transcriber.prepare({ signal: abortController.signal }),
         );
       } catch (error) {
-        if (this.isCurrent(operationToken)) this.setError(preparationErrorMessage(error), "retry");
+        if (this.isCurrent(operationToken)) {
+          this.setError(
+            preparationErrorMessage(error),
+            error instanceof VoiceInputError ? error.errorAction : "retry",
+          );
+        }
         return;
       }
       if (!this.isCurrent(operationToken)) return;
@@ -271,9 +296,10 @@ export class VoiceInputController {
       this.capturedDraft = capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
-    } catch {
-      if (this.isCurrent(operationToken))
-        this.setError("Could not start voice recording.", "retry");
+    } catch (error) {
+      if (!this.isCurrent(operationToken)) return;
+      if (error instanceof VoiceInputError) this.setError(error.message, error.errorAction);
+      else this.setError("Could not start voice recording.", "retry");
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
         if (this.isCurrent(operationToken) && this.state.phase === "error") {

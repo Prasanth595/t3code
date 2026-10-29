@@ -438,7 +438,8 @@ export function useComposerSend(input: ComposerSendInput) {
       threadDetailLoading ||
       readPendingEnvironmentChange() !== null ||
       sendInFlightRef.current ||
-      feedbackUploadsInFlightRef.current.has(routeThreadKey)
+      feedbackUploadsInFlightRef.current.has(routeThreadKey) ||
+      composerRef.current?.isVoiceInputBusy() === true
     ) {
       notifyDirectAnnotationAttached();
       return;

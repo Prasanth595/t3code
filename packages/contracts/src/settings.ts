@@ -521,6 +521,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  voiceInputEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // A language code or "auto". Clients normalize codes they cannot transcribe, so a value
+  // written by a newer client never fails decoding of the whole document.
+  voiceInputLanguage: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  // An origin-scoped MediaDeviceInfo.deviceId; empty means the system default.
+  voiceInputMicrophoneId: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1841,5 +1847,8 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceInputEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceInputLanguage: Schema.optionalKey(Schema.String),
+  voiceInputMicrophoneId: Schema.optionalKey(Schema.String),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

@@ -469,10 +469,39 @@ async function findPackageRoot(
   return null;
 }
 
+const NODE_MODULES_SEGMENT = `${NodePath.sep}node_modules${NodePath.sep}`;
+const PNPM_VIRTUAL_STORE_SEGMENT = `${NodePath.sep}node_modules${NodePath.sep}.pnpm${NodePath.sep}`;
+
+/**
+ * pnpm links each installed dependency beside its dependent and also hoists every package into
+ * .pnpm/node_modules. A declared dependency missing beside its dependent was removed by an
+ * override, so its hoisted copy belongs to some other package and never ships with this one.
+ */
+async function isUnlinkedPnpmDependency(
+  dependencyName: string,
+  fromPackageJsonPath: string,
+): Promise<boolean> {
+  const dependentRoot = NodePath.dirname(fromPackageJsonPath);
+  if (!dependentRoot.includes(PNPM_VIRTUAL_STORE_SEGMENT)) return false;
+  const siblings = dependentRoot.slice(
+    0,
+    dependentRoot.lastIndexOf(NODE_MODULES_SEGMENT) + NODE_MODULES_SEGMENT.length,
+  );
+  try {
+    await NodeFSP.lstat(NodePath.join(siblings, dependencyName));
+    return false;
+  } catch (error) {
+    const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+    if (code === "ENOENT") return true;
+    throw error;
+  }
+}
+
 async function resolveDependencyPackage(
   dependencyName: string,
   fromPackageJsonPath: string,
 ): Promise<{ readonly packageJson: PackageJson; readonly packageRoot: string } | null> {
+  if (await isUnlinkedPnpmDependency(dependencyName, fromPackageJsonPath)) return null;
   const requireFromPackage = NodeModule.createRequire(fromPackageJsonPath);
   const candidates = [`${dependencyName}/package.json`, dependencyName];
   for (const candidate of candidates) {

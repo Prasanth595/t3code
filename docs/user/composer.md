@@ -174,6 +174,25 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on desktop and web
+
+Click the composer's microphone, speak, then click the check mark to insert the
+transcript where your selection was, or the X to discard the recording. Voice input
+never sends a message. While it records or transcribes, the draft is read-only and
+sending waits. Recordings can be up to five minutes long.
+
+Speech is transcribed on your computer by a small Whisper model, and audio never leaves
+it. The first use downloads the 45 MB model from Hugging Face; nothing is downloaded
+until you start voice input. The browser caches the model for later dictations, but it
+can clear that cache, and the next use then downloads the model again.
+
+Turn voice input off, choose its language, or pick a microphone in **Settings → Chat →
+Voice input**. Choosing your language is faster and more accurate than automatic
+detection. Microphone names appear once you have allowed microphone access. In a browser,
+voice input needs an HTTPS (or `localhost`) connection to your server. If T3 Code was
+denied the microphone on macOS, allow it in **System Settings → Privacy & Security →
+Microphone**.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

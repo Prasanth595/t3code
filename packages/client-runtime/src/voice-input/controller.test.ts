@@ -4,6 +4,7 @@ import {
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
+  VoiceInputError,
   VOICE_RECORDING_LIMIT_SECONDS,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
@@ -122,6 +123,43 @@ describe("VoiceInputController", () => {
     await denied.controller.start();
     expect(denied.controller.currentState.errorAction).toBe("settings");
     expect(denied.recorder.record).not.toHaveBeenCalled();
+  });
+
+  it("shows a capture dependency's own failure and releases what it acquired", async () => {
+    const releaseRecording = vi.fn(async () => undefined);
+    const harness = createHarness({ releaseRecording });
+    harness.recorder.prepareToRecordAsync.mockRejectedValueOnce(
+      new VoiceInputError("The selected microphone isn't connected.", "settings"),
+    );
+
+    await harness.controller.start();
+
+    expect(harness.controller.currentState).toEqual({
+      phase: "error",
+      error: "The selected microphone isn't connected.",
+      errorAction: "settings",
+    });
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+    expect(releaseRecording).toHaveBeenCalledTimes(1);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+
+    harness.recorder.prepareToRecordAsync.mockRejectedValueOnce(new Error("native detail"));
+    await harness.controller.start();
+    expect(harness.controller.currentState.error).toBe("Could not start voice recording.");
+
+    const offline = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          throw new VoiceInputError("The first use needs an internet connection.", "retry");
+        },
+      }),
+    });
+    await offline.controller.start();
+    expect(offline.controller.currentState).toEqual({
+      phase: "error",
+      error: "The first use needs an internet connection.",
+      errorAction: "retry",
+    });
   });
 
   it.each(["permission", "transcription"] as const)(

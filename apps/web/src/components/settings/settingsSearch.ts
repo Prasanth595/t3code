@@ -591,6 +591,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "voice-input",
+    title: "Voice input",
+    to: "/settings/chat",
+    searchTerms: ["dictation dictate speech to text transcribe microphone mic whisper"],
+  },
+  {
+    id: "voice-input-language",
+    title: "Voice input language",
+    to: "/settings/chat",
+    searchTerms: ["dictation speech transcription language detect automatic"],
+  },
+  {
+    id: "voice-input-microphone",
+    title: "Voice input microphone",
+    to: "/settings/chat",
+    searchTerms: ["dictation mic input device headset audio"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",

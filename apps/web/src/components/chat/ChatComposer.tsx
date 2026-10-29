@@ -277,6 +277,8 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
+import { useComposerVoiceInput } from "../../voiceInput/useComposerVoiceInput";
+import { ComposerVoiceInputControl, ComposerVoiceInputError } from "./ComposerVoiceInputControl";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -292,6 +294,8 @@ export interface ChatComposerHandle {
   addDroppedFiles: (files: File[]) => void;
   addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
+  /** True while dictation would still change the draft; sends must wait. */
+  isVoiceInputBusy: () => boolean;
   insertTextAtEnd: (
     text: string,
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
@@ -914,7 +918,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  const voiceTranscriptCaretRef = useRef<number | null>(null);
+  const voiceInput = useComposerVoiceInput({
+    // A question's answer is its own draft, so moving between questions cancels dictation.
+    ownerKey:
+      activePendingProgress?.activeQuestion && pendingUserInputs[0]
+        ? `${composerDraftTargetKey}:question:${pendingUserInputs[0].requestId}:${activePendingProgress.activeQuestion.id}`
+        : composerDraftTargetKey,
+    value: activePendingProgress ? activePendingProgress.customAnswer : prompt,
+    readText: () => promptRef.current,
+    readSelection: () => {
+      const range = composerEditorRef.current?.readSelectionRange();
+      if (range) return range;
+      const cursor = readComposerSnapshot().expandedCursor;
+      return { start: cursor, end: cursor };
+    },
+    commit: (text, cursor) => {
+      // The editor is read-only until dictation settles, so focus waits for that commit.
+      if (
+        applyPromptReplacement(0, promptRef.current.length, text, {
+          expandedCursorAfterReplace: cursor,
+          focusEditorAfterReplace: false,
+        })
+      ) {
+        voiceTranscriptCaretRef.current = collapseExpandedComposerCursor(
+          text,
+          cursor,
+          isLiteralPendingAnswer,
+        );
+      }
+    },
+  });
   const sendDisabledReason =
+    (voiceInput.isBusy ? "Finish or cancel voice input first" : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -1024,9 +1060,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !forceExpandedOnMobile &&
     !isComposerFocused &&
     !hasMultilinePrompt &&
-    pendingUserInputs.length === 0;
+    pendingUserInputs.length === 0 &&
+    !voiceInput.isBusy;
 
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- places the caret after an inserted transcript once the editor's own effect has made it editable again
+  useEffect(() => {
+    const caret = voiceTranscriptCaretRef.current;
+    if (voiceInput.isBusy || caret === null) return;
+    voiceTranscriptCaretRef.current = null;
+    composerEditorRef.current?.focusAt(caret);
+  }, [voiceInput.isBusy]);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
@@ -1212,9 +1256,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         canAdvance:
           activePendingProgress.canAdvance &&
           !attachmentBlockReason &&
-          !(questionPreparations[attachmentTargetKey] ?? 0),
+          !(questionPreparations[attachmentTargetKey] ?? 0) &&
+          !voiceInput.isBusy,
         isResponding: activePendingIsResponding,
-        isComplete: Boolean(activePendingResolvedAnswers),
+        isComplete: Boolean(activePendingResolvedAnswers) && !voiceInput.isBusy,
       }
     : null;
   const showResumeAction =
@@ -2790,6 +2835,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       hasPendingAttachments: () =>
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
+      isVoiceInputBusy: voiceInput.isBusyNow,
       insertTextAtEnd: insertComposerTextAtEndStable,
       pasteTextAtEnd: (text: string, options) => {
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
@@ -2996,6 +3042,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertComposerDraftTerminalContext,
       insertComposerTextStable,
       insertComposerTextAtEndStable,
+      voiceInput.isBusyNow,
       promptRef,
       composerImagesRef,
       composerFilesRef,
@@ -3380,7 +3427,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabled={
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
+                      activePendingIsResponding ||
+                      voiceInput.isBusy
                     }
                   />
                 </ComposerContextActionsContext>
@@ -3419,6 +3467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+            <ComposerVoiceInputError voiceInput={voiceInput} />
 
             {isComposerCollapsedMobile ? null : (
               <div
@@ -3429,7 +3478,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                <div className="me-2 flex min-w-0 items-center gap-0.5 empty:hidden">
+                  {composerAttachButton}
+                  <ComposerVoiceInputControl
+                    voiceInput={voiceInput}
+                    disabledReason={
+                      projectSelectionRequired
+                        ? "Choose a project first"
+                        : isChoiceOnlyPendingQuestion
+                          ? "Choose an option above"
+                          : activePendingIsResponding
+                            ? "Submitting your answer"
+                            : null
+                    }
+                  />
+                </div>
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"

@@ -295,6 +295,47 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
+  it("skips a pnpm dependency an override removed even though another package hoists it", async () => {
+    const fixture = await createFixture();
+    const modules = NodePath.join(fixture.root, "node_modules");
+    const store = NodePath.join(modules, ".pnpm");
+    const linked = NodePath.join(store, "demo-ml@1.0.0", "node_modules", "demo-ml");
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-ml": "1.0.0" },
+    });
+    await writeJson(NodePath.join(linked, "package.json"), {
+      name: "demo-ml",
+      version: "1.0.0",
+      license: "MIT",
+      main: "index.js",
+      dependencies: { "demo-native": "1.0.0" },
+    });
+    await NodeFSP.writeFile(NodePath.join(linked, "index.js"), "export {};\n", "utf8");
+    await NodeFSP.writeFile(NodePath.join(linked, "LICENSE"), "demo-ml license\n", "utf8");
+    await NodeFSP.symlink(linked, NodePath.join(modules, "demo-ml"), "dir");
+    // Another workspace package's copy, hoisted where Node resolution would still find it.
+    await writeJson(NodePath.join(store, "node_modules", "demo-native", "package.json"), {
+      name: "demo-native",
+      version: "1.0.0",
+      main: "index.js",
+    });
+    await NodeFSP.writeFile(
+      NodePath.join(store, "node_modules", "demo-native", "index.js"),
+      "export {};\n",
+      "utf8",
+    );
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    const names = manifest.entries.map((entry) => entry.name);
+    expect(names).toContain("demo-ml");
+    expect(names).not.toContain("demo-native");
+  });
+
   it("fails when a production package has no distributable notice text", async () => {
     const fixture = await createFixture();
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
