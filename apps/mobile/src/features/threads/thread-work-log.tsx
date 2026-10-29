@@ -530,11 +530,13 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     props.activities.every((row) => row.projectedItem.item.type === "reasoning")
   ) {
     return (
-      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
-        {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
-        ))}
-      </ScrollView>
+      <WorkLogBlock continues={props.continuesWorkLog}>
+        <ThreadReasoningGroup edgeFadeColor={props.edgeFadeColor}>
+          {props.activities.map((row) => (
+            <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+          ))}
+        </ThreadReasoningGroup>
+      </WorkLogBlock>
     );
   }
 
@@ -554,6 +556,44 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         <WorkLogRows>{props.activities.map(renderRow)}</WorkLogRows>
       )}
     </WorkLogBlock>
+  );
+}
+
+function ThreadReasoningGroup(props: {
+  readonly edgeFadeColor: string;
+  readonly children: ReactNode;
+}) {
+  const scrollOffset = useSharedValue(0);
+  const contentHeight = useSharedValue(0);
+  const viewportHeight = useSharedValue(0);
+  const bottomFadeStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(
+      1,
+      Math.max(0, contentHeight.value - viewportHeight.value - scrollOffset.value) /
+        WORK_GROUP_EDGE_FADE_HEIGHT,
+    ),
+  }));
+
+  return (
+    <View>
+      <ScrollView
+        nestedScrollEnabled
+        className="ml-7 max-h-96 py-1"
+        scrollEventThrottle={16}
+        onScroll={(event) => scrollOffset.set(event.nativeEvent.contentOffset.y)}
+        onLayout={(event) => viewportHeight.set(event.nativeEvent.layout.height)}
+        onContentSizeChange={(_width, height) => contentHeight.set(height)}
+      >
+        {props.children}
+      </ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        className="absolute bottom-0 left-7 right-0"
+        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
+      >
+        <EdgeFade color={props.edgeFadeColor} direction="up" />
+      </Animated.View>
+    </View>
   );
 }
 
