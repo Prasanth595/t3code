@@ -7,6 +7,7 @@ import {
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -27,6 +28,55 @@ function fileItem(relativePath: string): FileItem {
     gitStatus: "clean",
   };
 }
+
+it.effect("recovers missed watcher changes on reads without rescanning every read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let indexed = "old.ts";
+      let onDisk = indexed;
+      const scanFiles = vi.fn(() => {
+        indexed = onDisk;
+        return { ok: true as const, value: undefined };
+      });
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        scanFiles,
+        fileSearch: () => ({
+          ok: true as const,
+          value: { items: [fileItem(indexed)], scores: [], totalMatched: 1, totalFiles: 1 },
+        }),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+      const index = yield* WorkspaceSearchIndex.make("/workspace/project");
+      onDisk = "new.ts";
+      expect((yield* index.search("", 10, "file")).entries).toEqual([
+        { path: "old.ts", kind: "file" },
+      ]);
+      expect(scanFiles).not.toHaveBeenCalled();
+      yield* TestClock.adjust("5 minutes");
+      const results = yield* Effect.all(
+        [index.search("", 10, "file"), index.search("", 10, "file")],
+        { concurrency: "unbounded" },
+      );
+      for (const result of results) {
+        expect(result.entries).toEqual([{ path: "new.ts", kind: "file" }]);
+      }
+      expect(scanFiles).toHaveBeenCalledTimes(1);
+      yield* index.search("", 10, "file");
+      expect(scanFiles).toHaveBeenCalledTimes(1);
+      scanFiles.mockImplementationOnce(() => {
+        throw new Error("scan unavailable");
+      });
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* index.search("", 10, "file")).entries).toEqual([
+        { path: "new.ts", kind: "file" },
+      ]);
+      yield* index.search("", 10, "file");
+      expect(scanFiles).toHaveBeenCalledTimes(2);
+    }),
+  ),
+);
 
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(
@@ -107,14 +157,20 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
               value: grepResult("needleSuffix", [[0, 6]], nextCursor),
             },
       );
+      using now = vi.spyOn(performance, "now").mockReturnValue(0);
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        scanFiles: () => {
+          now.mockReturnValue(1_000);
+          return { ok: true as const, value: undefined };
+        },
         grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      yield* TestClock.adjust("5 minutes");
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
