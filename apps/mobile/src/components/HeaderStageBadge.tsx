@@ -34,7 +34,8 @@ export function HeaderStageBadge(props: {
       }
       accessible
       role="heading"
-      className="min-h-px min-w-px self-start"
+      // Release builds draw nothing here; the frame still gives touch exploration a target.
+      className={stageLabel === null ? "h-11 w-24 self-start" : "self-start"}
       style={{ marginLeft: headerTitleOffset() }}
     >
       {stageLabel === null ? null : (
