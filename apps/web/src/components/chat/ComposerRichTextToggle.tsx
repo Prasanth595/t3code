@@ -1,4 +1,4 @@
-import { CodeIcon } from "lucide-react";
+import { PilcrowIcon } from "lucide-react";
 
 import { updateClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -24,7 +24,7 @@ export function ComposerRichTextToggle({ richTextEnabled }: { readonly richTextE
           />
         }
       >
-        <CodeIcon />
+        <PilcrowIcon />
       </TooltipTrigger>
       <TooltipPopup>{showingSource ? "Show formatting" : "Show Markdown source"}</TooltipPopup>
     </Tooltip>
