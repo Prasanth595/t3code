@@ -158,10 +158,11 @@ export function buildThreadActionMenuItems(
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
                   {
-                    id: "snooze:custom" as const,
-                    label: "Custom…",
+                    id: "snooze:indefinite" as const,
+                    label: "Indefinitely",
                     separatorBefore: state.snoozePresets.length > 0,
                   },
+                  { id: "snooze:custom" as const, label: "Custom…" },
                 ],
               },
         ]

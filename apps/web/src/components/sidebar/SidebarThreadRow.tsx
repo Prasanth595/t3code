@@ -10,6 +10,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
   hasQueuedTurnStart,
+  INDEFINITE_SNOOZE_UNTIL,
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -414,6 +415,14 @@ function SnoozeMenuButton(props: {
           </MenuItem>
         ))}
         {presets.length > 0 ? <MenuSeparator /> : null}
+        <MenuItem
+          onClick={(event) => {
+            event.stopPropagation();
+            onSnooze({ snoozedUntil: INDEFINITE_SNOOZE_UNTIL });
+          }}
+        >
+          Indefinitely
+        </MenuItem>
         <MenuItem
           onClick={async (event) => {
             event.stopPropagation();
