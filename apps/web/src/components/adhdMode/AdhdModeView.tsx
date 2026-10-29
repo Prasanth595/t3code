@@ -469,8 +469,12 @@ function AdhdCard(props: {
     if (event.repeat && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     if (ignoresCardKeys(event.target)) return;
     const key = event.key.toLowerCase();
-    // Enter on a focused control activates that control, never the card's option.
-    if (key === "enter" && event.target instanceof Element && event.target.closest("button, a")) {
+    // Enter or Space on a focused control activates that control, never the highlighted option.
+    if (
+      (key === "enter" || key === " ") &&
+      event.target instanceof Element &&
+      event.target.closest("button, a")
+    ) {
       return;
     }
     if (/^[1-9]$/.test(key)) props.onJump(Number(key) - 1);
