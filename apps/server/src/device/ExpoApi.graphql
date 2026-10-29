@@ -22,6 +22,9 @@ query T3ExpoViewer {
 }
 
 query T3EasSimulatorAvailability($appId: String!, $filter: [String!]) {
+  meActor {
+    isExpoAdmin
+  }
   app {
     byId(appId: $appId) {
       ownerAccount {

@@ -82,37 +82,37 @@ describe("Expo API", () => {
   it.effect.each([
     {
       case: "an Expo admin with the account gate disabled",
-      meActor: { isExpoAdmin: true },
+      meActor: { __typename: "User", isExpoAdmin: true },
       accountFeatureGates: { "device-run-sessions": false },
       available: true,
     },
     {
       case: "an Expo admin without the account gate",
-      meActor: { isExpoAdmin: true },
+      meActor: { __typename: "User", isExpoAdmin: true },
       accountFeatureGates: {},
       available: true,
     },
     {
       case: "a regular actor with the account gate enabled",
-      meActor: { isExpoAdmin: false },
+      meActor: { __typename: "User", isExpoAdmin: false },
       accountFeatureGates: { "device-run-sessions": true },
       available: true,
     },
     {
       case: "a regular actor with the account gate disabled",
-      meActor: { isExpoAdmin: false },
+      meActor: { __typename: "User", isExpoAdmin: false },
       accountFeatureGates: { "device-run-sessions": false },
       available: false,
     },
     {
       case: "a regular actor without the account gate",
-      meActor: { isExpoAdmin: false },
+      meActor: { __typename: "User", isExpoAdmin: false },
       accountFeatureGates: {},
       available: false,
     },
     {
       case: "a regular actor with a non-boolean account gate",
-      meActor: { isExpoAdmin: false },
+      meActor: { __typename: "User", isExpoAdmin: false },
       accountFeatureGates: { "device-run-sessions": "true" },
       available: false,
     },

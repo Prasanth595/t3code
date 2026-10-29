@@ -91,6 +91,13 @@ export declare namespace T3ExpoViewer {
   export type Result = typeof T3ExpoViewer.result.Type
 }
 
+/** A regular user, SSO user, or robot that can authenticate with Expo services and be a member of accounts. */
+export const Actor = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.Actor>()([]),
+  isExpoAdmin: Schema.Boolean
+})
+export interface Actor extends Schema.Struct.Type<typeof Actor.fields> {}
+
 /**
  * An account is a container owning projects, credentials, billing and other organization
  * data and settings. Actors may own and be members of accounts.
@@ -122,6 +129,7 @@ export const T3EasSimulatorAvailability = GraphQL.query("T3EasSimulatorAvailabil
       { name: "filter", body: "[String!]" }
     ],
     selections: [
+      { name: "meActor", body: ["{__typename isExpoAdmin}"] },
       { name: "app", body: ["{byId(appId:$", "appId", "){ownerAccount{name accountFeatureGates(filter:$", "filter", ")}}}"] }
     ],
     fragments: []
@@ -131,6 +139,11 @@ export const T3EasSimulatorAvailability = GraphQL.query("T3EasSimulatorAvailabil
     filter: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
   },
   result: Schema.Struct({
+    /**
+     * If authenticated as any type of Actor, this is the appropriate top-level
+     * query object
+     */
+    meActor: Schema.NullOr(Actor),
     app: T3EasSimulatorAvailabilityAppAppQuery
   })
 })

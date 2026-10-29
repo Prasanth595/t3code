@@ -316,11 +316,13 @@ export const makeExpoApi = (http: HttpClient.HttpClient, credential: ExpoCredent
       call("check EAS Simulator access", (expo) =>
         expo.T3EasSimulatorAvailability({ appId, filter: [DEVICE_RUN_SESSIONS_GATE] }),
       ).pipe(
-        Effect.map(({ app }) => {
+        Effect.map(({ app, meActor }) => {
           const gates = app.byId.ownerAccount.accountFeatureGates;
           return {
             account: app.byId.ownerAccount.name,
-            available: isFeatureGates(gates) && gates[DEVICE_RUN_SESSIONS_GATE] === true,
+            available:
+              meActor?.isExpoAdmin === true ||
+              (isFeatureGates(gates) && gates[DEVICE_RUN_SESSIONS_GATE] === true),
           };
         }),
       ),
