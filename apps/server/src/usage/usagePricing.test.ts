@@ -86,6 +86,10 @@ describe("usage pricing", () => {
       costSource: "modelPriced",
     });
     expect(cacheSavingsUsd(table, record("example-model"), overrides)).toBe(0);
+    expect(priceUsage(table, { ...record("example-model"), credits: 2 }, overrides)).toMatchObject({
+      costUsd: 0,
+      costSource: "unpriced",
+    });
   });
 
   it("preserves explicit zero rates and matches only the exact trimmed model ID", () => {

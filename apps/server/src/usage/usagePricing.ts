@@ -210,7 +210,7 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
 
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd" | "credits"
 >;
 
 export interface PricedUsage {
@@ -259,6 +259,8 @@ export function priceUsage(
   const listCost = costByCategory(totals, ratesAt(rate, record.speed));
   const listCostUsd = sumCategories(listCost);
   if (reported !== null && listCostUsd <= 0) return unsplit(reported, "providerReported");
+  // Credit-metered records carry no tokens; a known rate must not price them at $0.
+  if (reported === null && record.credits !== undefined) return unsplit(0, "unpriced");
   const premiumUsd =
     record.speed === "standard" ? 0 : listCostUsd - sumCategories(costByCategory(totals, rate));
   const scale = reported === null ? 1 : reported / listCostUsd;

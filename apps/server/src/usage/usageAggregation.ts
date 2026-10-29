@@ -54,6 +54,7 @@ interface MutableBucket {
   fastCostUsd: number;
   ultrafastCostUsd: number;
   speedPremiumUsd: number;
+  credits: number;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -187,6 +188,7 @@ export class UsageAggregator {
     if (record.speed === "fast") bucket.fastCostUsd += priced.costUsd;
     if (record.speed === "ultrafast") bucket.ultrafastCostUsd += priced.costUsd;
     bucket.speedPremiumUsd += priced.speedPremiumUsd;
+    bucket.credits += record.credits ?? 0;
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
       record,
@@ -240,6 +242,7 @@ export class UsageAggregator {
         fastCostUsd: 0,
         ultrafastCostUsd: 0,
         speedPremiumUsd: 0,
+        credits: 0,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
@@ -282,6 +285,7 @@ export class UsageAggregator {
         ...(fastCostUsd === 0 ? {} : { fastCostUsd }),
         ...(ultrafastCostUsd === 0 ? {} : { ultrafastCostUsd }),
         ...(speedPremiumUsd === 0 ? {} : { speedPremiumUsd }),
+        ...(bucket.credits === 0 ? {} : { credits: roundUsd(bucket.credits) }),
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,

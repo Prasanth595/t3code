@@ -3,6 +3,7 @@ import { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -29,6 +30,7 @@ import {
   checkKiroProviderStatus,
   kiroDefaultModelId,
 } from "./status.ts";
+import { kiroUsageReader } from "./usage.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
@@ -62,12 +64,13 @@ export type KiroDriverEnv =
   | Crypto.Crypto
   | ProviderHost.ProviderHost;
 
-export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
+export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Kiro",
     supportsMultipleInstances: true,
   },
+  usage: kiroUsageReader,
   configSchema: KiroSettings,
   defaultConfig: (): KiroSettings => decodeKiroSettings({}),
   create: Effect.fn("KiroDriver.create")(function* ({

@@ -16,6 +16,7 @@ export const UsageProviderKind = Schema.Literals([
   "antigravity",
   "pi",
   "muse",
+  "kiro",
 ]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
@@ -63,6 +64,8 @@ export const UsageBucket = Schema.Struct({
   fastCostUsd: Schema.optional(Schema.Number),
   ultrafastCostUsd: Schema.optional(Schema.Number),
   speedPremiumUsd: Schema.optional(Schema.Number),
+  /** Provider-billed credits, for providers that meter in credits instead of tokens. */
+  credits: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,

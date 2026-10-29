@@ -183,6 +183,22 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
+  it("sums credits and leaves credit-only usage unpriced at a known rate", () => {
+    const zero = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const result = aggregate([
+      record({ provider: "kiro", totals: zero, credits: 0.25 }),
+      record({ provider: "kiro", totals: zero, credits: 1.5 }),
+    ]);
+
+    expect(result.buckets[0]).toMatchObject({ credits: 1.75, costUsd: 0, costSource: "unpriced" });
+  });
+
   it("prefers a reported cost over the rate table", () => {
     const result = aggregate([record({ reportedCostUsd: 1.25 })]);
 

@@ -241,6 +241,56 @@ describe("large usage records", () => {
     },
   );
 
+  it("attributes Kiro credits to the model noted before each turn, after large content", async () => {
+    const path = NodePath.join(dir, "workspace", "sess_kiro", "messages.jsonl");
+    const note = (model: string) => ({
+      timestamp,
+      payload: {
+        type: "agent_note",
+        content: `<session_context>\nThe current model is ${model}.\n</session_context>`,
+      },
+    });
+    const summary = (executionId: string, usage: number) => ({
+      timestamp,
+      payload: {
+        type: "usage_summary",
+        executionId,
+        promptTurnSummaries: [{ unit: "credit", unitPlural: "credits", usage }],
+      },
+    });
+    const lines = [
+      note("Claude Haiku 4.5"),
+      { timestamp, payload: { type: "assistant", content } },
+      summary("e1", 0.25),
+      note("Claude Sonnet 4.5"),
+      summary("e2", 1.5),
+    ];
+    await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+    await NodeFSP.writeFile(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const result = await readTranscriptRecords(path, "kiro");
+    const kiro = (model: string, executionId: string, credits: number) => ({
+      provider: "kiro",
+      timestampMs: Date.parse(timestamp),
+      model,
+      sessionId: "sess_kiro",
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+      reportedCostUsd: null,
+      credits,
+      speed: "standard",
+      dedupeKey: `kiro:${executionId}`,
+    });
+    expect(result?.records).toEqual([
+      kiro("claude-haiku-4.5", "e1", 0.25),
+      kiro("claude-sonnet-4.5", "e2", 1.5),
+    ]);
+  });
+
   it("preserves Grok model allocation, precise timestamp and prompt identity", async () => {
     const result = await scan([{ padding: content, ...grok }], "grok");
     expect(result.records[0]).toMatchObject({

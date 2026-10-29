@@ -139,6 +139,16 @@ describe("scan cache round trip", () => {
       position: position({ state }),
     });
 
+    original.set("/kiro/sess_1/messages.jsonl", {
+      size: 20,
+      malformedRecords: 0,
+      mtimeMs: 500,
+      provider: "kiro",
+      records: [record({ provider: "kiro", model: "claude-haiku-4.5", credits: 0.25 })],
+      tailRecords: [],
+      position: position(),
+    });
+
     original.set("/a.jsonl", {
       ...original.get("/a.jsonl")!,
       tailRecords: [record({ dedupeKey: "msg_tail:" })],
@@ -158,7 +168,7 @@ describe("scan cache round trip", () => {
       TEST_FORMAT_MAP,
     );
 
-    expect(restored.size).toBe(4);
+    expect(restored.size).toBe(5);
     expect(restored).toEqual(original);
   });
 
