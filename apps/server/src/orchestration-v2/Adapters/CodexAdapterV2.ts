@@ -1637,9 +1637,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     }),
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
-        const instructionOverrides = Option.isSome(serverSettings)
-          ? (yield* serverSettings.value.getSettings).agentInstructionOverrides
-          : null;
         const scope = yield* Scope.Scope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
@@ -6488,6 +6485,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const instructionOverrides = Option.isSome(serverSettings)
+              ? (yield* serverSettings.value.getSettings).agentInstructionOverrides
+              : null;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,

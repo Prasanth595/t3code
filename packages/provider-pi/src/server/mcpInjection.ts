@@ -1,3 +1,7 @@
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
+import * as Path from "effect/Path";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import type { AgentInstructionOverrides } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
@@ -221,21 +225,18 @@ function withoutToolSelectionArgs(args: ReadonlyArray<string>): ReadonlyArray<st
   return filtered;
 }
 
-function piT3McpExtensionDestPath(cacheDir: string): string {
-  return `${cacheDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
-}
-
 export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtension")(function* (
   cacheDir: string,
   overrides?: AgentInstructionOverrides | null,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.makeDirectory(cacheDir, { recursive: true });
-  const dest = piT3McpExtensionDestPath(cacheDir);
-  const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const source = buildPiT3McpExtensionSource(overrides);
-  if (existing !== source) {
-    yield* fs.writeFileString(dest, source);
+  const revision = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(source)));
+  const dest = path.join(cacheDir, "pi-mcp", revision, PI_T3_MCP_EXTENSION_FILENAME);
+  if (!(yield* fs.exists(dest))) {
+    yield* writeFileStringAtomically({ filePath: dest, contents: source });
   }
   return dest;
 });

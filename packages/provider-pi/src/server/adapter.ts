@@ -1,3 +1,5 @@
+import * as Crypto from "effect/Crypto";
+import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -414,6 +416,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
+  const crypto = yield* Crypto.Crypto;
+  const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -451,21 +455,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
       const mcpSession = yield* mcpSessions.read(input.threadId);
-      const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
-        effect.pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: PI_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-          ),
-        );
       // Always inject the permission hook even without MCP credentials; otherwise Supervised becomes unrestricted.
-      const extensionPath = yield* provideCacheFs(
-        materializePiT3McpExtension(host.paths.providerStatusCacheDir, instructionOverrides),
+      const extensionPath = yield* materializePiT3McpExtension(
+        host.paths.providerStatusCacheDir,
+        instructionOverrides,
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: PI_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+        ),
       );
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
@@ -3312,6 +3317,8 @@ function piUiResponse(
 }
 
 export type PiAdapterV2DriverEnv =
+  | Crypto.Crypto
+  | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2

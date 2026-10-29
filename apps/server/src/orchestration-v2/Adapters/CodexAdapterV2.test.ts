@@ -1,3 +1,4 @@
+import * as ServerSettings from "../../serverSettings.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makeProviderTextDeltaCoalescer,
@@ -1886,6 +1887,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const instructionOverrides = { visuals: "Return the published artifact link." };
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -1894,6 +1896,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
+          instructionOverrides,
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
@@ -1953,6 +1956,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const harness = yield* makeCodexReplayHarness(transcript);
+        yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+          agentInstructionOverrides: instructionOverrides,
+        });
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("test"),
           threadId: harness.threadId,
@@ -1975,7 +1981,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            ServerSettings.ServerSettingsService.layerTest(),
+          ),
         ),
       ),
     ),

@@ -29,6 +29,8 @@ The available sections are `orchestration`, `visuals`, `browser`, and `devices`.
 T3's visual-delivery and preview-usage guidance; `orchestration` covers coordination with other
 threads and agents. A string replaces that section, an empty string omits it, and `null` restores
 its built-in text. Set `agentInstructionOverrides` itself to `null` to restore every section.
+Each override applies where T3 already sends that section; it does not add sections to providers
+that do not receive them.
 Overrides affect guidance, not tool availability or permissions. Other instructions, including
 provider-native rules and MCP tool descriptions, still apply.
 
