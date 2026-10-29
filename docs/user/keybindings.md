@@ -158,6 +158,9 @@ field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
+On a Mac trackpad, you can also swipe left or right with two fingers, as in
+Chrome or Safari. The desktop app follows **System Settings → Trackpad → More
+Gestures → Swipe between pages**.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

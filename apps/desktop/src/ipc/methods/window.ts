@@ -89,6 +89,20 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+export const getSwipeNavigationEnabled = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_SWIPE_NAVIGATION_ENABLED_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getSwipeNavigationEnabled")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin") return false;
+    // Unset reads as "" and means the macOS default, two-finger swipe on.
+    return (
+      Electron.systemPreferences.getUserDefault("AppleEnableSwipeNavigateWithScrolls", "string") !==
+      "0"
+    );
+  }),
+});
+
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL,
   result: Schema.Boolean,
