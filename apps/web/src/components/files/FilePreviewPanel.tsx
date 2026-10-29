@@ -123,7 +123,6 @@ import {
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
   getProjectFileQueryAtom,
-  setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
 
@@ -705,7 +704,6 @@ function EditableFileSurface({
   }: EditorChangeEvent<"file", FileCommentAnnotationGroup, undefined>) => {
     if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
     setEditedContents(file.contents);
-    setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
     changeFileSaveSession(saveTarget, file.contents);
     if (!nextLineAnnotations) return;
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
@@ -944,7 +942,6 @@ function RenderedMarkdownSurface({
                   contents;
                 const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
                 if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
                 changeFileSaveSession(saveTarget, nextContents);
               }
         }

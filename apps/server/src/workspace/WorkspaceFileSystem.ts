@@ -610,8 +610,18 @@ export const make = Effect.gen(function* () {
           if (!stat.isFile() || stat.size > PROJECT_READ_FILE_MAX_BYTES) return false;
           const current = new TextDecoder("utf-8").decode(await handle.readFile());
           if (current !== expectedContents) return false;
+          const bytes = Buffer.from(input.contents, "utf8");
           await handle.truncate(0);
-          await handle.write(input.contents, 0, "utf8");
+          for (let offset = 0; offset < bytes.length;) {
+            const { bytesWritten } = await handle.write(
+              bytes,
+              offset,
+              bytes.length - offset,
+              offset,
+            );
+            if (bytesWritten === 0) throw new Error(`Writing ${realTargetPath} made no progress.`);
+            offset += bytesWritten;
+          }
           return true;
         } finally {
           await handle.close();

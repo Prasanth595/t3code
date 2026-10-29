@@ -4,9 +4,11 @@ import { AsyncResult } from "effect/reactivity";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const { runAtomCommand, getUnsavedFile } = vi.hoisted(() => ({
+const { runAtomCommand, getUnsavedFile, getSavedContents, setDraft } = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   getUnsavedFile: vi.fn(),
+  getSavedContents: vi.fn(),
+  setDraft: vi.fn(),
 }));
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
   ...(await original()),
@@ -20,6 +22,8 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   confirmProjectFileQueryData: () => true,
   getUnsavedProjectFileQueryData: getUnsavedFile,
+  getSavedProjectFileContents: getSavedContents,
+  setProjectFileQueryData: setDraft,
 }));
 
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
@@ -79,5 +83,31 @@ describe("file save sessions in React", () => {
       },
     ]);
     expect(onPendingChange).toHaveBeenLastCalledWith("README.md", false);
+  });
+
+  it("pins the saved contents a host-file edit replaces before the draft overwrites them", async () => {
+    const hostTarget = { ...target, relativePath: "/Users/me/.codex/AGENTS.md" };
+    // Until its refetch lands, a confirmed save is only in the draft the next edit replaces.
+    let saved = "saved";
+    getSavedContents.mockReset().mockImplementation(() => saved);
+    setDraft.mockReset().mockImplementation(() => {
+      saved = "stale read";
+    });
+    runAtomCommand
+      .mockReset()
+      .mockResolvedValue(AsyncResult.success({ relativePath: hostTarget.relativePath }));
+    getUnsavedFile.mockReset().mockReturnValue(null);
+    function HostFileSurface() {
+      useFileSaveSession({ ...hostTarget }, onPendingChange);
+      return <div>editor</div>;
+    }
+    await using _screen = await render(<HostFileSurface />, { router: false }); // no routes involved; the surface is a bare effect host
+    using _timers = fakeTimers();
+    changeFileSaveSession(hostTarget, "edit");
+    await vi.runAllTimersAsync();
+
+    expect(
+      runAtomCommand.mock.calls.map(([, , request]) => request.input.expectedContents),
+    ).toEqual(["saved"]);
   });
 });

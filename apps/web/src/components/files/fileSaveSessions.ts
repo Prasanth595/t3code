@@ -17,6 +17,7 @@ import {
   getProjectFileQueryAtom,
   getSavedProjectFileContents,
   getUnsavedProjectFileQueryData,
+  setProjectFileQueryData,
 } from "./projectFilesQueryState";
 
 export interface FileSaveTarget {
@@ -250,6 +251,8 @@ export function useFileSaveSession(
   );
 }
 
+/** Records an unsaved draft; the session pins the saved contents it replaces before they are overwritten. */
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+  setProjectFileQueryData(target.environmentId, target.cwd, target.relativePath, contents);
 }
