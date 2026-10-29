@@ -86,6 +86,9 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
 
 it.effect.each([
   { scenario: "multiple windows", expected: "2099-01-01T02:00:00.000Z" },
+  { scenario: "base model for 1m", expected: "2099-01-01T02:00:00.000Z" },
+  { scenario: "suffixed model", expected: "2099-01-01T02:00:00.000Z" },
+  { scenario: "unknown suffix", expected: null },
   { scenario: "model scopes", expected: "2099-01-01T04:00:00.000Z" },
   { scenario: "disabled account", expected: "2099-01-01T03:00:00.000Z" },
   { scenario: "model list unavailable", expected: "2099-01-01T03:00:00.000Z" },
@@ -102,7 +105,12 @@ it.effect.each([
     expect(unrelated).toBeNull();
     const reset = yield* sources.resolveResetAt({
       endpoint: "https://hub.test/v1",
-      model: "claude-opus-4-6",
+      model:
+        scenario === "base model for 1m" || scenario === "suffixed model"
+          ? "claude-opus-4-6[1m]"
+          : scenario === "unknown suffix"
+            ? "claude-opus-4-6[2m]"
+            : "claude-opus-4-6",
     });
     expect(reset).toBe(expected);
     const unlisted = yield* sources.resolveResetAt({
@@ -153,7 +161,9 @@ it.effect.each([
                         id:
                           url.searchParams.get("name") === "wrong-model"
                             ? "claude-sonnet-4-6"
-                            : "claude-opus-4-6",
+                            : scenario === "suffixed model"
+                              ? "claude-opus-4-6[1m]"
+                              : "claude-opus-4-6",
                       },
                     ],
                   }

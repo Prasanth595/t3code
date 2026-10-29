@@ -5756,6 +5756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "settings",
     "lenient settings",
     "root local",
+    "process cwd",
     "launch inline",
     "launch file",
   ])("uses the matching proxy reset from %s when Claude omits a reset time", (source) =>
@@ -5775,6 +5776,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* fs.writeFileString(
           path.join(configDir, "settings.json"),
           '{ // Claude settings allow comments and trailing commas\n "env": { "ANTHROPIC_BASE_URL": "https://hub.test/v1", }, }',
+        );
+      if (source === "process cwd")
+        yield* fs.writeFileString(
+          path.join(cwd, ".claude", "settings.json"),
+          JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } }),
         );
       if (source === "root local") {
         yield* fs.writeFileString(
@@ -5805,7 +5811,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ANTHROPIC_BASE_URL:
             source === "environment" ? "https://hub.test/v1" : "https://wrong.test",
         },
-      });
+      }).pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd));
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -5815,7 +5821,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attemptId: RunAttemptId.make("attempt-proxy-reset"),
           text: "Continue.",
           attachments: [],
-          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd },
+          runtimePolicy: {
+            ...CLAUDE_TEST_RUNTIME_POLICY,
+            cwd: source === "process cwd" ? null : cwd,
+          },
         }),
       );
       yield* Queue.offerAll(harness.sdkMessages, [

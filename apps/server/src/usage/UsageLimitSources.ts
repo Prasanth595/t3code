@@ -174,8 +174,11 @@ export const make = Effect.gen(function* () {
         (account) =>
           Effect.gen(function* () {
             const models = yield* api.accountModels(config, account.id);
-            if (!models.includes(input.model) || account.usageLimits.unavailable) return null;
-            const model = input.model.replace(/^claude-/, "").replace(/[^a-z0-9]+/g, "_");
+            const modelId = models.includes(input.model)
+              ? input.model
+              : input.model.replace(/\[1m\]$/, "");
+            if (!models.includes(modelId) || account.usageLimits.unavailable) return null;
+            const model = modelId.replace(/^claude-/, "").replace(/[^a-z0-9]+/g, "_");
             const blocked = account.usageLimits.windows.filter((window) => {
               if (window.usedPercent < 100) return false;
               if (window.id === "five_hour" || window.id === "seven_day") return true;

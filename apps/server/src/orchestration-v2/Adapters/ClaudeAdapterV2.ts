@@ -4377,25 +4377,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
+  const workingDirectory = yield* HostProcess.WorkingDirectory;
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
   const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(function* (
     context: ActiveClaudeTurnContext,
   ) {
     if (Option.isNone(usageLimitSources)) return null;
-    const cwd = context.input.runtimePolicy.cwd;
-    const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+    const cwd = context.input.runtimePolicy.cwd ?? workingDirectory;
+    const localDirectory = yield* localSettingsDirectory(cwd);
     let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
     const settingsPaths = [
       path.join(homePath, "settings.json"),
-      ...(cwd
-        ? [
-            path.join(cwd, ".claude", "settings.json"),
-            path.join(cwd, ".claude", "settings.local.json"),
-            ...(localDirectory === null || localDirectory === cwd
-              ? []
-              : [path.join(localDirectory, ".claude", "settings.local.json")]),
-          ]
-        : []),
+      path.join(cwd, ".claude", "settings.json"),
+      path.join(cwd, ".claude", "settings.local.json"),
+      ...(localDirectory === cwd
+        ? []
+        : [path.join(localDirectory, ".claude", "settings.local.json")]),
     ];
     for (const settingsPath of settingsPaths) {
       const settings = yield* fileSystem.readFileString(settingsPath).pipe(
