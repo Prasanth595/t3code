@@ -3397,6 +3397,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
           true,
         );
+
+        // Sparse patterns that leave out .gitmodules still check out the submodules.
+        yield* writeTextFile(cwd, "sparse-patterns.txt", "/shared/\n/t3.json\n");
+        yield* writeTextFile(
+          cwd,
+          "t3.json",
+          `{ "worktreeSparsePatternsPath": "sparse-patterns.txt" }`,
+        );
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "sparse patterns"]);
+        const sparsePath = pathService.join(
+          pathService.dirname(worktreePath),
+          "sparse-submodule-worktree",
+        );
+        yield* driver.createWorktree({
+          cwd,
+          path: sparsePath,
+          refName: initialBranch,
+          newRefName: "feature/sparse-submodules",
+        });
+
+        assert.isFalse(yield* fileSystem.exists(pathService.join(sparsePath, ".gitmodules")));
+        assert.isTrue(
+          yield* fileSystem.exists(pathService.join(sparsePath, "shared", "SHARED.md")),
+        );
       }),
     );
 
