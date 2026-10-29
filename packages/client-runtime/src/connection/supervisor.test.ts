@@ -1694,6 +1694,8 @@ describe("EnvironmentSupervisor routes", () => {
       const lanChecks = yield* Ref.make(0);
       const checkStarted = yield* Deferred.make<void>();
       const finishCheck = yield* Deferred.make<void>();
+      const woke = yield* Ref.make(false);
+      const wakeupHandled = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         checkRoute: (route) =>
           route.target._tag === "BearerConnectionTarget"
@@ -1711,6 +1713,14 @@ describe("EnvironmentSupervisor routes", () => {
               )
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        // The wakeup probes the session only after it forgets the silent routes.
+        probe: () =>
+          Ref.get(woke).pipe(
+            Effect.flatMap((afterWake) =>
+              afterWake ? Deferred.succeed(wakeupHandled, undefined) : Effect.void,
+            ),
+            Effect.asVoid,
+          ),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
         initiallyDesired: true,
@@ -1722,7 +1732,9 @@ describe("EnvironmentSupervisor routes", () => {
       );
       yield* TestClock.adjust("60 seconds");
       yield* Deferred.await(checkStarted);
+      yield* Ref.set(woke, true);
       yield* harness.wake("network-changed");
+      yield* Deferred.await(wakeupHandled);
       yield* Deferred.succeed(finishCheck, undefined);
 
       yield* awaitState(
