@@ -302,6 +302,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { CuaHostStatus } from "./cua.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -485,6 +486,7 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
+  serverCheckComputerUse: "server.checkComputerUse",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
@@ -614,6 +616,12 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerCheckComputerUseRpc = Rpc.make(WS_METHODS.serverCheckComputerUse, {
+  payload: Schema.Struct({}),
+  success: CuaHostStatus,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1927,6 +1935,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsServerCheckComputerUseRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
