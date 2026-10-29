@@ -1080,7 +1080,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Replay key template"
+                label="Duplicate request key"
                 value={draft.schedule.replayKey}
                 placeholder="{{headers.delivery-id}}"
                 disabled={saving}
@@ -1089,6 +1089,9 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
                 }
               />
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                Requests with the same key run only once within 7 days.
+              </Text>
               <FormField
                 label="Coalesce key template"
                 value={draft.schedule.coalesceKey}
@@ -1111,8 +1114,8 @@ function TaskForm({
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Replay keys suppress repeats for 7 days. Coalescing runs the latest payload when the
-                window from the first delivery closes. Empty keys run normally.
+                Coalescing runs the latest payload when the window from the first delivery closes.
+                Empty keys run normally.
               </Text>
             </>
           ) : (
