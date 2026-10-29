@@ -853,21 +853,27 @@ const make = Effect.gen(function* () {
 
   // Background sweeps read settings every few seconds; reading secret files each time is wasted.
   // Every secret write rewrites the settings file, so a new cached object implies fresh secrets.
+  // A read that overlaps a secret write may see files a rollback then restores, so it is not kept.
   let materialized: { readonly source: ServerSettings; readonly value: ServerSettings } | null =
     null;
+  let secretWriteGeneration = 0;
+  const invalidateMaterialized = Effect.sync(() => {
+    secretWriteGeneration++;
+    materialized = null;
+  });
   const getMaterializedSettings = getSettingsFromCache.pipe(
-    Effect.flatMap((source) =>
-      materialized?.source === source
-        ? Effect.succeed(materialized.value)
-        : materializeSettingsSecrets(source).pipe(
-            Effect.map(resolveTextGenerationProvider),
-            Effect.tap((value) =>
-              Effect.sync(() => {
-                materialized = { source, value };
-              }),
-            ),
-          ),
-    ),
+    Effect.flatMap((source) => {
+      if (materialized?.source === source) return Effect.succeed(materialized.value);
+      const generation = secretWriteGeneration;
+      return materializeSettingsSecrets(source).pipe(
+        Effect.map(resolveTextGenerationProvider),
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            if (generation === secretWriteGeneration) materialized = { source, value };
+          }),
+        ),
+      );
+    }),
   );
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
@@ -1047,6 +1053,7 @@ const make = Effect.gen(function* () {
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
+            yield* invalidateMaterialized;
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
             const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
             if (Exit.isFailure(materializedExit)) {
@@ -1059,7 +1066,7 @@ const make = Effect.gen(function* () {
               return yield* Effect.failCause(writeExit.cause);
             }
             return materializedExit.value;
-          }),
+          }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
         yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
         const resolved = resolveTextGenerationProvider(materializedNext);

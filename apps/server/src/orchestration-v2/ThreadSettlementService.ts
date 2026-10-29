@@ -323,12 +323,12 @@ export const make = Effect.gen(function* () {
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
-      function* (
-        thread: (typeof candidates)[number],
-        pullRequest: SettlementPullRequest | null,
-        settingsSnapshot: typeof settings,
-      ) {
-        const currentSettings = resolveProjectSettings(settingsSnapshot, thread.projectId).settings;
+      function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+        // thread.auto-settle does not recheck settings, so read them per decision; reads are cached.
+        const currentSettings = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          thread.projectId,
+        ).settings;
         const decisionNow = yield* DateTime.now;
         const settledAt = resolveAutoSettlementAt({
           thread,
@@ -349,7 +349,7 @@ export const make = Effect.gen(function* () {
         });
         return null;
       },
-      (effect, thread, _pullRequest, _settingsSnapshot) =>
+      (effect, thread) =>
         effect.pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
@@ -364,7 +364,7 @@ export const make = Effect.gen(function* () {
 
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
-      (thread) => settleThread(thread, null, settings),
+      (thread) => settleThread(thread, null),
       { concurrency: 8 },
     ))
       .filter((thread) => thread !== null)
@@ -505,13 +505,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const pullRequest = yield* pullRequestFor(group);
           if (pullRequest === undefined) return;
-          // Host lookups can be slow; decide with the settings current after them.
-          const currentSettings = yield* settingsService.getSettings;
-          yield* Effect.forEach(
-            group,
-            (thread) => settleThread(thread, pullRequest, currentSettings),
-            { discard: true },
-          );
+          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
+            discard: true,
+          });
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
