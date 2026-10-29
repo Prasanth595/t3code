@@ -461,6 +461,8 @@ export interface AcpAdapterV2Options {
 }
 
 export const AcpProviderCapabilitiesV2 = {
+  skillVariantDelivery: "turn-prompt",
+  skillGating: "instruction",
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: false,
@@ -7210,8 +7212,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
+          const promptText =
+            turnInput.skillDirectives === undefined || isNativeSlashCommand
+              ? messageText
+              : `${turnInput.skillDirectives.text}\n\n${messageText}`;
           const text = t3AcpPromptWithInstructions({
-            prompt: messageText,
+            prompt: promptText,
             state: instructionState,
             ...(previousInstructionState === undefined || compactionMarker !== undefined
               ? {}
@@ -7248,6 +7254,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               );
             prompt.splice(0, prompt.length, ...blocks);
+          }
+          if (isNativeSlashCommand && turnInput.skillDirectives !== undefined) {
+            prompt.push({ type: "text", text: turnInput.skillDirectives.text });
           }
           for (const attachment of flavor.buildPrompt ? [] : imageAttachments) {
             const path = host.resolveAttachmentPath(attachment as ChatAttachment);
@@ -7291,7 +7300,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           return {
             prompt,
-            instructionState: text === messageText ? undefined : instructionState,
+            instructionState: text === promptText ? undefined : instructionState,
             compactionMarker,
           };
         });

@@ -179,6 +179,11 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
+  CLAUDE_SKILL_VARIANT_PLUGIN_NAME,
+  claudeSkillVariantName,
+  renderSkillDirectives,
+} from "@t3tools/provider-core/server/skillDirectives";
+import {
   mcpToolPresentation,
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -359,6 +364,8 @@ export function spawnClaudeProcessGroup(
 }
 
 export const ClaudeProviderCapabilitiesV2 = {
+  skillVariantDelivery: "turn-prompt",
+  skillGating: "native",
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
@@ -560,6 +567,15 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   }
 }
 
+export class ClaudeSkillPolicyChangeBlockedByBackgroundWorkError extends Schema.TaggedError<ClaudeSkillPolicyChangeBlockedByBackgroundWorkError>()(
+  "ClaudeSkillPolicyChangeBlockedByBackgroundWorkError",
+  {},
+) {
+  override get message(): string {
+    return "Skill settings changed for this model; wait for background work to finish or stop it, then resend";
+  }
+}
+
 export class ClaudeAppendSystemPromptFileError extends Schema.TaggedError<ClaudeAppendSystemPromptFileError>()(
   "ClaudeAppendSystemPromptFileError",
   {
@@ -668,6 +684,8 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly cwd?: ClaudeAgentSdkQueryOptions["cwd"];
   readonly allowedTools?: ClaudeAgentSdkQueryOptions["allowedTools"];
   readonly disallowedTools?: ClaudeAgentSdkQueryOptions["disallowedTools"];
+  readonly pluginPaths?: ReadonlyArray<string>;
+  readonly pluginDelivery?: ClaudeAgentSdkQueryOptions["pluginDelivery"];
   readonly settingKeys?: ReadonlyArray<string>;
   readonly effort?: ClaudeAgentSdkQueryOptions["effort"];
   readonly includePartialMessages?: true;
@@ -807,6 +825,10 @@ export function loggedClaudeQueryOptions(
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
     ...(options.disallowedTools === undefined ? {} : { disallowedTools: options.disallowedTools }),
+    ...(options.plugins === undefined
+      ? {}
+      : { pluginPaths: options.plugins.map((plugin) => plugin.path) }),
+    ...(options.pluginDelivery === undefined ? {} : { pluginDelivery: options.pluginDelivery }),
     // Settings can carry the user's --settings values, such as an env block with credentials.
     ...(typeof options.settings === "object" && options.settings !== null
       ? { settingKeys: Object.keys(options.settings) }
@@ -1440,6 +1462,114 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
+const CLAUDE_SKILL_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const CLAUDE_SKILL_POLICY_HASH = /^[a-f0-9]{64}$/i;
+type ClaudeSkillPolicy = ProviderAdapter.ProviderAdapterV2TurnInput["skillPolicy"];
+
+function claudeSkillPolicyError(detail: string) {
+  return new ProviderAdapter.ProviderAdapterProtocolError({
+    driver: CLAUDE_PROVIDER,
+    detail,
+  });
+}
+
+function claudeSkillDisallowedTools(skillPolicy: ClaudeSkillPolicy): ReadonlyArray<string> {
+  if (skillPolicy === undefined) return [];
+  return [...new Set(skillPolicy.entries.map((entry) => `Skill(${entry.skillName})`))].toSorted();
+}
+
+const SKILL_FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+/** Claude resolves a plugin skill by its frontmatter name, which must match the variant directory. */
+function withSkillFrontmatterName(body: string, name: string): string {
+  const match = SKILL_FRONTMATTER.exec(body);
+  if (match === null) return `---\nname: ${name}\n---\n\n${body}`;
+  const frontmatter = match[1] ?? "";
+  const renamed = /^name:.*$/m.test(frontmatter)
+    ? frontmatter.replace(/^name:.*$/m, `name: ${name}`)
+    : `name: ${name}\n${frontmatter}`;
+  return `---\n${renamed}\n---\n${body.slice(match[0].length)}`;
+}
+
+const materializeClaudeSkillVariantPlugin = Effect.fn(
+  "ClaudeAdapterV2.materializeSkillVariantPlugin",
+)(function* (input: {
+  readonly stateDir: string;
+  readonly skillPolicy: ClaudeSkillPolicy;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) {
+  const variants = input.skillPolicy?.entries.flatMap((entry) =>
+    entry.mode === "variant" && entry.variantPath !== null
+      ? [{ skillName: entry.skillName, variantPath: entry.variantPath }]
+      : [],
+  );
+  if (input.skillPolicy === undefined || variants === undefined || variants.length === 0) {
+    return undefined;
+  }
+  if (!CLAUDE_SKILL_POLICY_HASH.test(input.skillPolicy.hash)) {
+    return yield* claudeSkillPolicyError("Claude received an invalid skill policy hash.");
+  }
+  const variantsRoot = input.path.resolve(input.stateDir, "skill-variants");
+  const materializedVariants = yield* Effect.forEach(
+    variants.toSorted((left, right) => left.skillName.localeCompare(right.skillName)),
+    (entry) =>
+      Effect.gen(function* () {
+        if (!CLAUDE_SKILL_NAME.test(entry.skillName)) {
+          return yield* claudeSkillPolicyError(
+            `Claude cannot materialize the skill variant '${entry.skillName}' as a local plugin.`,
+          );
+        }
+        const variantPath = input.path.resolve(entry.variantPath);
+        const relativeVariantPath = input.path.relative(variantsRoot, variantPath);
+        if (
+          relativeVariantPath === ".." ||
+          relativeVariantPath.startsWith(`..${input.path.sep}`) ||
+          input.path.isAbsolute(relativeVariantPath)
+        ) {
+          return yield* claudeSkillPolicyError(
+            `Claude received a skill variant outside the T3 skill-variants directory: ${entry.skillName}.`,
+          );
+        }
+        return {
+          skillName: entry.skillName,
+          variantName: claudeSkillVariantName(entry.skillName),
+          body: yield* input.fileSystem.readFileString(variantPath),
+        };
+      }),
+  );
+  const seenVariantNames = new Set<string>();
+  for (const entry of materializedVariants) {
+    if (seenVariantNames.has(entry.variantName)) {
+      return yield* claudeSkillPolicyError(
+        `Claude cannot materialize multiple skill variants as '${entry.variantName}'.`,
+      );
+    }
+    seenVariantNames.add(entry.variantName);
+  }
+  const pluginDirectory = input.path.join(variantsRoot, "claude-plugins", input.skillPolicy.hash);
+  yield* input.fileSystem.makeDirectory(input.path.join(pluginDirectory, ".claude-plugin"), {
+    recursive: true,
+  });
+  yield* input.fileSystem.writeFileString(
+    input.path.join(pluginDirectory, ".claude-plugin", "plugin.json"),
+    encodeClaudeJson({
+      name: CLAUDE_SKILL_VARIANT_PLUGIN_NAME,
+      description: "T3 Code model-specific skill variants",
+      version: "1.0.0",
+    }),
+  );
+  for (const entry of materializedVariants) {
+    const skillDirectory = input.path.join(pluginDirectory, "skills", entry.variantName);
+    yield* input.fileSystem.makeDirectory(skillDirectory, { recursive: true });
+    yield* input.fileSystem.writeFileString(
+      input.path.join(skillDirectory, "SKILL.md"),
+      withSkillFrontmatterName(entry.body, entry.variantName),
+    );
+  }
+  return pluginDirectory;
+});
+
 // Native subagents start from their task, not this session's system prompt.
 const subagentDeviceInstructions: HookCallback = () =>
   Promise.resolve({
@@ -1465,6 +1595,8 @@ export function makeClaudeQueryOptions(input: {
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
+  readonly plugins?: ClaudeQueryOptions["plugins"];
+  readonly pluginDelivery?: ClaudeQueryOptions["pluginDelivery"];
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
@@ -1547,6 +1679,8 @@ export function makeClaudeQueryOptions(input: {
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
+    ...(input.plugins === undefined ? {} : { plugins: [...input.plugins] }),
+    ...(input.pluginDelivery === undefined ? {} : { pluginDelivery: input.pluginDelivery }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
@@ -2054,26 +2188,39 @@ function isSupportedClaudeImageMimeType(
 
 export function makeClaudeUserMessage(input: {
   readonly text: string;
+  readonly leadingTextBlock?: string;
   readonly priority?: SDKUserMessage["priority"];
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
+  readonly skillPolicy?: ClaudeSkillPolicy;
   readonly uuid?: SDKUserMessage["uuid"];
 }): SDKUserMessage {
   // Claude expands a skill only when `/name` starts the last text block.
   // Keep the whole request before that block; see ClaudeSkillDispatch.
   const dispatch =
-    input.skills === undefined ? undefined : planClaudeSkillDispatch(input.text, input.skills);
+    input.skills === undefined
+      ? undefined
+      : planClaudeSkillDispatch(input.text, input.skills, input.skillPolicy?.entries);
+  const content = dispatch
+    ? [
+        ...(dispatch.leadingText === undefined
+          ? []
+          : [{ type: "text" as const, text: dispatch.leadingText }]),
+        { type: "text" as const, text: dispatch.commandText },
+      ]
+    : input.text;
   return {
     type: "user",
     message: {
       role: "user",
-      content: dispatch
-        ? [
-            ...(dispatch.leadingText === undefined
-              ? []
-              : [{ type: "text" as const, text: dispatch.leadingText }]),
-            { type: "text" as const, text: dispatch.commandText },
-          ]
-        : input.text,
+      content:
+        input.leadingTextBlock === undefined
+          ? content
+          : [
+              { type: "text" as const, text: input.leadingTextBlock },
+              ...(typeof content === "string"
+                ? [{ type: "text" as const, text: content }]
+                : content),
+            ],
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
@@ -2215,6 +2362,7 @@ const reserveClaudePdfBudget = (
 
 const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
   readonly text: string;
+  readonly leadingTextBlock?: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly priority?: SDKUserMessage["priority"];
   readonly uuid?: SDKUserMessage["uuid"];
@@ -2222,11 +2370,14 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly fileSystem: FileSystem.FileSystem;
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
+  readonly skillPolicy?: ClaudeSkillPolicy;
 }) {
   if (input.attachments.length === 0) {
     const message = makeClaudeUserMessage({
       text: input.text,
+      ...(input.leadingTextBlock === undefined ? {} : { leadingTextBlock: input.leadingTextBlock }),
       ...(input.skills === undefined ? {} : { skills: input.skills }),
+      ...(input.skillPolicy === undefined ? {} : { skillPolicy: input.skillPolicy }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
     });
@@ -2250,8 +2401,11 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   const dispatch =
     input.skills === undefined
       ? undefined
-      : planClaudeSkillDispatch(textWithAttachmentPaths, input.skills);
+      : planClaudeSkillDispatch(textWithAttachmentPaths, input.skills, input.skillPolicy?.entries);
   const content: Array<ClaudeUserContentBlock> = [];
+  if (input.leadingTextBlock !== undefined) {
+    content.push({ type: "text", text: input.leadingTextBlock });
+  }
   // Base64 adds a third to the payload. Leave room below Anthropic's 32 MB
   // request limit for text, instructions, and SDK framing. The SDK does not
   // expose document/context-window capabilities, so use the 100-page limit
@@ -2264,16 +2418,19 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   // including images that follow it in attachment order.
   const images = new Map<number, ClaudeUserContentBlock>();
   const textBytes = Buffer.byteLength(
-    encodeClaudeJson(
-      dispatch
+    encodeClaudeJson([
+      ...(input.leadingTextBlock === undefined
+        ? []
+        : [{ type: "text", text: input.leadingTextBlock }]),
+      ...(dispatch
         ? [
             ...(dispatch.leadingText === undefined
               ? []
               : [{ type: "text", text: dispatch.leadingText }]),
             { type: "text", text: dispatch.commandText },
           ]
-        : [{ type: "text", text: textWithAttachmentPaths }],
-    ),
+        : [{ type: "text", text: textWithAttachmentPaths }]),
+    ]),
   );
   input.pdfReservation.budget.pending.bytes += textBytes;
   input.pdfReservation.bytes += textBytes;
@@ -3961,6 +4118,7 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly skillPolicyHash: string | null;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -4353,6 +4511,7 @@ export interface ClaudeAdapterV2Options {
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
+  readonly stateDir: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly crypto: Crypto.Crypto;
@@ -4373,7 +4532,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-  const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const { attachmentsDir, stateDir, fileSystem, path, crypto, idAllocator, queryRunner } =
+    adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -9810,6 +9970,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const skillPolicyHash = turnInput.skillPolicy?.hash ?? null;
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -9825,6 +9986,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
+            existing.skillPolicyHash === skillPolicyHash &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
@@ -9848,6 +10010,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
+            existing.skillPolicyHash === skillPolicyHash &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
@@ -9878,6 +10041,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
+            if (
+              existing.nativeThreadId === nativeThreadId &&
+              existing.queryPolicyKey === queryPolicyKey &&
+              existing.skillPolicyHash !== skillPolicyHash
+            ) {
+              yield* Effect.logWarning("orchestration-v2.claude-skill-policy-replacement-blocked", {
+                nativeThreadId,
+                previousSkillPolicyHash: existing.skillPolicyHash,
+                nextSkillPolicyHash: skillPolicyHash,
+              });
+              return yield* new ClaudeSkillPolicyChangeBlockedByBackgroundWorkError();
+            }
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
@@ -9894,6 +10069,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             fileSystem,
             path,
           });
+          const variantPluginDirectory = yield* materializeClaudeSkillVariantPlugin({
+            stateDir,
+            skillPolicy: turnInput.skillPolicy,
+            fileSystem,
+            path,
+          });
+          const skillDisallowedTools = claudeSkillDisallowedTools(turnInput.skillPolicy);
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
@@ -9935,6 +10117,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.allowedTools === undefined
               ? {}
               : { allowedTools: mcpOverrides.allowedTools }),
+            ...(skillDisallowedTools.length === 0 ? {} : { disallowedTools: skillDisallowedTools }),
+            ...(variantPluginDirectory === undefined
+              ? {}
+              : {
+                  plugins: [{ type: "local" as const, path: variantPluginDirectory }],
+                  pluginDelivery: "initialize" as const,
+                }),
             ...(mcpOverrides.mcpServers === undefined
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
@@ -9987,6 +10176,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            skillPolicyHash,
             selection: compiledSelection,
             closed,
             lastTurn: null,
@@ -10112,6 +10302,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
             );
+            const renderedSkillDirective =
+              turnInput.skillPolicy === undefined
+                ? turnInput.skillDirectives?.text
+                : renderSkillDirectives(turnInput.skillPolicy.entries, {
+                    variantReference: "claude-plugin",
+                  });
+            const skillDirective = renderedSkillDirective || undefined;
             const userMessage =
               promptUuid === null
                 ? null
@@ -10125,7 +10322,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     fileSystem,
                     pdfReservation,
                     skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    ...(turnInput.skillPolicy === undefined
+                      ? {}
+                      : { skillPolicy: turnInput.skillPolicy }),
                     uuid: promptUuid,
+                    ...(skillDirective === undefined ? {} : { leadingTextBlock: skillDirective }),
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
@@ -10578,6 +10779,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               fileSystem,
               pdfReservation,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              ...(currentTurn.input.skillPolicy === undefined
+                ? {}
+                : { skillPolicy: currentTurn.input.skillPolicy }),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
@@ -11226,6 +11430,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
+      stateDir: serverConfig.stateDir,
       fileSystem,
       path,
       crypto,

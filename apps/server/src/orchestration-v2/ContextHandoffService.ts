@@ -1,5 +1,6 @@
 import {
   OrchestrationV2ContextHandoff,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
   ProviderInstanceId,
@@ -22,6 +23,11 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import {
+  SKILL_CONTEXT_OMISSION_PLACEHOLDER,
+  turnItemCarriesOmittedSkillContext,
+  type SkillContextOmission,
+} from "../skills/skillContextContamination.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -78,6 +84,7 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly skillContextOmissions?: ReadonlyArray<SkillContextOmission>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
 }
@@ -133,6 +140,23 @@ function makeForkDeltaSummary(input: {
     "Fork delta:",
     ...(itemLines.length === 0 ? ["- No user-visible delta items."] : itemLines),
   ].join("\n");
+}
+
+function historicalMessageWithSkillOmissions(
+  item: OrchestrationV2TurnItem,
+  omissions: ReadonlyArray<SkillContextOmission>,
+): OrchestrationV2HistoricalMessage | null {
+  if (!turnItemCarriesOmittedSkillContext(item, omissions)) return historicalMessage(item);
+  return {
+    role: "assistant",
+    text: SKILL_CONTEXT_OMISSION_PLACEHOLDER,
+    threadId: item.threadId,
+    runId: item.runId,
+    itemId: item.id,
+    providerThreadId: item.providerThreadId ?? null,
+    status: item.status,
+    kind: item.type,
+  };
 }
 
 function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
@@ -351,6 +375,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly skillContextOmissions?: ReadonlyArray<SkillContextOmission>;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -375,7 +400,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const coverage = handoffCoverage(input);
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
+          const message = historicalMessageWithSkillOmissions(
+            item,
+            input.skillContextOmissions ?? [],
+          );
           return message === null
             ? []
             : [
