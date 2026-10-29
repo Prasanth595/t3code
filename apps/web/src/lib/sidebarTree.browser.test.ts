@@ -163,7 +163,7 @@ describe("sidebar keyboard navigation", () => {
     expect(tree.root.scrollTop).toBe(0);
   });
 
-  it("does not pull focus back after a click outside the tree", async () => {
+  it("does not pull focus back after a click outside the rows", async () => {
     using tree = setup();
     const first = tree.row("first");
     tree.install();
@@ -171,13 +171,18 @@ describe("sidebar keyboard navigation", () => {
     text.textContent = "Chat text";
     document.body.append(text);
     using _text = { [Symbol.dispose]: () => text.remove() };
-    first.focus();
-    await userEvent.click(text);
-    expect(document.activeElement).toBe(document.body);
-    // A status change re-renders the list while the user works elsewhere.
-    tree.row("second");
-    // The list's mutation observer callback is queued ahead of this continuation.
-    await Promise.resolve();
-    expect(document.activeElement).toBe(document.body);
+    const spacer = document.createElement("div");
+    spacer.textContent = "Empty list space";
+    tree.root.append(spacer);
+    for (const target of [text, spacer]) {
+      first.focus();
+      await userEvent.click(target);
+      expect(document.activeElement).toBe(document.body);
+      // A status change re-renders the list while the user works elsewhere.
+      tree.row(`second-${target.tagName}`);
+      // The list's mutation observer callback is queued ahead of this continuation.
+      await Promise.resolve();
+      expect(document.activeElement).toBe(document.body);
+    }
   });
 });

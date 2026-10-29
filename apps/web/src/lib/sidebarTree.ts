@@ -60,9 +60,14 @@ export function installSidebarTree(root: HTMLElement) {
     target?.focus({ preventScroll: true });
   };
 
-  // Clicking non-focusable content drops focus to the body without a focusin event.
+  // Clicking non-focusable content, including empty list space, drops focus to the body
+  // without a focusin event. A click on the focused row fires no focusin either.
   const onPointerDown = (event: PointerEvent) => {
-    if (!root.contains(event.target as Node)) ownsFocus = false;
+    const focusable =
+      event.target instanceof Element
+        ? event.target.closest(`${ROW}, button, a[href], input, [tabindex]`)
+        : null;
+    ownsFocus = focusable !== null && root.contains(focusable);
   };
   const onFocus = (event: FocusEvent) => {
     ownsFocus = root.contains(event.target as Node);
