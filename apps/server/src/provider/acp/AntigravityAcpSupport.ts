@@ -31,6 +31,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "authenticateEagerly"
   | "cancelBehavior"
   | "clientCapabilities"
+  | "clientInfo"
   | "onStderr"
   | "resumeMethod"
   | "transformSessionUpdate"
@@ -56,6 +57,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
+      // The agent offers non-Gemini models only to allowlisted clients such as Zed.
+      clientInfo: { name: "zed", version: "0.0.0" },
       clientCapabilities: {
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: { readTextFile: input.clientFileReads === true, writeTextFile: false },
@@ -89,12 +92,41 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-function antigravityModelOptions(
+export function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
   const model = configOptions.find((option) => option.id === "model");
   if (model?.type !== "select") return [];
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+}
+
+/** Runtime 1.4 reports thinking as its own option; 1.3 encoded it in the model ID. */
+export function antigravityThinkingConfig(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+) {
+  const option = configOptions?.find((candidate) => candidate.category === "thought_level");
+  return option?.type === "select" ? option : undefined;
+}
+
+/** Splits a saved 1.3 ID such as `gemini-3.8-flash-high` into a 1.4 model and thinking level. */
+function splitLegacyAntigravityModel(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  model: string,
+) {
+  const thinking = antigravityThinkingConfig(configOptions);
+  if (thinking === undefined) return undefined;
+  const models = antigravityModelOptions(configOptions);
+  for (const level of thinking.options.flatMap((entry) =>
+    "value" in entry ? [entry] : entry.options,
+  )) {
+    const family = model.endsWith(`-${level.value}`)
+      ? model.slice(0, -level.value.length - 1)
+      : undefined;
+    if (family !== undefined && models.some((option) => option.value === family)) {
+      return { model: family, thinkingConfigId: thinking.id, thinkingLevel: level.value };
+    }
+  }
+  return undefined;
 }
 
 function resolveAntigravityModel(input: {
@@ -106,7 +138,9 @@ function resolveAntigravityModel(input: {
   const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
   if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
   const options = antigravityModelOptions(input.configOptions);
-  return input.defaultModel && options.some((option) => option.value === input.defaultModel)
+  return input.defaultModel &&
+    (options.some((option) => option.value === input.defaultModel) ||
+      splitLegacyAntigravityModel(input.configOptions, input.defaultModel) !== undefined)
     ? input.defaultModel
     : current;
 }
@@ -116,7 +150,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "getConfigOptions" | "setModel" | "setConfigOption"
     >;
     readonly model: string | null | undefined;
     readonly defaultModel?: string | undefined;
@@ -133,6 +167,16 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
     const options = antigravityModelOptions(configOptions);
+    const legacy = options.some((option) => option.value === resolved)
+      ? undefined
+      : splitLegacyAntigravityModel(configOptions, resolved);
+    if (legacy !== undefined) {
+      yield* input.runtime.setModel(legacy.model).pipe(Effect.mapError(input.mapError));
+      yield* input.runtime
+        .setConfigOption(legacy.thinkingConfigId, legacy.thinkingLevel)
+        .pipe(Effect.mapError(input.mapError));
+      return legacy.model;
+    }
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(

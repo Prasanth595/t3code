@@ -38,8 +38,15 @@ function makeModelRuntime(
     if (failure) return yield* failure;
     selections.push(model);
   });
+  const setConfigOption = Effect.fn("AntigravityAcpSupportTest.setConfigOption")(function* (
+    configId: string,
+    value: string | boolean,
+  ) {
+    selections.push(`${configId}=${String(value)}`);
+    return { configOptions };
+  });
   return {
-    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel },
+    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel, setConfigOption },
     selections,
   };
 }
@@ -135,6 +142,33 @@ describe("applyAntigravityAcpModelSelection", () => {
 
       expect(model).toBe("gemini-saved");
       expect(selections).toEqual(["gemini-saved"]);
+    }),
+  );
+
+  it.effect("maps a model ID saved on runtime 1.3 to the 1.4 model and thinking level", () =>
+    Effect.gen(function* () {
+      const { runtime, selections } = makeModelRuntime([
+        { ...modelConfig, options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+        {
+          id: "thinking_level",
+          name: "Thinking Level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ]);
+      const model = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-3.8-flash-low",
+        mapError: (cause) => cause,
+      });
+
+      expect(model).toBe("gemini-3.8-flash");
+      expect(selections).toEqual(["gemini-3.8-flash", "thinking_level=low"]);
     }),
   );
 });

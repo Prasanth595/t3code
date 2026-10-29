@@ -207,7 +207,7 @@ describe("AntigravityAdapterV2 client file system", () => {
           (line) =>
             JSON.parse(line) as {
               method?: string;
-              params?: { clientCapabilities?: { fs?: unknown } };
+              params?: { clientCapabilities?: { fs?: unknown }; clientInfo?: { name?: string } };
             },
         )
         .find((request) => request.method === "initialize");
@@ -215,6 +215,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         readTextFile: true,
         writeTextFile: false,
       });
+      assert.equal(initialize?.params?.clientInfo?.name, "zed");
       assert.isUndefined(writeTextFile);
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file reads");
