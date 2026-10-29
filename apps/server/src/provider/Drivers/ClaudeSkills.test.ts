@@ -5,8 +5,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverClaudeSkills as discoverSkills } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
+
+// Windows makes the managed directory fixture-controlled without reading host policy or skills.
+const discoverClaudeSkills = (
+  ...[config, cwd, environment = {}]: Parameters<typeof discoverSkills>
+) =>
+  discoverSkills(config, cwd, environment).pipe(
+    Effect.provideService(HostProcess.Platform, "win32"),
+  );
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -434,20 +442,20 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         },
       ]);
 
-      const programData = path.join(tempDir, "ProgramData");
+      const programFiles = path.join(tempDir, "Program Files");
       yield* writeSkill(
-        path.join(programData, "ClaudeCode", ".claude", "skills"),
+        path.join(programFiles, "ClaudeCode", ".claude", "skills"),
         "deploy",
         ["---", "name: deploy", "description: Managed deploy.", "---"].join("\n"),
       );
       const managedSkills = yield* discoverClaudeSkills({ homePath: configDir }, workspace, {
-        PROGRAMDATA: programData,
-      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        ProgramFiles: programFiles,
+      });
 
       assert.deepEqual(managedSkills, [
         {
           name: "deploy",
-          path: path.join(programData, "ClaudeCode", ".claude", "skills", "deploy", "SKILL.md"),
+          path: path.join(programFiles, "ClaudeCode", ".claude", "skills", "deploy", "SKILL.md"),
           enabled: true,
           scope: "user",
           description: "Managed deploy.",

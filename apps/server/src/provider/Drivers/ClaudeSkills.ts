@@ -114,8 +114,8 @@ function claudeManagedDirectory(
     return "/Library/Application Support/ClaudeCode";
   }
   if (platform === "win32") {
-    const programData = environment.PROGRAMDATA?.trim();
-    return programData ? path.join(programData, "ClaudeCode") : undefined;
+    const programFiles = environment.ProgramFiles?.trim();
+    return programFiles ? path.join(programFiles, "ClaudeCode") : undefined;
   }
   return "/etc/claude-code";
 }
