@@ -147,8 +147,8 @@ decoder then retains frames for seconds despite `optimizeForLatency` and an empt
 `decodeQueueSize`. The iOS AVCC viewer restores the missing metadata before
 configuring the decoder so hardware decoding can remain enabled. WebCodecs is
 secure-context only, so the viewer probes `isConfigSupported` and falls back to
-MJPEG on iOS when decoding is unavailable. Android has no MJPEG; there the panel
-reports that it cannot decode.
+MJPEG on iOS when decoding is unavailable. Android's SEMU socket has no MJPEG;
+that transport reports that it cannot decode without WebCodecs.
 
 serve-sim can also be locked to WebRTC, as on EAS Simulator, and then refuses
 AVCC with a 409 naming the transport. The viewer still asks for AVCC first, so
@@ -156,3 +156,6 @@ hubs that serve it pay nothing, and switches on that 409, or when its MJPEG
 image fails in a browser that has `RTCPeerConnection`. Offers are not trickled:
 serve-sim takes one offer with every candidate. The video element only feeds
 the same canvas sink, so the panel and the mobile WebView keep one surface.
+Android discovers WebRTC through serve-emu's API before opening a video socket.
+It keeps a separate `video=0` socket for input, so input can reconnect without
+restarting video. Both WebRTC paths work without WebCodecs.
