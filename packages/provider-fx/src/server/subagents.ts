@@ -186,6 +186,19 @@ export function extractFxSubagentUpdate(
   };
 }
 
+// Provisional: fx names the child behind a forwarded approval here in an
+// unmerged PR, so a rename changes this schema alone.
+const decodePermissionSubagent = Schema.decodeUnknownOption(
+  Schema.Struct({ fx: Schema.Struct({ subagent: Schema.Struct({ sessionId: Schema.String }) }) }),
+);
+
+/** The child session behind a sub-agent's approval, which fx asks and takes answers for on the parent. */
+export function fxPermissionSubagentSessionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  return Option.getOrUndefined(decodePermissionSubagent(request._meta))?.fx.subagent.sessionId;
+}
+
 /** fx's own `tool_call` kinds (src/acp/tool_call_presentation.zig). */
 function fxToolKind(name: string): EffectAcpSchema.ToolKind {
   switch (name) {

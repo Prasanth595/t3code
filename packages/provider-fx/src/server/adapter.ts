@@ -38,7 +38,11 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
-import { extractFxSubagentUpdate, withFxSubagentHooks } from "./subagents.ts";
+import {
+  extractFxSubagentUpdate,
+  fxPermissionSubagentSessionId,
+  withFxSubagentHooks,
+} from "./subagents.ts";
 
 export { FX_DRIVER_KIND } from "./acpSupport.ts";
 
@@ -112,6 +116,7 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
       ),
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
+    permissionSubagentSessionId: fxPermissionSubagentSessionId,
     extractSubagentUpdate: extractFxSubagentUpdate,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
