@@ -19,6 +19,7 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
+  PullRequestReviewDecision,
   PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
@@ -43,9 +44,11 @@ import {
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
+  decodeReviewDecisionsJson,
   decodeViewerJson,
   gitLabAwardName,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
+  REVIEW_DECISIONS_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
@@ -236,6 +239,15 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
+
+    readonly getReviewDecisions: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly numbers: ReadonlyArray<number>;
+    }) => Effect.Effect<
+      ReadonlyMap<number, PullRequestReviewDecision | null>,
+      GitLabPullRequestCliError
+    >;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -1094,6 +1106,38 @@ export const make = Effect.gen(function* () {
           }),
         );
 
+  const reviewDecisionsOf = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly numbers: ReadonlyArray<number>;
+  }): Effect.Effect<
+    ReadonlyMap<number, PullRequestReviewDecision | null>,
+    GitLabPullRequestCliError
+  > =>
+    api({
+      cwd: input.cwd,
+      path: "graphql",
+      method: "POST",
+      stdin: JSON.stringify({
+        query: REVIEW_DECISIONS_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iids: input.numbers.map(String) },
+      }),
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeReviewDecisionsJson(result.stdout.trim());
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "getReviewDecisions",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
+
   const viewerUsername = (input: { readonly cwd: string }) =>
     api({ cwd: input.cwd, path: "user" }).pipe(
       Effect.flatMap((result): Effect.Effect<string, GitLabPullRequestCliError> => {
@@ -1124,6 +1168,16 @@ export const make = Effect.gen(function* () {
     }),
 
     getMergeRequestDetail: mergeRequestDetail,
+
+    getReviewDecisions: Effect.fn("GitLabPullRequestCli.getReviewDecisions")(function (input) {
+      const batches: Array<ReadonlyArray<number>> = [];
+      for (let at = 0; at < input.numbers.length; at += MAX_PAGE_SIZE) {
+        batches.push(input.numbers.slice(at, at + MAX_PAGE_SIZE));
+      }
+      return Effect.forEach(batches, (numbers) => reviewDecisionsOf({ ...input, numbers }), {
+        concurrency: 2,
+      }).pipe(Effect.map((pages) => new Map(pages.flatMap((page) => [...page]))));
+    }),
 
     listNotes: Effect.fn("GitLabPullRequestCli.listNotes")(function (input) {
       return notesPage({ ...input, page: 1, collected: [] });

@@ -73,6 +73,7 @@ describe("getChangeRequest base freshness", () => {
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
               getMergeRequestDetail: () => Effect.succeed(detail),
+              getReviewDecisions: () => Effect.succeed(new Map()),
             }),
           ),
         );
@@ -218,6 +219,104 @@ describe("optional activity reads", () => {
         reactions: [],
         commits: [commit],
       });
+    }),
+  );
+});
+
+describe("review decisions", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const item = {
+    number: 7,
+    title: "Merge request 7",
+    url: "https://gitlab.com/acme/web/-/merge_requests/7",
+    author: null,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    labels: [],
+  };
+  const detail = {
+    ...item,
+    body: "",
+    changedFiles: 1,
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    checks: [],
+    viewerCanMerge: true,
+    reviewerIds: [],
+  };
+  const providerWith = (
+    getReviewDecisions: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getReviewDecisions"],
+  ) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          listMergeRequests: () =>
+            Effect.succeed({
+              items: [item, { ...item, number: 8 }],
+              truncated: false,
+              cursorAdvance: 2,
+            }),
+          getMergeRequestDetail: () => Effect.succeed(detail),
+          getReviewDecisions,
+        }),
+      ),
+    );
+  const listing = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "gitlab.com",
+    state: "open" as const,
+    involvement: "all" as const,
+    viewer: "julius",
+    limit: 2,
+  };
+
+  it.effect("puts GitLab's approval state on listed and summarized merge requests", () =>
+    Effect.gen(function* () {
+      const provider = yield* providerWith(() =>
+        Effect.succeed(
+          new Map([
+            [7, "approved" as const],
+            [8, null],
+          ]),
+        ),
+      );
+      const listed = yield* provider.listChangeRequests(listing);
+      assert.isDefined(provider.getChangeRequestSummary);
+      const summary = yield* provider.getChangeRequestSummary(reference);
+
+      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual(["approved", null]);
+      expect(summary.reviewDecision).toBe("approved");
+    }),
+  );
+
+  it.effect("lists merge requests with an unknown decision when GitLab will not say", () =>
+    Effect.gen(function* () {
+      const provider = yield* providerWith(() =>
+        Effect.fail(
+          new GitLabPullRequestCli.GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: "/w",
+            operation: "getReviewDecisions",
+            cause: null,
+          }),
+        ),
+      );
+      const listed = yield* provider.listChangeRequests(listing);
+
+      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
+        undefined,
+        undefined,
+      ]);
     }),
   );
 });

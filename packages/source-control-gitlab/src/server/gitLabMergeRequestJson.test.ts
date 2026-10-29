@@ -10,6 +10,7 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodeReviewDecisionsJson,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -617,6 +618,68 @@ describe("decodeRepositoryBlobsJson", () => {
           JSON.stringify({ data: { project: { repository: { blobs: { nodes: [] } } } } }),
         ),
       ),
+    ).toEqual(new Map());
+  });
+});
+
+describe("decodeReviewDecisionsJson", () => {
+  const decisionsOf = (enterprise: boolean, nodes: ReadonlyArray<unknown>) =>
+    expectSuccess(
+      decodeReviewDecisionsJson(
+        JSON.stringify({
+          data: { metadata: { enterprise }, project: { mergeRequests: { nodes } } },
+        }),
+      ),
+    );
+  const approvedBy = (...usernames: ReadonlyArray<string>) => ({
+    nodes: usernames.map((username) => ({ username })),
+  });
+
+  it.each([
+    {
+      reading: "an approval short of Enterprise approval rules",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy("GitLabDuo") },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules no one has approved against",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules met",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Enterprise without approval rules or approvals",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy() },
+      decision: null,
+    },
+    {
+      reading: "Community Edition with an approval",
+      enterprise: false,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Community Edition without approvals",
+      enterprise: false,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: null,
+    },
+  ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
+    expect([...decisionsOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([[7, decision]]);
+  });
+
+  it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
+    expect([...decisionsOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
+    expect(
+      expectSuccess(decodeReviewDecisionsJson(JSON.stringify({ data: { project: null } }))),
     ).toEqual(new Map());
   });
 });
