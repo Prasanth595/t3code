@@ -159,7 +159,7 @@ export function WorkflowOpeningBlock(props: {
       ) : null}
       {graph !== null && graph.otherMembers.length > 0 ? (
         <section aria-label="Other workflow agents">
-          <p className="px-2 text-2xs text-muted-foreground">
+          <p className="px-2 text-xs text-muted-foreground">
             Other agents · node association unavailable
           </p>
           <ul className="m-0 list-none p-0">{graph.otherMembers.map(memberRow)}</ul>
@@ -232,7 +232,7 @@ function WorkflowBudgetMeter({
           max={budget.limit}
         />
       ) : null}
-      <p className={budget.exhausted ? "text-warning" : undefined}>
+      <p className={cn("text-xs", budget.exhausted && "text-warning")}>
         {budget.overshot ? "Budget exceeded. " : budget.exhausted ? "Budget exhausted. " : ""}
         The budget stops new starts. Already-running agents may exceed it.
         {budget.complete ? "" : " Usage is incomplete."}
@@ -260,7 +260,7 @@ function WorkflowProgress(props: { readonly text: string }) {
         ref={textRef}
         id={contentId}
         className={cn(
-          "break-words whitespace-pre-wrap px-2 text-2xs text-muted-foreground",
+          "break-words whitespace-pre-wrap px-2 text-xs text-muted-foreground",
           !expanded && "line-clamp-3",
         )}
       >
