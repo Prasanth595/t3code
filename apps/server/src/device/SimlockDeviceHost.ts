@@ -13,6 +13,7 @@ import {
   type DevicePlatformAvailability,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -105,13 +106,17 @@ export const machineSimlockToken = (environment: NodeJS.ProcessEnv) => {
   return URL.canParse(gatewayUrl) ? { gatewayUrl, agentToken } : null;
 };
 
-/** The saved token, else this machine's agent-device token, but only for the gateway it targets. */
+/**
+ * The saved token, else this machine's agent-device token; each only for the gateway it belongs to,
+ * so a URL being edited never receives either.
+ */
 export const resolveSimlockToken = (
   gatewayUrl: string,
-  saved: string,
+  saved: { readonly gatewayUrl: string; readonly agentToken: string } | undefined,
   environment: NodeJS.ProcessEnv,
 ) => {
-  if (saved) return { agentToken: saved, source: "settings" as const };
+  if (saved?.agentToken && sameOrigin(saved.gatewayUrl, gatewayUrl))
+    return { agentToken: saved.agentToken, source: "settings" as const };
   const machine = machineSimlockToken(environment);
   return machine && sameOrigin(machine.gatewayUrl, gatewayUrl)
     ? { agentToken: machine.agentToken, source: "env" as const }
@@ -120,12 +125,18 @@ export const resolveSimlockToken = (
 
 /** What went wrong talking to a gateway, without the gateway's own text. */
 export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, tokenOwner: string) => {
-  const status = HttpClientError.isHttpClientError(cause) ? cause.response?.status : undefined;
-  return status === 401 || status === 403
-    ? `The Simlock gateway refused the agent token for ${tokenOwner}.`
-    : status !== undefined
-      ? `The Simlock gateway at ${gatewayUrl} answered HTTP ${status}.`
-      : `Could not reach the Simlock gateway at ${gatewayUrl}.`;
+  if (Cause.isTimeoutError(cause)) return `Could not reach the Simlock gateway at ${gatewayUrl}.`;
+  if (!HttpClientError.isHttpClientError(cause))
+    return `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
+  if (cause.reason._tag === "StatusCodeError") {
+    const status = cause.reason.response.status;
+    return status === 401 || status === 403
+      ? `The Simlock gateway refused the agent token for ${tokenOwner}.`
+      : `The Simlock gateway at ${gatewayUrl} answered HTTP ${status}.`;
+  }
+  return cause.reason._tag === "TransportError"
+    ? `Could not reach the Simlock gateway at ${gatewayUrl}.`
+    : `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
 };
 
 const decodeIdentity = Schema.decodeUnknownEffect(
@@ -172,8 +183,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const environment = yield* HostProcess.Environment;
   const hostId = config.id;
   const gateway = config.gatewayUrl.replace(/\/$/, "");
-  const agentToken =
-    resolveSimlockToken(config.gatewayUrl, config.agentToken, environment)?.agentToken ?? "";
+  const agentToken = resolveSimlockToken(config.gatewayUrl, config, environment)?.agentToken ?? "";
   const agentDeviceUrl = `${gateway}/v1/agent-device`;
   const hostDir = path.join(server.stateDir, "device", "simlock", hostId);
   const leases = new Map<string, Lease>();
@@ -280,14 +290,11 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     const decoded = yield* request("GET", "/v1/catalog").pipe(
       Effect.flatMap(decodeCatalog),
       Effect.mapError((cause) =>
-        unavailable(
-          `${describeGatewayFailure(cause, gateway, config.label)} Check it in Settings.`,
-          cause,
-        ),
+        unavailable(describeGatewayFailure(cause, gateway, config.label), cause),
       ),
     );
-    const devices = decoded.platforms.flatMap((entry) => {
-      if (entry.platform !== "ios" && entry.platform !== "android") return [];
+    const byPlatform = decoded.platforms.map((entry) => {
+      if (entry.platform !== "ios" && entry.platform !== "android") return null;
       const platform: DevicePlatform = entry.platform;
       return Object.entries(entry.modelRuntimes).flatMap(([model, runtimes]) => {
         const kind = entry.modelClasses?.[model];
@@ -306,8 +313,12 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         ];
       });
     });
-    // An empty catalog is usually workers reconnecting; caching it would hide the pool for the TTL.
-    catalog = devices.length > 0 ? { at: now, devices } : null;
+    const devices = byPlatform.flatMap((entry) => entry ?? []);
+    // A platform with nothing to offer is usually its workers reconnecting; caching that would
+    // hide it for the TTL, so only a catalog with devices on every platform is kept.
+    catalog = byPlatform.every((entry) => entry === null || entry.length > 0)
+      ? { at: now, devices }
+      : null;
     return devices;
   });
 

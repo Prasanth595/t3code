@@ -271,15 +271,14 @@ describe("Simlock device host", () => {
       expect(yield* host.platformAvailability("ios")).toEqual({
         platform: "ios",
         available: false,
-        reason:
-          "The Simlock gateway refused the agent token for Device pool. Check it in Settings.",
+        reason: "The Simlock gateway refused the agent token for Device pool.",
       });
       expect((yield* host.summary).platforms.every((platform) => !platform.available)).toBe(true);
       yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("uses this machine's agent-device token only for the gateway it targets", () =>
+  it.effect("sends saved and machine tokens only to the gateway each belongs to", () =>
     Effect.gen(function* () {
       const pool = yield* fakePool();
       const availability = (baseUrl: string) =>
@@ -296,6 +295,14 @@ describe("Simlock device host", () => {
           return result;
         });
 
+      expect(
+        SimlockDeviceHost.resolveSimlockToken(
+          "https://elsewhere.example:4700",
+          config({ agentToken: "saved-token" }),
+          {},
+        ),
+      ).toBeNull();
+
       expect(yield* availability(`${GATEWAY}/v1/agent-device`)).toEqual({
         platform: "ios",
         available: true,
@@ -310,19 +317,24 @@ describe("Simlock device host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("lists the pool again as soon as its workers return", () =>
+  it.effect("lists a platform again as soon as its workers return", () =>
     Effect.gen(function* () {
       const pool = yield* fakePool();
       const scope = yield* Scope.make();
       const host = yield* makeHost(pool, config(), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
-      // Mid-reconnect, the gateway knows the models but no worker that makes them.
+      // Mid-reconnect, the gateway knows the Android models but no worker that makes them.
       pool.setCatalog({
-        platforms: [{ ...CATALOG.platforms[1]!, modelWorkers: { "Pixel 9": [], "Pixel 8": [] } }],
+        platforms: [
+          CATALOG.platforms[0]!,
+          { ...CATALOG.platforms[1]!, modelWorkers: { "Pixel 9": [], "Pixel 8": [] } },
+        ],
       });
-      expect((yield* ready.devices.list).devices).toEqual([]);
+      const during = (yield* ready.devices.list).devices;
+      expect(during.some((device) => device.platform === "android")).toBe(false);
       pool.setCatalog(CATALOG);
-      expect((yield* ready.devices.list).devices.length).toBeGreaterThan(0);
+      const after = (yield* ready.devices.list).devices;
+      expect(after.some((device) => device.platform === "android")).toBe(true);
       yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );

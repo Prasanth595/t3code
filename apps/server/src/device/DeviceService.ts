@@ -1513,18 +1513,20 @@ export const make = Effect.gen(function* () {
         return yield* new DeviceSimlockIdentityError({
           reason: "This machine's agent-device does not point at a Simlock gateway.",
         });
-      const saved =
+      const savedHost =
         input.hostId === undefined
-          ? ""
-          : ((yield* settings.getSettings).simlockDeviceHosts.find(
+          ? undefined
+          : (yield* settings.getSettings).simlockDeviceHosts.find(
               (host) => host.id === input.hostId,
-            )?.agentToken ?? "");
+            );
       const token = input.agentToken
         ? { agentToken: input.agentToken, source: "entered" as const }
-        : SimlockDeviceHost.resolveSimlockToken(gatewayUrl, saved, environment);
+        : SimlockDeviceHost.resolveSimlockToken(gatewayUrl, savedHost, environment);
       if (!token)
         return yield* new DeviceSimlockIdentityError({
-          reason: "No agent token for this gateway on this machine.",
+          reason: savedHost?.agentToken
+            ? "The saved token is for another gateway. Enter one for this gateway."
+            : "No agent token for this gateway on this machine.",
         });
       const identity = yield* SimlockDeviceHost.simlockIdentity(gatewayUrl, token.agentToken).pipe(
         Effect.mapError(
