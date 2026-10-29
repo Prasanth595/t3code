@@ -3590,7 +3590,7 @@ function providerFailureFromResult(
           )
         : message.api_error_status === 429
           ? // CLIProxyAPI rejects every request until its credentials' cooldown ends.
-            /^API Error: [^\r\n]*\(429\)[^\r\n]* are cooling down[^\r\n]*? \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+            /^API Error: [^\r\n]*\(429\)[^\r\n]* are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
               message.result,
             )
           : null
