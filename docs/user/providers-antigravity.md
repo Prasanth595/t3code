@@ -75,7 +75,8 @@ selected model. If access to that model ends, select another available model
 before continuing.
 
 Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
-workspace when a session starts. Git ignores empty folders.
+workspace when a session starts. Git does not track empty folders, so they never
+appear in commits.
 
 Use Antigravity's native `/plan` command for planning. T3 Code's separate Plan mode
 is unavailable. Tool approvals follow [Permission modes](./permission-modes.md).
