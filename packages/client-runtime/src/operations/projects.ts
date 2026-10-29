@@ -190,9 +190,13 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
 }
 
 /** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
-export function getCloneDirectoryPath(remoteUrl: string, ghqCloneLayout: boolean): string {
+export function getCloneDirectoryPath(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
   return (
-    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(remoteUrl)
+    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(repository)
   );
 }
 

@@ -1822,11 +1822,19 @@ function OpenCommandPaletteDialog(props: {
     if (created.value) setOpen(false);
   }
 
-  function getDefaultCloneDestination(environmentId: EnvironmentId, remoteUrl: string): string {
+  function getDefaultCloneDestination(
+    environmentId: EnvironmentId,
+    remoteUrl: string,
+    repository: string,
+  ): string {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
     return getCloneDestinationPath(
       getAddProjectInitialQueryForEnvironment(environmentId),
-      getCloneDirectoryPath(remoteUrl, environment?.serverConfig?.settings.ghqCloneLayout === true),
+      getCloneDirectoryPath(
+        remoteUrl,
+        environment?.serverConfig?.settings.ghqCloneLayout === true,
+        repository,
+      ),
     );
   }
 
@@ -1857,6 +1865,7 @@ function OpenCommandPaletteDialog(props: {
         const destinationPath = getDefaultCloneDestination(
           addProjectCloneFlow.environmentId,
           remoteUrl,
+          rawRepository,
         );
         setAddProjectCloneFlow({
           step: "confirm",
@@ -1900,6 +1909,7 @@ function OpenCommandPaletteDialog(props: {
       const destinationPath = getDefaultCloneDestination(
         addProjectCloneFlow.environmentId,
         remoteUrl,
+        repository.nameWithOwner,
       );
       setAddProjectCloneFlow({
         step: "confirm",

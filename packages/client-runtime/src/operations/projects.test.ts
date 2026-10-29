@@ -76,6 +76,13 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryPath("https://github.com/owner/../../repo", true)).toBe("repo");
     expect(getCloneDirectoryPath("/srv/git/repo.git", true)).toBe("repo");
     expect(
+      getCloneDirectoryPath(
+        "git@ssh.dev.azure.com:v3/org/Project/My%20Repo",
+        false,
+        "Project/My Repo",
+      ),
+    ).toBe("My Repo");
+    expect(
       getCloneDestinationPath(
         "C:\\Users\\me\\ghq",
         getCloneDirectoryPath("git@github.com:owner/repo.git", true),
