@@ -8,7 +8,7 @@ const chat = (id: string, updatedAt: string, content = "Hi"): SaasChatConversati
   title: id,
   createdAt: updatedAt,
   updatedAt,
-  messages: [{ id: `${id}-m`, role: "assistant", content, createdAt: updatedAt }],
+  messages: [{ id: `${id}-m`, role: "user", content, createdAt: updatedAt }],
 });
 
 describe("chatListSections", () => {
@@ -31,6 +31,17 @@ describe("chatListSections", () => {
 });
 
 describe("chatPreview", () => {
+  it("shows your latest message, not the reply", () => {
+    const conversation: SaasChatConversation = {
+      ...chat("b", "2026-10-27T00:00:00.000Z"),
+      messages: [
+        { id: "u", role: "user", content: "Cum e vremea?", createdAt: "2026-10-27T00:00:00.000Z" },
+        { id: "a", role: "assistant", content: "Plouă.", createdAt: "2026-10-27T00:00:01.000Z" },
+      ],
+    };
+    expect(chatPreview(conversation)).toBe("Cum e vremea?");
+  });
+
   it("reads the latest message as plain words", () => {
     const content = "## Plan\n\n**Buy** [milk](https://x.test)\n\n````visual\n<p>Chart</p>\n````";
     expect(chatPreview(chat("a", "2026-10-27T00:00:00.000Z", content))).toBe(
