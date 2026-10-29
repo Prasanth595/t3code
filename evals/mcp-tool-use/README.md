@@ -108,6 +108,30 @@ Commands built at run time, external script files and full shell/interpreter sem
 
 This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
 
+## Threads vs tasks cases
+
+`cases/threads-vs-tasks.ndjson` checks how agents tell a top-level thread (`t3_thread_launch`, `create_threads`, `t3_thread_send`, `t3_thread_interrupt`) from a delegated task (`delegate_task`, `task_status`, `task_cancel`) and from a native subagent (`Agent`, `spawn_agent`). Field threads showed no thread launched for a subagent ask, so most cases are regression guards: they pass on main's text and fail when a copy change mixes the two up. All data is authored Acme data.
+
+| Group                   | Cases                                                                                                                                                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread asks → threads   | `tt-separate-thread-i-can-follow`, `tt-another-thread-worktree`, `tt-new-thread-with-an-agent-wording`, `tt-thread-in-another-project`, `tt-three-new-threads-one-per-bug`, `tt-new-chat-handoff-cross-provider` |
+| Task asks → no thread   | `tt-background-worker-pr-is-delegate`, `tt-background-agent` (bad), `tt-background-research-no-agent-word`, `tt-another-agent-in-parallel-not-thread`                                                            |
+| Managing each one       | `tt-stop-delegate-keep-thread`, `tt-stop-thread-keep-delegate`, `tt-launched-thread-status-reads`, `tt-delegate-status-no-poll`, `tt-completed-task-result`                                                      |
+| Children                | `tt-child-no-unprompted-thread`, `tt-native-subagent-no-thread-for-rewrite` (Claude only), `tt-child-authorized-thread`                                                                                          |
+| Controls (domain words) | `tt-control-thread-pool-starvation`, `tt-control-stop-task-button`, `tt-control-task-queue`, `tt-control-agent-config`, `tt-control-background-test-run`                                                         |
+
+`expect.newThreads` counts the top-level threads an agent asks for across `t3_thread_launch` calls and `create_threads` entries: each value must match a different request, and no other thread may be asked for. Failed calls create nothing. T3's default results give each new thread its own id, and `t3_thread_read` on it returns that thread's title and brief, so an agent that checks its launch sees the thread it made.
+
+Run the guards on their own:
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3 --out runs/threads-vs-tasks
+```
+
+On main's text, 3 samples per case: every guard and control passed on Opus 5.5, GPT-6.1 Sol and GPT-6 Astra (`tt-another-thread-worktree` 5/6 on Astra). Sonnet 5.5 starts Claude's `Agent` with `run_in_background:true`, as Claude Code's own Agent description suggests: `tt-background-agent` 0/3 in every run, and `tt-another-agent-in-parallel-not-thread` and `tt-background-research-no-agent-word` 0/3 to 3/3 across runs. A full run costs about $4.4 on Opus and $2.1 on Sonnet, Haiku shell simulator included.
+
+One wording is left out because main's text does not decide it: asked to "ask the reviewer in thread <id> to re-check it", where that thread is a top-level thread the user opened, GPT-6.1 Sol and GPT-6 Astra start a new `delegate_task` review in every sample, reading "Every new delegate review or re-check is a new `delegate_task`" as covering all re-checks. Claude models send to the thread.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
