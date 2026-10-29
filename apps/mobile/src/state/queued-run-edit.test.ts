@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
 import {
   ChatAttachmentId,
@@ -9,11 +9,13 @@ import {
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
+import { submitComposer } from "./submit-composer";
 import { appAtomRegistry } from "./atom-registry";
 import {
   activeComposerDraftKey,
   beginQueuedRunEdit,
   getQueuedRunEdit,
+  endQueuedRunEdit,
   queuedEditDraftKey,
   removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
@@ -161,4 +163,114 @@ describe("activeComposerDraftKey", () => {
   it("falls back to the thread's draft once the edit has ended", () => {
     expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
   });
+});
+
+describe("submitting with a pending native correction", () => {
+  const threadKey = "environment:thread";
+
+  afterEach(() => endQueuedRunEdit(threadKey));
+
+  it("does not prepare an inactive draft", async () => {
+    const prepareForSubmit = vi.fn(async () => true);
+    const send = vi.fn(async () => "sent");
+    expect(
+      await submitComposer(
+        threadKey,
+        {
+          focus() {},
+          blur() {},
+          setSelection() {},
+          prepareForSubmit,
+        },
+        send,
+        () => false,
+      ),
+    ).toBeNull();
+    expect(prepareForSubmit).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each(["draft", "queued edit"])(
+    "reads the corrected %s only after preparation finishes",
+    async (kind) => {
+      if (kind === "queued edit")
+        beginQueuedRunEdit(
+          threadKey,
+          edit([]),
+          Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+        );
+      const correction = Promise.withResolvers<string>();
+      let text = "Teh";
+      const submitted: string[] = [];
+      const send = vi.fn(async () => {
+        submitted.push(text);
+        text = "";
+        return MessageId.make("sent-message");
+      });
+      const result = submitComposer(
+        threadKey,
+        {
+          focus() {},
+          blur() {},
+          setSelection() {},
+          async prepareForSubmit() {
+            text = await correction.promise;
+            return true;
+          },
+        },
+        send,
+        () => true,
+      );
+
+      expect(send).not.toHaveBeenCalled();
+      correction.resolve("The");
+      expect(await result).toBe("sent-message");
+      expect(submitted).toEqual(["The"]);
+      expect(text).toBe("");
+    },
+  );
+
+  it.each(["cancelled edit", "replacement edit", "inactive draft"])(
+    "blocks submission for %s even when native preparation succeeds",
+    async (change) => {
+      if (change !== "inactive draft")
+        beginQueuedRunEdit(
+          threadKey,
+          edit([]),
+          Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+        );
+      const preparation = Promise.withResolvers<boolean>();
+      let active = true;
+      const send = vi.fn(async () => MessageId.make("unexpected-send"));
+      const result = submitComposer(
+        threadKey,
+        {
+          focus() {},
+          blur() {},
+          setSelection() {},
+          prepareForSubmit: () => preparation.promise,
+        },
+        send,
+        () => active,
+      );
+
+      if (change === "inactive draft") {
+        active = false;
+      } else {
+        endQueuedRunEdit(threadKey);
+        if (change === "replacement edit")
+          beginQueuedRunEdit(
+            threadKey,
+            edit([]),
+            Atom.make([{ id: RunId.make("run-1"), status: "queued" }]),
+          );
+      }
+      const replacement = getQueuedRunEdit(threadKey);
+      preparation.resolve(true);
+
+      expect(await result).toBeNull();
+      expect(send).not.toHaveBeenCalled();
+      expect(getQueuedRunEdit(threadKey)).toBe(replacement);
+    },
+  );
 });

@@ -773,6 +773,24 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.resignFirstResponder()
   }
 
+  func prepareForSubmit() -> [String: Any] {
+    // Ending editing accepts UIKit's pending autocorrection synchronously.
+    let wasEditing = textView.isFirstResponder
+    textView.resignFirstResponder()
+    value = textView.serializedText()
+    if wasEditing {
+      textView.becomeFirstResponder()
+    }
+    let selection = sourceSelection()
+    // Delayed editing events must not restore the submitted draft.
+    nativeEventCount += 1
+    return [
+      "value": value,
+      "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
+    ]
+  }
+
   func setSelection(start: Int, end: Int) {
     let previousSelection = sourceSelection()
     requestedSelection = ComposerSelectionPayload(start: start, end: end)

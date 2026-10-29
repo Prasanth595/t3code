@@ -29,7 +29,12 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
-import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
+import {
+  StackActions,
+  useFocusEffect,
+  useIsFocused,
+  useNavigation,
+} from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
@@ -64,6 +69,7 @@ import {
   useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { submitComposer } from "../../state/submit-composer";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
@@ -405,6 +411,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
+  const isScreenFocused = useIsFocused();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
@@ -492,6 +499,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
+  const activeDraftRef = useRef<symbol | null>(null);
+  useLayoutEffect(() => {
+    activeDraftRef.current = isScreenFocused
+      ? Symbol(`${composerOwnerKey}:${props.selectedThread.projectId}:${composerDraftKey}`)
+      : null;
+    return () => {
+      activeDraftRef.current = null;
+    };
+  }, [composerDraftKey, composerOwnerKey, props.selectedThread.projectId, isScreenFocused]);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -660,27 +676,45 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       pendingNativeImagePasteCountRef.current > 0
     )
       return;
-    if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
-      if (openUsageLimits()) onChangeDraftMessage("");
-      return;
-    }
+
+    const activeDraft = activeDraftRef.current;
+    if (activeDraft === null || !navigation.isFocused()) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
-    const draftAtSend = getComposerDraftSnapshot(composerDraftKey);
-    const stillSendable = () => {
-      const draft = getComposerDraftSnapshot(composerDraftKey);
-      return (
-        pendingPastedTextAttachmentCountRef.current === 0 &&
-        pendingNativeImagePasteCountRef.current === 0 &&
-        draft.text === draftAtSend.text &&
-        draft.attachments.length === draftAtSend.attachments.length &&
-        draft.attachments.every(
-          (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
-        )
-      );
-    };
-    const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
+    const sent = await settlePromise(() =>
+      submitComposer(
+        threadKey,
+        inputRef.current,
+        async () => {
+          const draft = getComposerDraftSnapshot(composerDraftKey);
+          if (
+            usageLimitsOffered &&
+            isUsageLimitsCommand(draft.text) &&
+            draft.attachments.length === 0
+          ) {
+            if (openUsageLimits()) onChangeDraftMessage("");
+            return null;
+          }
+          const draftAtSend = getComposerDraftSnapshot(composerDraftKey);
+          const stillSendable = () => {
+            const draft = getComposerDraftSnapshot(composerDraftKey);
+            return (
+              pendingPastedTextAttachmentCountRef.current === 0 &&
+              pendingNativeImagePasteCountRef.current === 0 &&
+              draft.text === draftAtSend.text &&
+              draft.attachments.length === draftAtSend.attachments.length &&
+              draft.attachments.every(
+                (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
+              )
+            );
+          };
+          return onSendMessage(followUp, stillSendable);
+        },
+        () => activeDraftRef.current === activeDraft && navigation.isFocused(),
+      ),
+    );
+
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
       console.error("[composer] send failed", squashAtomCommandFailure(sent));

@@ -32,6 +32,7 @@ import {
   assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
+  reconcileComposerSubmitSnapshot,
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
@@ -67,6 +68,7 @@ type NativePasteTextEvent = NativeSyntheticEvent<{
 interface NativeComposerEditorRef {
   focus: () => Promise<void>;
   blur: () => Promise<void>;
+  prepareForSubmit: () => Promise<NativeEditorEvent["nativeEvent"]>;
   setSelection: (start: number, end: number) => Promise<void>;
 }
 
@@ -163,19 +165,9 @@ export function ComposerEditor({
   const theme = useUniwindTheme();
   const fontFamily = FONT_FAMILIES.regular;
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      focus: () => settleViewCommand(nativeRef.current?.focus()),
-      blur: () => settleViewCommand(nativeRef.current?.blur()),
-      setSelection: (nextSelection) =>
-        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
-    }),
-    [],
-  );
-
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const chipTextColor = createNativeComposerTheme(theme).text;
+
   const tokensJson = useMemo(() => {
     return JSON.stringify(
       composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
@@ -281,6 +273,36 @@ export function ComposerEditor({
       return acknowledgedEventCount;
     },
     [nativeEventSnapshotsRef],
+  );
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
+      prepareForSubmit: async (isCurrent) => {
+        const editor = nativeRef.current;
+        const snapshot = await editor?.prepareForSubmit();
+        if (!snapshot || nativeRef.current !== editor) return false;
+        const current = isCurrent();
+        const reconciled = reconcileComposerSubmitSnapshot(
+          mostRecentEventCountRef.current,
+          nativeEventSnapshotsRef.current,
+          snapshot,
+          current,
+        );
+        if (!reconciled) return false;
+        mostRecentEventCountRef.current = reconciled.eventCount;
+        nativeEventSnapshotsRef.current = reconciled.snapshots;
+        setMostRecentEventCount(reconciled.eventCount);
+        if (!current) return false;
+        onChangeText(snapshot.value);
+        onSelectionChange?.(snapshot.selection);
+        return true;
+      },
+      setSelection: (nextSelection) =>
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
+    }),
+    [onChangeText, onSelectionChange],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
