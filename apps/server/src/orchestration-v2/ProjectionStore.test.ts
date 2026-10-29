@@ -911,6 +911,14 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
+it("shell message preview is one trimmed line capped for the thread list", () => {
+  assert.strictEqual(ProjectionStore.messagePreview("  salut\n\n  Mira  "), "salut Mira");
+  assert.strictEqual(ProjectionStore.messagePreview(" \n "), null);
+  assert.strictEqual(ProjectionStore.messagePreview(null), null);
+  const preview = ProjectionStore.messagePreview("a".repeat(400));
+  assert.strictEqual(preview, `${"a".repeat(120)}…`);
+});
+
 it.effect("memory recovery selection includes unfinished items from missing runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

@@ -33,12 +33,11 @@ import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -58,71 +57,21 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { ThreadAvatar, type ThreadAvatarIndicator } from "./thread-avatar";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
-interface StatusLabel {
-  readonly label: string;
-  readonly icon: AppSymbolName;
-  readonly className: string;
-  readonly iconTintClassName: string;
-}
-const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
-  approval: {
-    label: "Aprobare",
-    icon: "exclamationmark.shield",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-  input: {
-    label: "Răspuns",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
-  request: {
-    label: "Cerere",
-    icon: "person.crop.circle",
-    className: "text-adaptive-fuchsia-600-300",
-    iconTintClassName: "accent-adaptive-fuchsia-600-300",
-  },
-  working: {
-    label: "Lucrează",
-    icon: "circle.dashed",
-    className: "text-adaptive-sky-600-400",
-    iconTintClassName: "accent-adaptive-sky-600-400",
-  },
-  waiting: {
-    label: "Așteaptă",
-    icon: "circle.dashed.inset.filled",
-    className: "text-foreground-muted",
-    iconTintClassName: "accent-foreground-muted",
-  },
-  failed: {
-    label: "Eșuat",
-    icon: "exclamationmark.circle",
-    className: "text-danger-foreground",
-    iconTintClassName: "accent-danger-foreground",
-  },
-  limited: {
-    label: "Limitat",
-    icon: "exclamationmark.circle",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-};
-const DONE_STATUS_LABEL: StatusLabel = {
-  label: "Gata",
-  icon: "checkmark.circle",
-  className: "text-adaptive-emerald-700-300",
-  iconTintClassName: "accent-adaptive-emerald-700-300",
+const ROW_STATUS_TEXT: Partial<Record<ThreadListV2Status, string>> = {
+  approval: "Așteaptă aprobarea ta",
+  input: "Așteaptă răspunsul tău",
+  request: "Are o cerere pentru tine",
+  waiting: "Mira așteaptă o sarcină…",
 };
 
 function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
@@ -529,7 +478,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                 <View>
                   <View className="px-5 py-2.5">{rowContent}</View>
                   {props.showTrailingDivider !== false ? (
-                    <View className="ml-5 h-px bg-border-subtle" />
+                    <View className="ml-[78px] h-px bg-border-subtle" />
                   ) : null}
                 </View>
               )}
@@ -622,19 +571,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
-    const provider = props.providers?.find(
-      (candidate) =>
-        candidate.instanceId ===
-        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-    );
-    return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
-      providerIconUrl: provider?.iconUrl,
-    };
-  }, [thread, props.providers]);
-
-  const providerInstance = props.providerInstance;
   const pr = useThreadPr(thread);
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
@@ -648,12 +584,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const status = resolveThreadListV2Status(thread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
-  const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
-  const statusLabel =
-    (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
-      ? { ...workingLabel, label: "Obiectiv" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const timeLabel = props.timeLabel;
 
@@ -994,255 +925,194 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Deschide conversația. Glisează la stânga pentru ${primaryAction.label.toLowerCase()}.`
       : `Deschide conversația. Glisează la stânga pentru ${primaryAction.label.toLowerCase()} și amânare.`;
 
+  const avatarIndicator: ThreadAvatarIndicator =
+    status === "working" || status === "waiting"
+      ? "working"
+      : status === "approval" || status === "input" || status === "request"
+        ? "attention"
+        : isUnread
+          ? "done"
+          : null;
+  const failureText =
+    (status === "failed" || status === "limited") && thread.runtime?.lastError
+      ? thread.runtime.lastError
+      : null;
+  const statusText =
+    status === "working"
+      ? thread.goal?.status === "active"
+        ? "Mira urmărește obiectivul…"
+        : "Mira lucrează…"
+      : (ROW_STATUS_TEXT[status] ?? null);
+  const preview = thread.latestUserAuthoredMessagePreview ?? null;
+
   const cardContent = (
-    <>
-      <View className="flex-row items-center gap-1.5">
-        {props.project ? (
-          <ProjectFavicon
-            environmentId={thread.environmentId}
-            faviconPath={props.project.faviconPath}
-            projectIcon={props.project.projectIcon}
-            size={15}
-            projectTitle={props.project.title}
-            workspaceRoot={props.project.workspaceRoot}
-          />
-        ) : null}
-        <Text
-          className={cn(
-            "flex-1 text-sm font-t3-medium",
-            selected
-              ? selectedThreadRowColors.mutedForegroundClassName
-              : rowAppearance.mutedForegroundClassName,
-          )}
-          numberOfLines={1}
-        >
-          {props.projectTitle ?? props.project?.title ?? ""}
-        </Text>
-        {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
-        {pinnedRow ? (
-          <SymbolView
-            name="pin"
-            size={11}
-            tintColorClassName={rowAppearance.mutedIconTintClassName}
-            type="monochrome"
-          />
-        ) : null}
-        {showsWoke ? (
-          <Pressable
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel="Închide notificarea de reactivare"
-            onPress={handleAcknowledgeWoke}
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    <View className="flex-row items-center gap-3.5">
+      <ThreadAvatar
+        seed={`${thread.environmentId}:${thread.id}`}
+        title={thread.title}
+        indicator={avatarIndicator}
+        ringClassName={sidebarPane ? "border-drawer" : "border-screen"}
+      />
+      <View className="min-w-0 flex-1">
+        <View className="flex-row items-baseline gap-2">
+          <Text
+            className={cn(
+              "flex-1 text-base",
+              !recede && "font-t3-medium",
+              selected
+                ? selectedThreadRowColors.foregroundClassName
+                : rowAppearance.foregroundClassName,
+            )}
+            numberOfLines={1}
           >
-            <SymbolView
-              name="bell.badge"
-              size={13}
-              tintColorClassName={
-                selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
-              }
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text
-              className={cn(
-                "text-xs font-t3-bold",
-                selected ? selectedThreadRowColors.foregroundClassName : "text-warning-foreground",
-              )}
+            {thread.title}
+          </Text>
+          {showsWoke ? (
+            <Pressable
+              className="-m-2.5 p-2.5"
+              accessibilityRole="button"
+              accessibilityLabel="Închide notificarea de reactivare"
+              onPress={handleAcknowledgeWoke}
+              onLongPress={() => undefined}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
             >
-              Woke
-            </Text>
-          </Pressable>
-        ) : statusLabel ? (
-          <View className="flex-row items-center gap-1">
-            <SymbolView
-              name={statusLabel.icon}
-              size={13}
-              tintColorClassName={
-                selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
-              }
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text
-              className={cn(
-                "text-xs font-t3-bold",
-                (status === "working" || status === "waiting") && "tabular-nums",
-                selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-              )}
-            >
-              {statusLabel.label}
-              {status === "working" ? (
-                <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
-              ) : status === "waiting" ? (
-                <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
-              ) : null}
-            </Text>
-          </View>
-        ) : (
+              <SymbolView
+                name="bell.badge"
+                size={13}
+                tintColorClassName={
+                  selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
+                }
+                type="monochrome"
+                weight="semibold"
+              />
+            </Pressable>
+          ) : null}
           <Text
             className={cn(
               "text-xs tabular-nums",
               selected
-                ? selectedThreadRowColors.foregroundClassName
+                ? selectedThreadRowColors.mutedForegroundClassName
                 : rowAppearance.tertiaryForegroundClassName,
             )}
           >
-            {timeLabel}
-          </Text>
-        )}
-      </View>
-      <Text
-        className={cn(
-          "mt-1 text-base",
-          !recede && "font-t3-medium",
-          selected
-            ? selectedThreadRowColors.foregroundClassName
-            : rowAppearance.foregroundClassName,
-        )}
-        numberOfLines={2}
-      >
-        {thread.title}
-      </Text>
-      {props.searchMatch ? (
-        <View className="mt-1">
-          <ThreadSearchMatchExcerpt
-            sidebar={sidebarPane}
-            match={props.searchMatch}
-            query={props.searchQuery ?? ""}
-            selected={selected}
-          />
-        </View>
-      ) : null}
-      <View className="mt-1 flex-row items-center gap-2">
-        {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
+            {status === "working" ? (
+              <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+            ) : (
+              timeLabel
             )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
           </Text>
-        ) : thread.branch || props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
+        </View>
+        <View className="mt-0.5 flex-row items-center gap-2">
+          {failureText ? (
             <Text
               className={cn(
-                "shrink text-xs",
+                "flex-1 text-sm",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : status === "limited"
+                    ? "text-warning-foreground"
+                    : "text-danger-foreground",
+              )}
+              numberOfLines={1}
+            >
+              {failureText}
+            </Text>
+          ) : statusText ? (
+            <Text
+              className={cn(
+                "flex-1 text-sm font-t3-medium",
+                selected
+                  ? selectedThreadRowColors.foregroundClassName
+                  : avatarIndicator === "attention"
+                    ? "text-warning-foreground"
+                    : "text-adaptive-sky-600-400",
+              )}
+              numberOfLines={1}
+            >
+              {statusText}
+            </Text>
+          ) : (
+            <Text
+              className={cn(
+                "flex-1 text-sm",
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
                   : rowAppearance.mutedForegroundClassName,
               )}
               numberOfLines={1}
             >
-              {thread.branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.mutedForegroundClassName,
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {thread.branch}
-                </Text>
-              ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.tertiaryForegroundClassName,
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
+              {preview ? (
+                <>
+                  <Text className="font-t3-medium">Tu: </Text>
+                  {preview}
+                </>
+              ) : (
+                (props.projectTitle ?? props.project?.title ?? "")
+              )}
             </Text>
-            {props.environmentLabel && props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={11}
+          )}
+          {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {pinnedRow ? (
+            <SymbolView
+              name="pin"
+              size={11}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+              type="monochrome"
+            />
+          ) : null}
+          {pr ? (
+            <Pressable
+              // Padding cancelled by negative margin grows the touch target into
+              // the row padding without moving the badge.
+              className="-m-2.5 flex-row items-center gap-1 p-2.5"
+              accessibilityRole="button"
+              accessibilityLabel={prBadgeLabel ?? undefined}
+              onPress={handleOpenPullRequests}
+              // Handle long-press so opening the iOS row menu cannot also open the PR on release.
+              onLongPress={() => undefined}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            >
+              <SymbolView
+                name={
+                  pr.kind === "stack"
+                    ? PullRequestGlyph.stack
+                    : pr.state === null
+                      ? PullRequestGlyph.pullRequest
+                      : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+                }
+                size={12}
                 tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
+                  pr.state === null || pr.isDraft
+                    ? rowAppearance.mutedIconTintClassName
+                    : pr.state === "open"
+                      ? "accent-adaptive-emerald-600-400"
+                      : pr.state === "closed"
+                        ? "accent-adaptive-rose-600-400"
+                        : "accent-adaptive-violet-600-400"
                 }
               />
-            ) : null}
-          </View>
-        ) : (
-          <View className="flex-1" />
-        )}
-        {pr ? (
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
-            <SymbolView
-              name={
-                pr.kind === "stack"
-                  ? PullRequestGlyph.stack
-                  : pr.state === null
-                    ? PullRequestGlyph.pullRequest
-                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
-              }
-              size={12}
-              tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
-              }
-            />
-            <Text
-              accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
-            >
-              {pr.label}
-            </Text>
-          </Pressable>
-        ) : null}
-        {providerInstance ? (
-          <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map((driver, index) => (
-              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
-                <ProviderIcon provider={driver} size={12} />
-              </View>
-            ))}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
+              <Text
+                accessibilityLabel={pr.accessibilityLabel}
+                className={cn("text-xs", pr.textClassName)}
+                style={{ fontFamily: MONO_FONT }}
+              >
+                {pr.label}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {props.searchMatch ? (
+          <View className="mt-1">
+            <ThreadSearchMatchExcerpt
+              sidebar={sidebarPane}
+              match={props.searchMatch}
+              query={props.searchQuery ?? ""}
+              selected={selected}
             />
           </View>
         ) : null}
       </View>
-    </>
+    </View>
   );
 
   const fadedCardContent = recede ? (
@@ -1281,7 +1151,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View>
             <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
-              <View className="ml-5 h-px bg-border-subtle" />
+              <View className="ml-[78px] h-px bg-border-subtle" />
             ) : null}
           </View>
         )}

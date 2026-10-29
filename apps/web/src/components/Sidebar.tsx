@@ -3271,7 +3271,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ) : scopedProjectGroup ? (
                 `Nicio conversație în ${scopedProjectGroup.displayName} încă`
               ) : (
-                "Nicio conversație încă"
+                <>
+                  <span
+                    aria-hidden
+                    className="mb-3 size-16 rounded-full opacity-85"
+                    style={{
+                      backgroundImage:
+                        "radial-gradient(circle at 35% 30%, #f3e8ff, #c7d2fe 45%, #a5f3fc 100%)",
+                    }}
+                  />
+                  <span className="text-sm font-medium text-sidebar-foreground">
+                    Nicio conversație încă
+                  </span>
+                  <span>Pornește o conversație nouă.</span>
+                </>
               )}
             </div>
           ) : null}
