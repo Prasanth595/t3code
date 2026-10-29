@@ -167,6 +167,54 @@ const layerRecordingTools = (calls: Array<unknown>) => {
   );
 };
 
+it.effect("advertises typed model selection fields without changing legacy decoding", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const tool = server.tools.find(({ tool }) => tool.name === "t3_project_update")?.tool;
+    expect(tool).toBeDefined();
+    const findSelection = (value: unknown): Record<string, unknown> | undefined => {
+      if (typeof value !== "object" || value === null) return undefined;
+      const object = value as Record<string, unknown>;
+      if (typeof object.properties === "object" && object.properties !== null) {
+        const properties = object.properties as Record<string, unknown>;
+        if ("instanceId" in properties && "model" in properties) return properties;
+        for (const child of Object.values(properties)) {
+          const found = findSelection(child);
+          if (found) return found;
+        }
+      }
+      if (Array.isArray(object.anyOf)) {
+        for (const child of object.anyOf) {
+          const found = findSelection(child);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+    const properties = findSelection(tool?.inputSchema);
+    expect(properties?.instanceId).toMatchObject({ type: "string" });
+    expect(properties?.model).toMatchObject({ type: "string" });
+    expect(properties?.options).toMatchObject({ type: "array" });
+    yield* server
+      .callTool({
+        name: "t3_project_update",
+        arguments: {
+          projectId: "project-test",
+          defaultModelSelection: { provider: "codex", model: "gpt-5", options: { effort: "high" } },
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set(["orchestration"] as const),
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(calls).toHaveLength(1);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
 it.effect.each([{}, { includeImage: false }])(
   "returns bounded structural preview snapshot failures %#",
   (input) =>

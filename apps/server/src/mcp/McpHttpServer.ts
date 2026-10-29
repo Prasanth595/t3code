@@ -36,6 +36,7 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { modelSelectionToolSchema } from "./modelSelectionToolSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -948,6 +949,30 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+const withModelSelectionToolSchemas = Effect.fnUntraced(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const compatibleServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function* (options) {
+      const inputSchema = modelSelectionToolSchema(options.tool.name, options.tool.inputSchema);
+      if (inputSchema === options.tool.inputSchema) return yield* server.addTool(options);
+      const decoded = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(inputSchema).pipe(
+        Effect.orDie,
+      );
+      return yield* server.addTool({
+        ...options,
+        tool: new McpSchema.Tool({
+          ...options.tool,
+          inputSchema: decoded,
+        }),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, compatibleServer));
+});
+
 /**
  * `McpServer.toolkit` asks for every service its tools declare when it
  * registers them, but the auth middleware provides `McpInvocationContext` to
@@ -959,7 +984,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => {
   const registration = Layer.effectDiscard(
-    withToolAnalytics(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withModelSelectionToolSchemas(
+      withToolAnalytics(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
   const registered = registration as Layer.Layer<
