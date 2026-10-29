@@ -25,6 +25,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  formatModelSelectionEffort,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -460,5 +461,35 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("formatModelSelectionEffort", () => {
+  it("labels a saved Ultracode effort as Extra High", () => {
+    const model = {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select" as const,
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+          { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+        ],
+      },
+    };
+    const selection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: model.slug,
+      options: [{ id: "effort", value: "ultracode" }],
+    };
+    expect(formatModelSelectionEffort(selection, [model])).toBe("Extra High");
   });
 });

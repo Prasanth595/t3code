@@ -2602,6 +2602,102 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("reads a saved Ultracode effort as xhigh with Ultracode on for delegated options", () =>
+    Effect.gen(function* () {
+      const model = "claude-opus-5-5";
+      const inherited = {
+        instanceId: codexInstanceId,
+        model,
+        options: [{ id: "effort", value: "ultracode" }],
+      };
+      const capabilities = {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select" as const,
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+              { id: "max", label: "Max" },
+            ],
+          },
+          { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+        ],
+      };
+      const cases = [
+        { effort: "max", expected: "max" },
+        { effort: "ultracode", expected: "xhigh" },
+      ];
+      for (const testCase of cases) {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+              }),
+              models: [{ slug: model, name: model, isCustom: false, capabilities }],
+            },
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ options: { effort: testCase.effort } }),
+            mode: "async",
+            clientRequestId: testCase.effort,
+          });
+          assert.deepEqual((commands[0] as { modelSelection: unknown }).modelSelection, {
+            instanceId: codexInstanceId,
+            model,
+            options: [
+              { id: "effort", value: testCase.expected },
+              { id: "ultracode", value: true },
+            ],
+          });
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }
+    }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },
