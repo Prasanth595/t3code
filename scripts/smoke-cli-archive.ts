@@ -106,6 +106,18 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     }
   }
 
+  // The runner has libatomic installed; fresh Ubuntu servers do not.
+  if (platform === "linux") {
+    const ldd = yield* spawner.string(ChildProcess.make("ldd", [executable]));
+    const bundled = path.join(yield* fs.realPath(contentDir), "lib/libatomic.so.1");
+    if (!ldd.includes(`libatomic.so.1 => ${bundled} `)) {
+      return yield* new CliArchiveSmokeError({
+        step: "checking that t3 loads the bundled libatomic",
+        detail: ldd,
+      });
+    }
+  }
+
   const version = yield* runExecutable(executable, ["--version"], contentDir);
   if (version.exitCode !== 0 || !version.stdout.includes(input.expectVersion)) {
     return yield* new CliArchiveSmokeError({

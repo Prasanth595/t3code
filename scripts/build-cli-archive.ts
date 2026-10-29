@@ -251,6 +251,32 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
   }
 });
 
+/** Node links libatomic.so.1, which Ubuntu server and container images lack, so t3 carries its own. */
+const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input: {
+  readonly contentDir: string;
+  readonly executablePath: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const ldd = yield* spawner.string(ChildProcess.make("ldd", [input.executablePath]));
+  const source = /libatomic\.so\.1 => (\/\S+)/.exec(ldd)?.[1];
+  if (source === undefined) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: "libatomic.so.1",
+      hint: `ldd did not resolve it for ${input.executablePath}. Install libatomic1 on the build host.`,
+    });
+  }
+  yield* fs.makeDirectory(path.join(input.contentDir, "lib"));
+  yield* fs.copyFile(source, path.join(input.contentDir, "lib/libatomic.so.1"));
+  // RUNPATH resolves through symlinks and is not inherited by child processes, unlike LD_LIBRARY_PATH.
+  yield* runCommand(
+    ChildProcess.make("patchelf", ["--set-rpath", "$ORIGIN/lib", input.executablePath]),
+    "patchelf --set-rpath",
+  );
+  yield* Effect.log(`[cli-archive] Bundled ${source} as lib/libatomic.so.1.`);
+});
+
 const MacSigningConfig = Config.all({
   identity: Config.String("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
   appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
@@ -444,11 +470,6 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     builtExecutable,
     `Run \`node apps/server/scripts/cli.ts build-exe${targetKey === hostKey ? "" : ` --target ${targetKey}`}\` first.`,
   );
-  // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
-  if (input.platform === "linux" && input.arch === "arm64") {
-    const bytes = yield* fs.readFile(builtExecutable);
-    yield* Effect.try(() => assertLinuxArm64PageCompatibility(bytes));
-  }
   yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter t3 build` first.");
   yield* requireInput(
     resourceMonitorDir,
@@ -473,6 +494,14 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   });
 
   const executablePath = path.join(contentDir, executableName);
+  if (input.platform === "linux") {
+    yield* bundleLinuxLibatomic({ contentDir, executablePath });
+  }
+  // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+  if (input.platform === "linux" && input.arch === "arm64") {
+    const bytes = yield* fs.readFile(executablePath);
+    yield* Effect.try(() => assertLinuxArm64PageCompatibility(bytes));
+  }
   if (input.platform === "mac") {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {
