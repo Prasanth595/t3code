@@ -169,10 +169,24 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         }
       }
       if (scroller !== null) {
-        const deficit = scrollTop - (scroller.scrollHeight - scroller.clientHeight);
-        if (deficit > 0) {
-          setGap(gap + deficit);
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        const deficit = scrollTop - max;
+        if (deficit > 0 && scroller.scrollTop >= max - 1) {
+          const clamped = scroller.scrollTop;
+          const viewTop = scroller.getBoundingClientRect().top;
+          const activeBottom = [...parent.querySelectorAll('[aria-current="page"]')]
+            .find((row) => !row.closest("[inert]"))
+            ?.getBoundingClientRect().bottom;
+          setGap(Math.min(gap + deficit, scroller.clientHeight / 2));
           scroller.scrollTop = scrollTop;
+          if (
+            activeBottom !== undefined &&
+            activeBottom > viewTop &&
+            activeBottom - (scroller.scrollTop - clamped) <= viewTop
+          ) {
+            scroller.scrollTop = clamped;
+            trimGap();
+          }
         } else trimGap();
       }
       const shouldAnimate =
