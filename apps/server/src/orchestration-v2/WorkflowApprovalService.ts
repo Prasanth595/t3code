@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as WorkflowApprovalGate from "./WorkflowApprovalGate.ts";
+import { sendWithFreshId } from "./WorkflowCommandRetry.ts";
 
 export class WorkflowApprovalService extends Context.Service<
   WorkflowApprovalService,
@@ -39,21 +40,17 @@ const make = Effect.gen(function* () {
   const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
   const threads = yield* ThreadManagementService.ThreadManagementService;
 
-  /**
-   * Ids come from the request and the gate's decision id, so a repeated click or retry is the
-   * same command and is answered from its receipt. A decision made after a restart has a new
-   * decision id, so an earlier receipt never answers it.
-   */
+  // The message id stays fixed when a stored command rejection requires a fresh command id.
   const tellAgent = (
     input: OrchestrationV2ApproveWorkflowReviewInput | OrchestrationV2DismissWorkflowReviewInput,
     decision: "approved" | "dismissed",
     key: string,
     text: string,
   ) => {
-    return threads
-      .dispatch({
+    return sendWithFreshId(CommandId.make(`server:workflow-${decision}:${key}`), (commandId) =>
+      threads.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`server:workflow-${decision}:${key}`),
+        commandId,
         threadId: input.threadId,
         messageId: MessageId.make(`message:workflow-${decision}:${key}`),
         text,
@@ -61,19 +58,19 @@ const make = Effect.gen(function* () {
         dispatchMode: { type: "queue_after_active" },
         createdBy: "user",
         creationSource: "server",
-      })
-      .pipe(
-        Effect.asVoid,
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2WorkflowApprovalError({
-              threadId: input.threadId,
-              reviewId: input.reviewId,
-              reason: "unavailable",
-              cause,
-            }),
-        ),
-      );
+      }),
+    ).pipe(
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationV2WorkflowApprovalError({
+            threadId: input.threadId,
+            reviewId: input.reviewId,
+            reason: "unavailable",
+            cause,
+          }),
+      ),
+    );
   };
 
   return WorkflowApprovalService.of({
