@@ -3,6 +3,10 @@ import { pierreDark, pierreLight } from "@pierre/highlights/themes";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { highlightCode, tokenizeCode } from "./highlights";
+import {
+  boundedSelectableSourceTokens,
+  prepareSourceFileDocument,
+} from "../features/files/source-file-document";
 
 vi.mock("expo", async () => {
   const { createWasmHighlightsModule } = await import("./highlights.testing");
@@ -56,4 +60,32 @@ it("normalizes only requested lines from full-source records, including CRLF and
   }
   expect(source.highlightLine(2, "dark")?.[0]?.color).toBe("#737373");
   expect(source.highlightLine(100, "dark")).toBeUndefined();
+});
+
+it.each([
+  ["empty", ""],
+  ["trailing LF", "const x = 1;\n"],
+  ["blank lines", "\n\n\n"],
+  ["CRLF", "const x = 1;\r\n\r\nconst y = 2;\r\n"],
+  ["CR", "const x = 1;\r\rconst y = 2;\r"],
+  ["Unicode", "const café = '🎉 é';\nconst 行 = '\u2028\u2029';\n"],
+  ["long lines", `const x = "${"🎉é".repeat(1_001)}";\n\n`],
+  ["threshold blank", "\n".repeat(1_999)],
+  ["over threshold blank", "\n".repeat(2_000)],
+  [
+    "over threshold code",
+    Array.from({ length: 2_001 }, (_, i) => `const café${i} = '🎉';`).join("\r\n"),
+  ],
+])("preserves the normalized document line bound with real WASM records: %s", (_name, contents) => {
+  const document = prepareSourceFileDocument(contents);
+  for (const theme of ["light", "dark"] as const) {
+    const source = tokenizeCode(document.contents, "typescript");
+    const tokens = highlightCode(document.contents, "typescript", theme);
+    expect(source.lineCount).toBe(document.lines.length);
+    expect(tokens).toHaveLength(document.lines.length);
+    expect(tokens.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(
+      document.contents,
+    );
+    if (document.lines.length > 2_000) expect(boundedSelectableSourceTokens(tokens)).toBeNull();
+  }
 });
