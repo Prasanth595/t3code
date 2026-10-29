@@ -204,7 +204,8 @@ export function getCloneDestinationPath(
   if (name.length === 0) {
     return directoryPath;
   }
-  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+  const base = ensureBrowseDirectoryPath(directoryPath);
+  return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {

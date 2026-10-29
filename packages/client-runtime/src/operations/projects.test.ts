@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
   findExistingAddProject,
+  getCloneDestinationPath,
   getCloneDirectoryName,
   getCloneDirectoryPath,
   getDefaultCloneUrl,
@@ -74,6 +75,12 @@ describe("add project shared logic", () => {
     );
     expect(getCloneDirectoryPath("https://github.com/owner/../../repo", true)).toBe("repo");
     expect(getCloneDirectoryPath("/srv/git/repo.git", true)).toBe("repo");
+    expect(
+      getCloneDestinationPath(
+        "C:\\Users\\me\\ghq",
+        getCloneDirectoryPath("git@github.com:owner/repo.git", true),
+      ),
+    ).toBe("C:\\Users\\me\\ghq\\github.com\\owner\\repo");
   });
 
   it("keeps a numeric repository name that sits on a path", () => {
