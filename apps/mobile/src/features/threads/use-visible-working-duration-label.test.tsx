@@ -30,10 +30,26 @@ vi.mock("@react-navigation/native", async () => {
 });
 
 import { useVisibleWorkingDurationLabel } from "./use-visible-working-duration-label";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+
+function useMainDurationLabel(startedAt: string | null) {
+  const startedAtMs = Date.parse(startedAt ?? "");
+  const nowMs = useVisibleSecondClock(Number.isFinite(startedAtMs));
+  return Number.isFinite(startedAtMs)
+    ? ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}`
+    : null;
+}
 
 const timestamp = (ms: number) => new Date(ms).toISOString();
 
-function setup(startedAt: string | null, nowMs = 0, active = true, focusedInitially = true) {
+function setup(
+  startedAt: string | null,
+  nowMs = 0,
+  active = true,
+  focusedInitially = true,
+  baseline = false,
+) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.setSystemTime(nowMs);
@@ -49,23 +65,36 @@ function setup(startedAt: string | null, nowMs = 0, active = true, focusedInitia
     },
   } as unknown as NavigationProp<ParamListBase>;
   let executions = 0;
+  const starts = [{ id: "first", value: startedAt }];
+  const useLabel = baseline ? useMainDurationLabel : useVisibleWorkingDurationLabel;
   function Probe(props: { readonly startedAt: string | null }) {
     executions++;
-    return useVisibleWorkingDurationLabel(props.startedAt);
+    return useLabel(props.startedAt);
   }
   const host = document.createElement("div");
   const root = createRoot(host);
-  const render = (start: string | null) =>
+  const render = (start: string | null) => {
+    starts[0]!.value = start;
     act(() =>
       root.render(
         <NavigationContext.Provider value={navigation}>
-          <Probe startedAt={start} />
+          {starts.map(({ id, value }) => (
+            <span key={id}>
+              <Probe startedAt={value} />
+            </span>
+          ))}
         </NavigationContext.Provider>,
       ),
     );
+  };
   render(startedAt);
   return {
     label: () => host.textContent,
+    labels: () => Array.from(host.children, (element) => element.textContent),
+    addLabel: (start: string | null) => {
+      starts.push({ id: `label-${starts.length}`, value: start });
+      render(starts[0]!.value);
+    },
     executions: () => executions,
     rebind: render,
     advance: (ms: number) => act(() => vi.advanceTimersByTime(ms)),
@@ -126,32 +155,48 @@ it.each([
   [59_999, " 59s", " 1m"],
   [119_999, " 1m", " 2m"],
   [3_599_999, " 59m", " 1h 0m"],
-] as const)("retains the original interval phase across age %i", (age, before, after) => {
+] as const)("matches the shared wall-clock boundary across age %i", (age, before, after) => {
   using screen = setup(timestamp(0), age);
   expect(screen.label()).toBe(before);
   screen.advance(1);
-  expect(screen.label()).toBe(before);
-  screen.advance(999);
   expect(screen.label()).toBe(after);
 });
 
-it("does not align an off-grid start or a rebound start to wall-clock ticks", () => {
+it("uses the shared second sample for off-grid and rebound starts", () => {
   using screen = setup(timestamp(500), 180_250);
-  expect(screen.label()).toBe(" 2m");
-  screen.advance(250);
   expect(screen.label()).toBe(" 2m");
   screen.advance(749);
   expect(screen.label()).toBe(" 2m");
   screen.advance(1);
   expect(screen.label()).toBe(" 3m");
-  screen.advance(350);
+  screen.advance(600);
   screen.rebind(timestamp(121_500));
-  // Rebinding uses the last clock sample (181250), not render time (181600).
   expect(screen.label()).toBe(" 59s");
-  screen.advance(649);
+  screen.advance(399);
   expect(screen.label()).toBe(" 59s");
   screen.advance(1);
   expect(screen.label()).toBe(" 1m");
+  expect(vi.getTimerCount()).toBe(1);
+});
+
+it("shares one aligned timer across staggered labels and releases it when all pause", () => {
+  using screen = setup(timestamp(0), 59_250);
+  screen.advance(250);
+  screen.addLabel(timestamp(0));
+  screen.advance(250);
+  screen.addLabel(timestamp(0));
+  expect(screen.labels()).toEqual([" 59s", " 59s", " 59s"]);
+  expect(vi.getTimerCount()).toBe(1);
+  screen.advance(249);
+  expect(screen.labels()).toEqual([" 59s", " 59s", " 59s"]);
+  screen.advance(1);
+  expect(screen.labels()).toEqual([" 1m", " 1m", " 1m"]);
+  screen.focus(false);
+  expect(vi.getTimerCount()).toBe(0);
+  screen.advance(60_000);
+  expect(screen.labels()).toEqual([" 1m", " 1m", " 1m"]);
+  screen.focus(true);
+  expect(screen.labels()).toEqual([" 2m", " 2m", " 2m"]);
   expect(vi.getTimerCount()).toBe(1);
 });
 
@@ -179,7 +224,7 @@ it("clamps future starts without publishing equal zero labels", () => {
   expect(screen.label()).toBe(" 1s");
 });
 
-it("pauses on blur, retains sampled time on rebinding, and refreshes immediately on focus", () => {
+it("pauses on blur, reads the shared sample on rebinding, and refreshes on focus", () => {
   using screen = setup(timestamp(0), 59_250);
   screen.advance(350);
   screen.focus(false);
@@ -189,12 +234,12 @@ it("pauses on blur, retains sampled time on rebinding, and refreshes immediately
   expect(screen.label()).toBe(" 59s");
   expect(screen.executions()).toBe(pausedExecutions);
   screen.rebind(timestamp(-1_000));
-  expect(screen.label()).toBe(" 1m");
+  expect(screen.label()).toBe(" 2m");
   screen.focus(true);
   expect(screen.label()).toBe(" 2m");
   screen.rebind(timestamp(60_000));
   expect(screen.label()).toBe(" 59s");
-  screen.advance(999);
+  screen.advance(399);
   expect(screen.label()).toBe(" 59s");
   screen.advance(1);
   expect(screen.label()).toBe(" 1m");
@@ -216,7 +261,7 @@ it.each(["inactive", "background"])(
     screen.advance(60_000);
     screen.appState("active");
     expect(vi.getTimerCount()).toBe(0);
-    expect(screen.label()).toBe(" 2m");
+    expect(screen.label()).toBe(" 3m");
     screen.focus(true);
     expect(screen.label()).toBe(" 3m");
   },
@@ -234,4 +279,22 @@ it.each([
   screen.focus(true);
   expect(screen.label()).toBe(" 2m");
   expect(vi.getTimerCount()).toBe(1);
+});
+
+it("keeps current-main labels while reducing 120 clock renders to two label renders", () => {
+  const samples: string[][] = [];
+  const renders: number[] = [];
+  for (const baseline of [true, false]) {
+    using screen = setup(timestamp(0), 180_000, true, true, baseline);
+    const initial = screen.executions();
+    const labels = [screen.label()];
+    for (let second = 0; second < 120; second++) {
+      screen.advance(1_000);
+      labels.push(screen.label());
+    }
+    samples.push(labels);
+    renders.push(screen.executions() - initial);
+  }
+  expect(samples[1]).toEqual(samples[0]);
+  expect(renders).toEqual([120, 2]);
 });
