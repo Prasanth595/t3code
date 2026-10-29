@@ -41,8 +41,11 @@ function makeModelRuntime(
   const setConfigOption = Effect.fn("AntigravityAcpSupportTest.setConfigOption")(function* (
     configId: string,
     value: string | boolean,
+    options?: { readonly allowUnlistedValue?: boolean },
   ) {
-    selections.push(`${configId}=${String(value)}`);
+    selections.push(
+      `${configId}=${String(value)}${options?.allowUnlistedValue === true ? " (unlisted)" : ""}`,
+    );
     return { configOptions };
   });
   return {
@@ -145,19 +148,16 @@ describe("applyAntigravityAcpModelSelection", () => {
     }),
   );
 
-  it.effect("maps a model ID saved on runtime 1.3 to the 1.4 model and thinking level", () =>
+  it.effect("passes a model ID saved on runtime 1.3 to the agent as its 1.4 family", () =>
     Effect.gen(function* () {
+      // The cold-resume model has no thinking option, so the level is unknown locally.
       const { runtime, selections } = makeModelRuntime([
-        { ...modelConfig, options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
         {
-          id: "thinking_level",
-          name: "Thinking Level",
-          category: "thought_level",
-          type: "select",
-          currentValue: "high",
+          ...modelConfig,
+          currentValue: "gpt-oss-120b-medium",
           options: [
-            { value: "low", name: "Low" },
-            { value: "high", name: "High" },
+            { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+            { value: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
           ],
         },
       ]);
@@ -168,7 +168,7 @@ describe("applyAntigravityAcpModelSelection", () => {
       });
 
       expect(model).toBe("gemini-3.8-flash");
-      expect(selections).toEqual(["gemini-3.8-flash", "thinking_level=low"]);
+      expect(selections).toEqual(["model=gemini-3.8-flash-low (unlisted)"]);
     }),
   );
 });

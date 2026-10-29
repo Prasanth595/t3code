@@ -108,25 +108,18 @@ export function antigravityThinkingConfig(
   return option?.type === "select" ? option : undefined;
 }
 
-/** Splits a saved 1.3 ID such as `gemini-3.8-flash-high` into a 1.4 model and thinking level. */
-function splitLegacyAntigravityModel(
+/**
+ * Runtime 1.4 lists `gemini-3.8-flash` where 1.3 listed `gemini-3.8-flash-high`. The agent
+ * still accepts the old IDs, so pass them through; the current model may have no thinking option.
+ */
+function legacyAntigravityFamily(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   model: string,
 ) {
-  const thinking = antigravityThinkingConfig(configOptions);
-  if (thinking === undefined) return undefined;
-  const models = antigravityModelOptions(configOptions);
-  for (const level of thinking.options.flatMap((entry) =>
-    "value" in entry ? [entry] : entry.options,
-  )) {
-    const family = model.endsWith(`-${level.value}`)
-      ? model.slice(0, -level.value.length - 1)
-      : undefined;
-    if (family !== undefined && models.some((option) => option.value === family)) {
-      return { model: family, thinkingConfigId: thinking.id, thinkingLevel: level.value };
-    }
-  }
-  return undefined;
+  return antigravityModelOptions(configOptions)
+    .map((option) => option.value)
+    .filter((family) => model.startsWith(`${family}-`))
+    .toSorted((left, right) => right.length - left.length)[0];
 }
 
 function resolveAntigravityModel(input: {
@@ -140,7 +133,7 @@ function resolveAntigravityModel(input: {
   const options = antigravityModelOptions(input.configOptions);
   return input.defaultModel &&
     (options.some((option) => option.value === input.defaultModel) ||
-      splitLegacyAntigravityModel(input.configOptions, input.defaultModel) !== undefined)
+      legacyAntigravityFamily(input.configOptions, input.defaultModel) !== undefined)
     ? input.defaultModel
     : current;
 }
@@ -167,15 +160,14 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
     const options = antigravityModelOptions(configOptions);
-    const legacy = options.some((option) => option.value === resolved)
+    const legacyFamily = options.some((option) => option.value === resolved)
       ? undefined
-      : splitLegacyAntigravityModel(configOptions, resolved);
-    if (legacy !== undefined) {
-      yield* input.runtime.setModel(legacy.model).pipe(Effect.mapError(input.mapError));
+      : legacyAntigravityFamily(configOptions, resolved);
+    if (legacyFamily !== undefined) {
       yield* input.runtime
-        .setConfigOption(legacy.thinkingConfigId, legacy.thinkingLevel)
+        .setConfigOption("model", resolved, { allowUnlistedValue: true })
         .pipe(Effect.mapError(input.mapError));
-      return legacy.model;
+      return legacyFamily;
     }
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
