@@ -233,10 +233,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     const settings = yield* serverSettings.getSettings;
-    const mcpSession = yield* mcpSessions.read(threadId);
     const records = yield* projections.getThreadRecords(threadId, ["runs", "turnItems"], {
       turnItemTypes: ["user_message"],
     });
+    const mcpSession = yield* mcpSessions.read(threadId);
+    if (mcpSession === undefined) {
+      return yield* new WorkflowApprovalRequiredError({ threadId, reason: "unverified" });
+    }
     const delegatedThread = records.thread.lineage.relationshipToParent === "subagent";
     const runs = new Map(records.runs.map((run) => [run.id, run]));
     const runOf = (runId: RunId | null) => (runId === null ? undefined : runs.get(runId));
@@ -277,8 +280,10 @@ const make = Effect.gen(function* () {
     const persisted = yield* persistedRequest(threadId).pipe(
       // A thread that does not exist has no request, and is not worth remembering.
       Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.undefined }),
-      Effect.mapError(
-        (cause) => new WorkflowApprovalRequiredError({ threadId, reason: "unverified", cause }),
+      Effect.mapError((cause) =>
+        Schema.is(WorkflowApprovalRequiredError)(cause)
+          ? cause
+          : new WorkflowApprovalRequiredError({ threadId, reason: "unverified", cause }),
       ),
     );
     if (persisted === undefined) return;

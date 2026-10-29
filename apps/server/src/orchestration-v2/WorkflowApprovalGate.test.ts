@@ -77,6 +77,7 @@ const makeLayer = (
   read: (id: ThreadId) => Effect.Effect<Stored, ProjectionStore.ProjectionStoreReadError>,
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
   sessionWorkflows = true,
+  sessionAvailable = () => true,
 ) =>
   WorkflowApprovalGate.layer.pipe(
     Layer.provide(
@@ -99,9 +100,11 @@ const makeLayer = (
         ServerSettings.layerTest({ workflows: true, ...settings }),
         Layer.mock(McpProviderSessions.McpProviderSessions)({
           read: () =>
-            Effect.succeed({
-              capabilities: new Set(sessionWorkflows ? ["workflows"] : []),
-            } as never),
+            Effect.sync(() =>
+              sessionAvailable()
+                ? ({ capabilities: new Set(sessionWorkflows ? ["workflows"] : []) } as never)
+                : undefined,
+            ),
         }),
       ),
     ),
@@ -738,6 +741,27 @@ describe("the launch key of an approved digest", () => {
 });
 
 describe("after a restart", () => {
+  it.effect("fails closed while the session capability is unknown and rescans once issued", () => {
+    let sessionAvailable = false;
+    return Effect.gen(function* () {
+      const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
+      assert.equal(yield* reasonOf(gate.requireNoRequest(threadId)), "unverified");
+      assert.equal(yield* reasonOf(guarded(gate, digestA)), "unverified");
+      sessionAvailable = true;
+      assert.equal(yield* reasonOf(gate.requireNoRequest(threadId)), "script-not-allowed");
+      assert.equal(yield* reasonOf(guarded(gate, digestA)), "needs-approval");
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          () => Effect.succeed({ runs: runs(1), items: [start(1, "Plan this as a workflow")] }),
+          {},
+          true,
+          () => sessionAvailable,
+        ),
+      ),
+    );
+  });
+
   it.effect("arms from the latest person-typed message and wants a fresh review", () =>
     withGate(
       (gate) =>

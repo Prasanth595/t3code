@@ -225,6 +225,7 @@ const makeLayerTest = (
     Layer.provideMerge(Layer.mock(PeerLinks.PeerLinks)({})),
     Layer.provideMerge(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
   );
 };
 const layerTest = makeLayerTest();
@@ -271,6 +272,16 @@ const errorText = (result: McpSchema.CallToolResult) =>
 
 const startParentWithSelection = (selection: ModelSelection, text = "Fan out work.") =>
   Effect.gen(function* () {
+    yield* (yield* McpProviderSessions.McpProviderSessions).set({
+      environmentId: invocation.environmentId,
+      threadId: parentThreadId,
+      providerSessionId: invocation.thread!.providerSessionId,
+      providerInstanceId: selection.instanceId,
+      endpoint: "http://127.0.0.1/mcp",
+      authorizationHeader: "Bearer test-parent",
+      browserToolsAvailable: false,
+      capabilities: invocation.capabilities,
+    });
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
       type: "thread.create",
