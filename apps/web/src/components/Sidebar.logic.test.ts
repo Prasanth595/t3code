@@ -442,15 +442,6 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
-  it("does not claim live work while the environment is reconnecting", () => {
-    const thread = { ...baseThread, connectionPhase: "reconnecting" as const };
-    expect(resolveSidebarThreadStatus(thread)).toBe("reconnecting");
-    expect(resolveThreadStatusPill({ thread })).toMatchObject({
-      label: "Reconnecting",
-      pulse: false,
-    });
-  });
-
   it.each([
     ["connecting", "connecting", "Connecting"],
     ["reconnecting", "reconnecting", "Reconnecting"],

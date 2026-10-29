@@ -137,21 +137,6 @@ describe("resolveThreadListV2Status", () => {
     },
   );
 
-  it("does not claim live work while the environment is reconnecting", () => {
-    const thread = {
-      ...presentThreadShell(
-        environmentId,
-        makeRawThreadShell({
-          status: "running",
-          activeRunId: RunId.make("run-disconnected"),
-          latestRunId: RunId.make("run-disconnected"),
-        }),
-      ),
-      connectionPhase: "reconnecting" as const,
-    };
-    expect(resolveThreadListV2Status(thread)).toBe("reconnecting");
-  });
-
   it.each([
     ["connecting", "connecting"],
     ["reconnecting", "reconnecting"],
