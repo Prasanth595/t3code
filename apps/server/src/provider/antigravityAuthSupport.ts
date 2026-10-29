@@ -249,6 +249,11 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
       );
+      // The harness creates config/skills itself, and mkdir fails on a dangling link.
+      if (!(yield* fs.exists(target))) {
+        if (existing !== undefined) yield* fs.remove(link);
+        return;
+      }
       if (existing === target) return;
       if (existing !== undefined) {
         yield* fs.remove(link);
