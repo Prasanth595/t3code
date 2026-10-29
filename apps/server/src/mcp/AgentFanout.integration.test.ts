@@ -24,6 +24,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  RuntimeRequestId,
+  type OrchestrationV2DomainEvent,
   ProviderTurnId,
   RunId,
   RunAttemptId,
@@ -3400,6 +3403,97 @@ describe("workflow checks", () => {
           expect(ended.agents[1]?.result).toContain("need the shared checkout");
         }).pipe(Effect.provide(layerTest)),
       ),
+  );
+
+  it.effect.each(["background", "child", "request"] as const)(
+    "holds a waiting workflow member result while %s work is pending",
+    (kind) =>
+      Effect.gen(function* () {
+        yield* startParent;
+        const started = yield* startWorkflow('return await agent("summarize the notes")');
+        const member = yield* awaitMember(started.workflowId, 1);
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const childId = member.childThreadId!;
+        const child = yield* orchestrator.getThreadProjection(childId);
+        const run = child.runs.at(-1)!;
+        const now = yield* DateTime.now;
+        for (const pending of [true, false]) {
+          const scope = {
+            id: EventId.make(`event:member-blocker:${kind}:${pending}`),
+            threadId: childId,
+            runId: run.id,
+            occurredAt: now,
+          };
+          const event: OrchestrationV2DomainEvent =
+            kind === "background"
+              ? {
+                  ...scope,
+                  type: "provider-thread.updated",
+                  payload: {
+                    id: ProviderThreadId.make("provider-thread:member-blocker"),
+                    driver: ProviderDriverKind.make("codex"),
+                    providerInstanceId: instanceId,
+                    providerSessionId: null,
+                    appThreadId: childId,
+                    ownerNodeId: null,
+                    nativeThreadRef: null,
+                    nativeConversationHeadRef: null,
+                    status: "idle",
+                    firstRunOrdinal: null,
+                    lastRunOrdinal: null,
+                    handoffIds: [],
+                    forkedFrom: null,
+                    pendingBackgroundTasks: pending
+                      ? [{ taskId: "background", kind: "command" }]
+                      : [],
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                }
+              : kind === "child"
+                ? {
+                    ...scope,
+                    type: "subagent.updated",
+                    payload: {
+                      ...member,
+                      id: NodeId.make("subagent:member-blocker"),
+                      threadId: childId,
+                      runId: run.id,
+                      parentNodeId: run.rootNodeId!,
+                      childThreadId: null,
+                      origin: "provider_native",
+                      status: pending ? "running" : "completed",
+                      result: pending ? null : "child finished",
+                    },
+                  }
+                : {
+                    ...scope,
+                    type: "runtime-request.updated",
+                    payload: {
+                      id: RuntimeRequestId.make("request:member-blocker"),
+                      nodeId: run.rootNodeId!,
+                      providerTurnId: null,
+                      nativeRequestRef: null,
+                      kind: "user_input",
+                      status: pending ? "pending" : "resolved",
+                      responseCapability: { type: "not_resumable", reason: "test" },
+                      createdAt: now,
+                      resolvedAt: pending ? null : now,
+                    },
+                  };
+          yield* sink.write({ events: [event] });
+          if (pending) yield* completeChild(childId, "the notes say hello", { status: "waiting" });
+          if (pending) {
+            yield* orchestrator.recoverDelegatedTask(childId, run.id);
+            const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(parent.subagents.find((task) => task.id === member.id)?.result).toBeNull();
+          }
+        }
+        const ended = yield* awaitWorkflowEnd(started.workflowId);
+        expect(ended.status).toBe("completed");
+        expect(JSON.parse(ended.result!)).toBe("the notes say hello");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(

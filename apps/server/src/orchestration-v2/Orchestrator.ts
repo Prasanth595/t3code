@@ -715,17 +715,28 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
-/**
- * A workflow member's result is final once its turn completes. Its run then waits only for the
- * checkpoint capture that records the files it changed, which diffs and revert read once it
- * lands; the workflow takes the result now instead of after the capture.
- */
+/** A workflow member may return before checkpoint capture once its other work and requests end. */
 function settledWorkflowMemberRun<R extends OrchestrationV2Run | undefined>(
-  thread: Pick<OrchestrationV2ThreadProjection["thread"], "lineage">,
+  controls: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "messages" | "subagents" | "providerThreads" | "runtimeRequests"
+  >,
   run: R,
 ): R {
-  return run !== undefined && run.status === "waiting" && thread.lineage.workflowId !== undefined
-    ? { ...run, status: "completed" }
+  if (
+    run === undefined ||
+    run.status !== "waiting" ||
+    controls.thread.lineage.workflowId === undefined
+  )
+    return run;
+  const settledRun = { ...run, status: "completed" as const };
+  const progress = delegatedTaskProgress({
+    ...controls,
+    runs: controls.runs.map((candidate) => (candidate.id === run.id ? settledRun : candidate)),
+  });
+  return progress.state === "result_available" &&
+    !controls.runtimeRequests.some((request) => request.status === "pending")
+    ? settledRun
     : run;
 }
 
@@ -12281,7 +12292,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const finalizeAppOwnedSubagentTask = Effect.fn("Orchestrator.finalizeAppOwnedSubagentTask")(
     function* (
       childControls: ProjectionRecords<
-        "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
+        | "runs"
+        | "messages"
+        | "subagents"
+        | "providerThreads"
+        | "providerTurns"
+        | "attempts"
+        | "runtimeRequests"
       >,
       options: {
         readonly settledContinuationOf?: RunId;
@@ -12301,7 +12318,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.task.id);
       const childRun = settledWorkflowMemberRun(
-        childControls.thread,
+        childControls,
         taskRuns.length === 0
           ? options.task.id === forkedFrom.nodeId
             ? options.resultRun
@@ -12591,7 +12608,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const childControls = yield* projectionStore.getThreadRecords(
       childThreadId,
-      ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
+      [
+        "runs",
+        "messages",
+        "subagents",
+        "providerThreads",
+        "providerTurns",
+        "attempts",
+        "runtimeRequests",
+      ],
       { messageRoles: ["user"] },
     );
     const parentThreadId = childControls.thread.lineage.parentThreadId;
@@ -12603,7 +12628,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     const progress = delegatedTaskProgress(childControls);
     const latestRun = childControls.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-    const settledMemberRun = settledWorkflowMemberRun(childControls.thread, latestRun);
+    const settledMemberRun = settledWorkflowMemberRun(childControls, latestRun);
     const memberTurnSettled = settledMemberRun !== latestRun;
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
       "subagents",
@@ -13763,6 +13788,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return (
         event.payload.status !== undefined && !isOrchestrationV2WorkActive(event.payload.status)
       );
+    if (event.type === "runtime-request.updated") return event.payload.status !== "pending";
     if (event.type !== "provider-thread.updated") return false;
     if ((event.payload.pendingBackgroundTasks?.length ?? 0) > 0) {
       providerThreadsWithBackgroundWork.add(event.payload.id);
@@ -13784,8 +13810,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         afterSequence: terminalEventsAfterSequence,
         eventType: "workflow.updated",
       }),
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "runtime-request.updated",
+      }),
     ],
-    { concurrency: 3 },
+    { concurrency: 4 },
   ).pipe(
     Stream.filter(settlesChildWork),
     Stream.runForEach((stored) =>
