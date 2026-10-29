@@ -10,6 +10,16 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+### Git LFS images
+
+Web and desktop diff views preview PNG, JPEG, GIF, and WebP Git LFS images when Git LFS is installed
+and the image objects are available on the machine running your T3 Code server. Each side shows the
+image from that revision. If an object is missing, run `git lfs fetch` in the repository on that machine and retry
+the preview; T3 Code does not download LFS objects automatically. Previews are limited to 20 MB
+and 32 megapixels per image, with readable dimensions required before loading. Other formats and
+mobile continue to show the pointer text. Previews are released when they leave the view and load
+again when you return.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

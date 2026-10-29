@@ -17,7 +17,14 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
+export const GitLfsOid = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+
 export const AssetResource = Schema.Union([
+  Schema.TaggedStruct("lfs-image", {
+    threadId: ThreadId,
+    oid: GitLfsOid,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -61,6 +68,15 @@ export const AssetResource = Schema.Union([
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
+
+export function assetRequiresFileRead(resource: AssetResource): boolean {
+  return (
+    resource._tag === "workspace-file" ||
+    resource._tag === "lfs-image" ||
+    resource._tag === "media-file" ||
+    resource._tag === "draft-workspace-file"
+  );
+}
 
 export const AssetCreateUrlInput = Schema.Struct({
   resource: AssetResource,

@@ -8,10 +8,16 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useState, type ReactNode, type Ref } from "react";
+import { useEffect, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
+import {
+  fnv1a32,
+  lfsImageSides,
+  type LfsImageSide,
+  resolveFileDiffPath,
+  resolveFileDiffPreviousPath,
+} from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -21,6 +27,8 @@ import {
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import { LfsDiffImage } from "./LfsDiffImage";
+import { DiffImageCache } from "~/lib/diffImageCache";
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -32,6 +40,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  image?: LfsImageSide;
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -136,6 +145,9 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const [imageCache] = useState(() => new DiffImageCache());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the viewer's remaining downloads and blob URLs when it unmounts.
+  useEffect(() => () => imageCache.clear(), [imageCache]);
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
@@ -172,7 +184,25 @@ export function AnnotatableCodeView({
             text: comment.text,
           });
         }, []);
-      const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+      const annotations: DiffCommentLineAnnotation[] =
+        draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+      if (!collapsed && typeof composerDraftTarget !== "string") {
+        for (const image of lfsImageSides(fileDiff)) {
+          const { side } = image;
+          const existing = annotations.findIndex(
+            (annotation) => annotation.side === side && annotation.lineNumber === 0,
+          );
+          if (existing < 0) {
+            annotations.push({ side, lineNumber: 0, metadata: { entries: [], image } });
+          } else {
+            const annotation = annotations[existing]!;
+            annotations[existing] = {
+              ...annotation,
+              metadata: { ...annotation.metadata, image },
+            };
+          }
+        }
+      }
       return {
         id: fileKey,
         type: "diff",
@@ -181,10 +211,11 @@ export function AnnotatableCodeView({
         collapsed,
         version: fnv1a32(
           `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
-            .flatMap((annotation) =>
-              annotation.metadata.entries.map(
-                (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
-              ),
+            .map(
+              ({ side, lineNumber, metadata }) =>
+                `${side}:${lineNumber}:${metadata.image?.oid ?? ""}:${metadata.entries
+                  .map((entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`)
+                  .join(":")}`,
             )
             .join(":")}`,
         ),
@@ -286,22 +317,35 @@ export function AnnotatableCodeView({
       renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
-          <div
-            className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
-          >
-            {annotation.metadata.entries.map((entry) => (
-              <DiffCommentAnnotation
-                key={entry.id}
-                kind={entry.kind}
-                rangeLabel={entry.rangeLabel}
-                text={entry.kind === "draft" ? draftText : entry.text}
-                onTextChange={setDraftText}
-                onCancel={() => removeEntry(entry.id)}
-                onComment={(text) => submitEntry(entry.id, text)}
-                onDelete={() => removeEntry(entry.id)}
+          <>
+            {annotation.metadata.image && typeof composerDraftTarget !== "string" ? (
+              <LfsDiffImage
+                image={annotation.metadata.image}
+                threadRef={composerDraftTarget}
+                cache={imageCache}
               />
-            ))}
-          </div>
+            ) : null}
+            {annotation.metadata.entries.length > 0 ? (
+              <div
+                className={
+                  hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"
+                }
+              >
+                {annotation.metadata.entries.map((entry) => (
+                  <DiffCommentAnnotation
+                    key={entry.id}
+                    kind={entry.kind}
+                    rangeLabel={entry.rangeLabel}
+                    text={entry.kind === "draft" ? draftText : entry.text}
+                    onTextChange={setDraftText}
+                    onCancel={() => removeEntry(entry.id)}
+                    onComment={(text) => submitEntry(entry.id, text)}
+                    onDelete={() => removeEntry(entry.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </>
         );
       }}
     />

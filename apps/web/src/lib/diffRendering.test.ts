@@ -7,9 +7,40 @@ import {
   buildFileDiffRenderKey,
   getDiffLineStat,
   getRenderablePatch,
+  lfsImageSides,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
+
+it.each([
+  ["image.png", "pointer.txt", "Before"],
+  ["pointer.txt", "image.png", "After"],
+])("previews the image side of a rename from %s to %s", (before, after, label) => {
+  const old = `version https://git-lfs.github.com/spec/v1\noid sha256:${"ab".repeat(32)}\nsize 3\n`;
+  const next = old.replace("ab".repeat(32), "cd".repeat(32));
+  const patch = [
+    `diff --git a/${before} b/${after}`,
+    "similarity index 50%",
+    `rename from ${before}`,
+    `rename to ${after}`,
+    `--- a/${before}`,
+    `+++ b/${after}`,
+    "@@ -1,3 +1,3 @@",
+    ...old
+      .trimEnd()
+      .split("\n")
+      .map((line) => `-${line}`),
+    ...next
+      .trimEnd()
+      .split("\n")
+      .map((line) => `+${line}`),
+    "",
+  ].join("\n");
+  const parsed = getRenderablePatch(patch);
+  expect(parsed?.kind).toBe("files");
+  if (parsed?.kind !== "files") throw new Error("Expected a parsed image rename");
+  expect(lfsImageSides(parsed.files[0]!).map((image) => image.label)).toEqual([label]);
+});
 
 describe("getRenderablePatch", () => {
   it("hides indentation changes around inserted JSX without moving review lines", () => {

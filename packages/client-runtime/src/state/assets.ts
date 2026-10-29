@@ -3,6 +3,7 @@ import {
   type AssetCreateUrlResult,
   type AssetImageDimensions,
   AssetResource,
+  assetRequiresFileRead,
   EnvironmentId,
   type ProjectCloneSnapshot,
   WS_METHODS,
@@ -94,13 +95,7 @@ export function blockedAssetUrlState(
     readonly error: string | null;
   },
 ): AssetUrlState | null {
-  if (
-    resource === null ||
-    fileAccess.canReadFiles ||
-    (resource._tag !== "workspace-file" &&
-      resource._tag !== "media-file" &&
-      resource._tag !== "draft-workspace-file")
-  ) {
+  if (resource === null || fileAccess.canReadFiles || !assetRequiresFileRead(resource)) {
     return null;
   }
   if (fileAccess.isPending) return { _tag: "Loading" };

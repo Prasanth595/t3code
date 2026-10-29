@@ -1,7 +1,28 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import {
+  isLfsImagePreviewPath,
+  LFS_POINTER_MAX_LENGTH,
+  parseLfsPointer,
+} from "@t3tools/shared/gitLfs";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
+
+export function lfsImageSides(file: FileDiffMetadata) {
+  return (
+    [
+      ["deletions", file.deletionLines, file.prevName ?? file.name, "Before"],
+      ["additions", file.additionLines, file.name, "After"],
+    ] as const
+  ).flatMap(([side, lines, path, label]) => {
+    if (!isLfsImagePreviewPath(path)) return [];
+    if (lines.length > 4 || lines.some((line) => line.length >= LFS_POINTER_MAX_LENGTH)) return [];
+    const pointer = parseLfsPointer(lines.join(""));
+    return pointer ? [{ ...pointer, side, path, label }] : [];
+  });
+}
+
+export type LfsImageSide = ReturnType<typeof lfsImageSides>[number];
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
 export const DIFF_THEME_NAMES = {

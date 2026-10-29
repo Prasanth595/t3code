@@ -4,6 +4,7 @@ import {
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
   AssetCreateUrlInput,
+  assetRequiresFileRead,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -250,13 +251,7 @@ const requiredScopesForRpcCall = (
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);
-    return [
-      resource._tag === "workspace-file" ||
-      resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
-        ? AuthFilesystemReadScope
-        : AuthOrchestrationReadScope,
-    ];
+    return [assetRequiresFileRead(resource) ? AuthFilesystemReadScope : AuthOrchestrationReadScope];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   if (method === WS_METHODS.projectsMutate) {

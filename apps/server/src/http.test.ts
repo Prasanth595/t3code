@@ -705,6 +705,17 @@ describe("video asset byte ranges", () => {
 });
 
 describe("assetResponseHeaders", () => {
+  it("serves extensionless LFS objects as images and sandboxes SVG content", () => {
+    const objectPath = `/lfs/objects/${"ab".repeat(32)}`;
+    expect(assetResponseHeaders(objectPath, { mimeType: "image/png" })).toMatchObject({
+      "Content-Type": "image/png",
+      "X-Content-Type-Options": "nosniff",
+    });
+    expect(assetResponseHeaders(objectPath, { mimeType: "image/svg+xml" })).toMatchObject({
+      "Content-Type": "image/svg+xml",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
   it("sandboxes SVG assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",

@@ -7,7 +7,12 @@ import {
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AssetResource, type AssetCreateUrlResult, EnvironmentId } from "@t3tools/contracts";
+import {
+  AssetResource,
+  type AssetCreateUrlResult,
+  assetRequiresFileRead,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -142,7 +147,7 @@ export function useAssetUrls(
   const { canReadFiles } = useFilesystemReadAccess(environmentId);
   const allowedResources = canReadFiles
     ? resources
-    : resources.filter((resource) => !isFileResource(resource));
+    : resources.filter((resource) => !assetRequiresFileRead(resource));
   const results = useAtomValue(
     assetEnvironment.createUrls({
       environmentId,
@@ -153,7 +158,7 @@ export function useAssetUrls(
   const urls: Array<string | null> = [];
   let resultIndex = 0;
   for (const resource of resources) {
-    if (!canReadFiles && isFileResource(resource)) {
+    if (!canReadFiles && assetRequiresFileRead(resource)) {
       urls.push(null);
       continue;
     }
@@ -166,12 +171,4 @@ export function useAssetUrls(
     );
   }
   return urls;
-}
-
-function isFileResource(resource: AssetResource): boolean {
-  return (
-    resource._tag === "workspace-file" ||
-    resource._tag === "media-file" ||
-    resource._tag === "draft-workspace-file"
-  );
 }

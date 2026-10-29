@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
+import { LFS_IMAGE_MAX_BYTES } from "@t3tools/shared/gitLfs";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -39,6 +40,7 @@ import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { sourceControlMediaResponse } from "./sourceControlMediaResponse.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as LfsObjects from "./LfsObjects.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -101,6 +103,7 @@ const oversizedScreenshotItem = {
 
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
+  Layer.mock(LfsObjects.LfsObjects)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
@@ -122,6 +125,87 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect(
+    "serves the selected cached LFS image with its original MIME type, without reading the working copy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-image-" });
+        const mediaDir = path.join(root, "custom lfs storage", "objects");
+        const oid = "ab".repeat(32);
+        const objectPath = path.join(mediaDir, "ab", "ab", oid);
+        yield* fs.makeDirectory(path.dirname(objectPath), { recursive: true });
+        yield* fs.writeFile(objectPath, screenshotPng);
+        yield* fs.writeFileString(path.join(root, "image.png"), "unrelated working copy");
+        const issue = issueAssetUrl({
+          resource: {
+            _tag: "lfs-image",
+            threadId: ThreadId.make("thread-1"),
+            oid,
+            path: "image.png",
+          },
+          workspaceRoot: root,
+        });
+        const result = yield* issue.pipe(
+          Effect.provideService(LfsObjects.LfsObjects, {
+            localPath: () => Effect.succeed(objectPath),
+          }),
+        );
+        expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        expect(asset).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(objectPath),
+          mimeType: "image/png",
+        });
+        if (asset?.kind !== "file") throw new Error("Expected a resolved LFS image");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+          screenshotPng,
+        );
+        yield* fs.remove(objectPath);
+        expect(
+          yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+        ).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect("rejects missing, oversized, and excessive-resolution local LFS objects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-limits-" });
+      const objectPath = path.join(root, "object");
+      const resource = {
+        _tag: "lfs-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        oid: "ab".repeat(32),
+        path: "image.png",
+      };
+      const issue = (path = resource.path) =>
+        issueAssetUrl({ resource: { ...resource, path }, workspaceRoot: root }).pipe(
+          Effect.provideService(LfsObjects.LfsObjects, {
+            localPath: () => Effect.succeed(objectPath),
+          }),
+          Effect.flip,
+        );
+      expect((yield* issue())._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      yield* fs.writeFile(objectPath, screenshotPng);
+      expect((yield* issue("image.svg"))._tag).toBe("AssetPreviewTypeValidationError");
+      yield* fs.truncate(objectPath, LFS_IMAGE_MAX_BYTES + 1);
+      expect((yield* issue())._tag).toBe("AssetPreviewTypeValidationError");
+      const oversized = screenshotPng.slice();
+      new DataView(oversized.buffer).setUint32(16, 10_000);
+      new DataView(oversized.buffer).setUint32(20, 10_000);
+      yield* fs.writeFile(objectPath, oversized);
+      expect((yield* issue())._tag).toBe("AssetPreviewTypeValidationError");
+      yield* fs.writeFileString(objectPath, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      expect((yield* issue())._tag).toBe("AssetPreviewTypeValidationError");
+    }).pipe(Effect.provide(layerTest)),
+  );
   describe("readMcpAppHtml", () => {
     it.effect("accepts snapshots at the stored HTML byte limit", () =>
       Effect.gen(function* () {

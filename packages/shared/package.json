@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./gitLfs": {
+      "types": "./src/gitLfs.ts",
+      "import": "./src/gitLfs.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
