@@ -204,7 +204,6 @@ import {
   replaceComposerDraftAttachments,
   resetComposerDraftsLoadState,
   restoreComposerDraftSnapshotState,
-  restoreComposerDraftSnapshot,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
   setComposerDraftText,
@@ -982,6 +981,37 @@ describe("mobile composer drafts", () => {
     expect(clearComposerDraftContentState(restored, draftKey)[draftKey]?.context).toBeUndefined();
     setComposerDraftText(draftKey, "Fix next");
     expect(getComposerDraftSnapshot(draftKey).context).toBeUndefined();
+  });
+
+  it("keeps each draft's caret when another composer moves its own caret", () => {
+    const threadKey = "caret-environment:caret-thread";
+    const newTaskKey = "caret-environment:new-task:caret-draft";
+    setComposerDraftText(threadKey, "Fix this next");
+    setComposerDraftText(newTaskKey, "Another task");
+    rememberComposerDraftSelection(threadKey, "Fix this next", { start: 4, end: 8 });
+    rememberComposerDraftSelection(newTaskKey, "Another task", { start: 2, end: 2 });
+    insertComposerDraftContext(threadKey, {
+      text: "[Build output](t3-context://v1/terminal/caret-terminal)",
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            kind: "terminal",
+            contextId: ComposerContextId.make("caret-terminal"),
+            label: "Build output",
+            terminalId: "main",
+            terminalLabel: "Terminal",
+            lineStart: 1,
+            lineEnd: 1,
+            text: "Build failed",
+          },
+        ],
+      },
+    });
+    expect(getComposerDraftSnapshot(threadKey).text).toBe(
+      "Fix [Build output](t3-context://v1/terminal/caret-terminal) next",
+    );
   });
 
   it("releases videos rejected by the live draft limit and keeps accepted files", async () => {
@@ -2107,7 +2137,7 @@ describe("mobile composer drafts", () => {
     expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe("C");
   });
 
-  it.each(["merge", "restore", "rollback", "clear"] as const)(
+  it.each(["merge", "rollback", "clear"] as const)(
     "keeps debounced snapshots on both sides of an explicit %s",
     async (operation) => {
       vi.useFakeTimers();
@@ -2122,15 +2152,13 @@ describe("mobile composer drafts", () => {
       const transaction =
         operation === "merge"
           ? mergeComposerDraftContent(draftKey, { text: "merged", attachments: [] })
-          : operation === "restore"
-            ? restoreComposerDraftSnapshot(draftKey, { text: "restored", attachments: [] })
-            : operation === "rollback"
-              ? undoComposerDraftMerge(
-                  draftKey,
-                  { text: "before", attachments: [] },
-                  getComposerDraftSnapshot(draftKey),
-                )
-              : clearComposerDraftsEnvironment(EnvironmentId.make("environment-1"));
+          : operation === "rollback"
+            ? undoComposerDraftMerge(
+                draftKey,
+                { text: "before", attachments: [] },
+                getComposerDraftSnapshot(draftKey),
+              )
+            : clearComposerDraftsEnvironment(EnvironmentId.make("environment-1"));
       await Promise.resolve();
       const transactionText = getComposerDraftSnapshot(draftKey).text;
       setComposerDraftText(draftKey, "C");
