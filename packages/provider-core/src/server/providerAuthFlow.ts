@@ -143,39 +143,47 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     adoptCredentials: Effect.fn("providerAuthFlow.adoptCredentials")(function* (
       update,
       stopSessions,
+      prepare = Effect.void,
     ) {
-      yield* lock.withPermit(
+      return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          if (operation !== "idle")
-            return yield* new ProviderSetupError({
-              instanceId: options.instanceId,
-              operation: "import",
-              detail: "Finish or cancel the existing sign-in first.",
-            });
-          operation = "stopping";
+          yield* lock.withPermit(
+            Effect.gen(function* () {
+              if (operation !== "idle")
+                return yield* new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "import",
+                  detail: "Finish or cancel the existing sign-in first.",
+                });
+              operation = "stopping";
+            }),
+          );
+          const result = yield* restore(
+            Effect.gen(function* () {
+              yield* prepare;
+              yield* stopOwnedSessions;
+              yield* stopSessions;
+              yield* update;
+              yield* refreshMethods;
+            }),
+          ).pipe(Effect.exit);
+          const state: ProviderAuthState = {
+            ...empty,
+            methods: snapshot.value.state.methods ?? [],
+            phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+            message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
+          };
+          yield* lock.withPermit(
+            Effect.gen(function* () {
+              yield* SubscriptionRef.set(snapshot, { owner: null, state });
+              operation = "idle";
+            }),
+          );
+          if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+          return state;
         }),
       );
-      const result = yield* Effect.gen(function* () {
-        yield* stopOwnedSessions;
-        yield* stopSessions;
-        yield* update;
-        yield* refreshMethods;
-      }).pipe(Effect.exit);
-      const state: ProviderAuthState = {
-        ...empty,
-        methods: snapshot.value.state.methods ?? [],
-        phase: Exit.isSuccess(result) ? "succeeded" : "failed",
-        message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
-      };
-      yield* lock.withPermit(
-        Effect.gen(function* () {
-          yield* SubscriptionRef.set(snapshot, { owner: null, state });
-          operation = "idle";
-        }),
-      );
-      if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
-      return state;
-    }, Effect.uninterruptible),
+    }),
     refreshMethods,
     invalidate: lock.withPermit(
       Effect.gen(function* () {

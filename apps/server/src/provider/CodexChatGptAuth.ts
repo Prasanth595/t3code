@@ -983,13 +983,15 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       yield* saveRegistration(registration);
       yield* save(profile.credentials, true);
     });
-    return lock.withPermit(
-      track(
-        "transfer",
-        { flow: "primary_handoff" },
-        validate.pipe(
-          Effect.andThen(controller.adoptCredentials!(withSessionLock(saveImported), stopSessions)),
-        ),
+    // Claim credential adoption before validation, but release the auth lock before
+    // session teardown so a closing managed Codex session can drain token renewal.
+    return track(
+      "transfer",
+      { flow: "primary_handoff" },
+      controller.adoptCredentials!(
+        lock.withPermit(withSessionLock(saveImported)),
+        stopSessions,
+        lock.withPermit(validate),
       ),
     );
   };
