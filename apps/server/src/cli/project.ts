@@ -31,6 +31,7 @@ import * as ServerOwnership from "../serverOwnership.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
@@ -207,6 +208,7 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(ProjectFileReader.layer),
     ),
   ),
   Layer.provideMerge(WorkspacePaths.layer),

@@ -68,6 +68,9 @@ import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
@@ -305,7 +308,7 @@ const awaitPersistedProvider = (
 
 const layerTestNodeServices = Layer.mergeAll(
   ProviderLatestVersions.layer,
-  NodeServices.layer,
+  layerNodeServices,
   Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
     endpoint: Effect.succeed("unused-private-pipe"),
   }),

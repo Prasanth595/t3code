@@ -1,11 +1,22 @@
+// @effect-diagnostics nodeBuiltinImport:off - FIFO gates must be released with a synchronous
+// open on the main thread, because the Effect FileSystem queues behind the pinned libuv pool.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
+import * as Layer from "effect/Layer";
+import * as ProjectFileReader from "../../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -19,7 +30,7 @@ const writeSkill = Effect.fn(function* (
   yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), contents);
 });
 
-it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+it.layer(layerNodeServices)("discoverClaudeSkills", (it) => {
   it.effect("discovers enabled plugin skills with manifest names and ignores skill overrides", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -869,3 +880,123 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 });
+
+const LIBUV_POOL_SIZE = Number(process.env.UV_THREADPOOL_SIZE ?? 4);
+
+/**
+ * Opening a FIFO for reading waits in `open()` until a writer appears, like a
+ * TCC-protected file in a headless macOS daemon, and pins one libuv pool thread
+ * that fiber interruption cannot free. The finalizer opens it for writing on the
+ * main thread, which releases every waiting reader even with the pool exhausted.
+ */
+const makeOpenGate = Effect.fn("ClaudeSkills.test.makeOpenGate")(function* (gatePath: string) {
+  NodeChildProcess.execFileSync("mkfifo", [gatePath]);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      try {
+        NodeFS.closeSync(
+          NodeFS.openSync(gatePath, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
+        );
+      } catch {
+        // ENXIO: no reader is waiting.
+      }
+    }),
+  );
+});
+
+/**
+ * Racing a stuck fs call against a timer waits for the loser's interruption,
+ * which never comes, so the work runs detached and only the join is timed.
+ * The gate finalizer later lets the abandoned fiber finish.
+ */
+const awaitWithinDeadline = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.forkDetach(effect).pipe(
+    Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.timeoutOption("5 seconds"))),
+  );
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "discoverClaudeSkills with a project settings open() that never returns",
+  () => {
+    it.live(
+      "completes every discovery and leaves the libuv pool free when settings.local.json and a project plugin manifest are FIFOs",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-fifo-" });
+          const configDir = path.join(tempDir, "claude-home");
+          const workspace = path.join(tempDir, "workspace");
+          yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+          yield* writeSkill(path.join(workspace, ".claude", "skills"), "review", "# Review");
+          const settingsPath = path.join(workspace, ".claude", "settings.local.json");
+          yield* makeOpenGate(settingsPath);
+          const pluginInstall = path.join(workspace, ".claude", "plugins", "local");
+          yield* writeSkill(path.join(pluginInstall, "skills"), "lint", "# Lint");
+          yield* fs.makeDirectory(path.join(pluginInstall, ".claude-plugin"));
+          const manifestPath = path.join(pluginInstall, ".claude-plugin", "plugin.json");
+          yield* makeOpenGate(manifestPath);
+          yield* fs.makeDirectory(path.join(configDir, "plugins"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(configDir, "plugins", "installed_plugins.json"),
+            JSON.stringify({
+              plugins: {
+                "local@shop": [
+                  { scope: "local", projectPath: workspace, installPath: pluginInstall },
+                ],
+              },
+            }),
+          );
+          yield* fs.writeFileString(
+            path.join(configDir, "settings.json"),
+            '{"enabledPlugins":{"local@shop":true}}',
+          );
+
+          const attempts = LIBUV_POOL_SIZE + 1;
+          for (let attempt = 1; attempt <= attempts; attempt++) {
+            const skills = yield* awaitWithinDeadline(
+              discoverClaudeSkills({ homePath: configDir }, workspace),
+            );
+            assert.deepEqual(
+              Option.map(skills, (found) => found.map((skill) => skill.name)),
+              Option.some(["local:lint", "review"]),
+              `discovery ${attempt} of ${attempts} hung reading ${settingsPath} or ${manifestPath}`,
+            );
+          }
+          assert.isTrue(
+            Option.isSome(
+              yield* awaitWithinDeadline(
+                fs.readFileString(path.join(workspace, ".claude", "skills", "review", "SKILL.md")),
+              ),
+            ),
+            "an unrelated fs read hung: discovery left libuv pool threads stuck in open()",
+          );
+        }).pipe(Effect.scoped, Effect.provide(layerNodeServices)),
+    );
+
+    it.live(
+      "completes every discovery when a config dir inside the project holds FIFO settings and plugin records",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-fifo-" });
+          yield* writeSkill(path.join(workspace, ".claude", "skills"), "review", "# Review");
+          yield* makeOpenGate(path.join(workspace, ".claude", "settings.json"));
+          yield* fs.makeDirectory(path.join(workspace, ".claude", "plugins"));
+          yield* makeOpenGate(path.join(workspace, ".claude", "plugins", "installed_plugins.json"));
+
+          const attempts = LIBUV_POOL_SIZE + 1;
+          for (let attempt = 1; attempt <= attempts; attempt++) {
+            const skills = yield* awaitWithinDeadline(
+              discoverClaudeSkills({ homePath: "" }, workspace, { CLAUDE_CONFIG_DIR: ".claude" }),
+            );
+            assert.deepEqual(
+              Option.map(skills, (found) => found.map((skill) => skill.name)),
+              Option.some(["review"]),
+              `discovery ${attempt} of ${attempts} hung reading the project-local config dir`,
+            );
+          }
+        }).pipe(Effect.scoped, Effect.provide(layerNodeServices)),
+    );
+  },
+);

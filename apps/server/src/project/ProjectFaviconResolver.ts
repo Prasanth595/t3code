@@ -12,6 +12,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ProjectFileReader from "./ProjectFileReader.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
@@ -80,12 +81,7 @@ const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
   {
-    operation: Schema.Literals([
-      "normalize-workspace",
-      "resolve-path",
-      "stat-candidate",
-      "read-source",
-    ]),
+    operation: Schema.Literals(["normalize-workspace", "resolve-path", "stat-candidate"]),
     workspaceRoot: Schema.String,
     relativePath: Schema.optional(Schema.String),
     absolutePath: Schema.optional(Schema.String),
@@ -141,6 +137,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
+  const projectFiles = yield* ProjectFileReader.ProjectFileReader;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
@@ -211,22 +208,11 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectFaviconResolutionError({
-            operation: "read-source",
-            workspaceRoot: projectCwd,
-            relativePath: sourceFile,
-            absolutePath: sourcePath.absolutePath,
-            cause,
-          }),
-      ),
-    );
-    if (Option.isNone(source)) {
+    const source = yield* projectFiles.readFileString(sourcePath.absolutePath);
+    if (source === undefined) {
       return null;
     }
-    const href = extractIconHref(source.value);
+    const href = extractIconHref(source);
     if (!href) {
       return null;
     }

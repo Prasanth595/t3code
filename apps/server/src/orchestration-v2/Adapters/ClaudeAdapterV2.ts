@@ -33,6 +33,7 @@ import {
   type HookCallback,
   query,
   resolveSettings as resolveClaudeSettings,
+  type ResolveSettingsOptions as ClaudeResolveSettingsOptions,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -136,6 +137,7 @@ import {
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
+import * as ProjectFileReader from "../../project/ProjectFileReader.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -545,6 +547,15 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
 ) {
   override get message(): string {
     return "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
+  }
+}
+
+class ClaudeProjectSettingsUnreadableError extends Schema.TaggedError<ClaudeProjectSettingsUnreadableError>()(
+  "ClaudeProjectSettingsUnreadableError",
+  { path: Schema.String },
+) {
+  override get message(): string {
+    return `Claude project settings at ${this.path} could not be read.`;
   }
 }
 
@@ -4366,6 +4377,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const projectFiles = yield* ProjectFileReader.ProjectFileReader;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
@@ -4384,26 +4396,76 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
-  const readBypassSettings = (filePath: string) =>
-    fileSystem.readFileString(filePath).pipe(
-      Effect.flatMap(decodeClaudeBypassSettings),
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed({})),
+  // Whatever their role, files in the cwd or its checkout are read with ProjectFileReader.
+  // Undefined when missing; a file that exists but cannot be read fails.
+  const readSettingsFile = Effect.fn("ClaudeAdapterV2.readSettingsFile")(function* (
+    filePath: string,
+    projectDirectories: ReadonlyArray<string | null | undefined>,
+  ) {
+    if (!ProjectFileReader.isProjectPath(path, projectDirectories, filePath)) {
+      return yield* fileSystem.readFileString(filePath).pipe(
+        Effect.map((contents): string | undefined => contents),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+      );
+    }
+    const contents = yield* projectFiles.readFileString(filePath);
+    if (contents !== undefined) return contents;
+    if (Option.isNone(yield* fileSystem.stat(filePath).pipe(Effect.option))) return undefined;
+    return yield* new ClaudeProjectSettingsUnreadableError({ path: filePath });
+  });
+  const checkoutDirectory = Effect.fn("ClaudeAdapterV2.checkoutDirectory")(function* (cwd: string) {
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      const isCheckout = yield* fileSystem
+        .exists(path.join(directory, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (isCheckout) return directory;
+      if (path.dirname(directory) === directory) return undefined;
+    }
+  });
+  const projectDirectories = (cwd: string | null) =>
+    cwd === null
+      ? Effect.succeed([])
+      : Effect.map(checkoutDirectory(cwd), (checkout) => [cwd, checkout]);
+  const readBypassSettings = Effect.fn("ClaudeAdapterV2.readBypassSettings")(function* (
+    filePath: string,
+    directories: ReadonlyArray<string | undefined>,
+  ) {
+    const contents = yield* readSettingsFile(filePath, directories);
+    return contents === undefined ? {} : yield* decodeClaudeBypassSettings(contents);
+  });
+  // The SDK reads <cwd>/.claude/settings{,.local}.json with sync fs on the main thread, where a
+  // blocked open() would freeze the server, so one the reader cannot read fails like an SDK error.
+  const resolveSdkSettings = Effect.fn("ClaudeAdapterV2.resolveSdkSettings")(function* (
+    cwd: string | null,
+    options: Omit<ClaudeResolveSettingsOptions, "cwd">,
+  ) {
+    if (cwd !== null) {
+      yield* Effect.forEach(
+        ["settings.json", "settings.local.json"],
+        (name) => readSettingsFile(path.join(path.resolve(cwd), ".claude", name), [cwd]),
+        { concurrency: "unbounded", discard: true },
+      );
+    }
+    return yield* Effect.tryPromise(() =>
+      resolveClaudeSettings({ ...(cwd === null ? {} : { cwd }), ...options }),
     );
+  });
   const resolveBypassAvailability = Effect.fn("ClaudeAdapterV2.resolveBypassAvailability")(
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
       // Keep the payload intact so the SDK also honors managedSourcesBehavior.
-      const remote = yield* readBypassSettings(path.join(homePath, "remote-settings.json"));
-      const home = customHome
-        ? yield* readBypassSettings(path.join(homePath, "settings.json"))
-        : {};
-      const resolved = yield* Effect.tryPromise(() =>
-        resolveClaudeSettings({
-          ...(cwd === null ? {} : { cwd }),
-          settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
-          serverManagedSettings: remote,
-        }),
+      const directories = yield* projectDirectories(cwd);
+      const remote = yield* readBypassSettings(
+        path.join(homePath, "remote-settings.json"),
+        directories,
       );
+      const home = customHome
+        ? yield* readBypassSettings(path.join(homePath, "settings.json"), directories)
+        : {};
+      const resolved = yield* resolveSdkSettings(cwd, {
+        settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
+        serverManagedSettings: remote,
+      });
       const launchArgSettings = yield* readClaudeLaunchArgSettings({
         settings: adapterOptions.settings,
         cwd,
@@ -4427,48 +4489,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         adapterOptions.environment.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL,
       );
       if (Option.isSome(fromEnvironment)) return fromEnvironment.value;
-      const resolved = yield* Effect.tryPromise(() =>
-        resolveClaudeSettings({
-          ...(cwd === null ? {} : { cwd }),
-          settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
-        }),
-      ).pipe(Effect.orElseSucceed(() => undefined));
-      const home = customHome
-        ? yield* fileSystem.readFileString(path.join(homePath, "settings.json")).pipe(
-            Effect.flatMap(decodeClaudeSubagentCacheSettings),
-            Effect.orElseSucceed(() => ({ subagentPromptCacheTtl: undefined })),
-          )
+      const resolved = yield* resolveSdkSettings(cwd, {
+        settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      const homeContents = customHome
+        ? yield* readSettingsFile(
+            path.join(homePath, "settings.json"),
+            yield* projectDirectories(cwd),
+          ).pipe(Effect.orElseSucceed(() => undefined))
         : undefined;
+      const home =
+        homeContents === undefined
+          ? undefined
+          : Option.getOrUndefined(
+              yield* decodeClaudeSubagentCacheSettings(homeContents).pipe(Effect.option),
+            );
       return resolved?.effective.subagentPromptCacheTtl ?? home?.subagentPromptCacheTtl;
     },
   );
 
-  const readToolSearchSetting = (filePath: string) =>
-    fileSystem.readFileString(filePath).pipe(
-      Effect.flatMap(decodeClaudeEnvSettings),
-      Effect.map((settings) => {
-        const value = settings.env?.ENABLE_TOOL_SEARCH;
-        return typeof value === "string" ? value : undefined;
-      }),
+  const readToolSearchSetting = Effect.fn("ClaudeAdapterV2.readToolSearchSetting")(function* (
+    filePath: string,
+    directories: ReadonlyArray<string | null | undefined>,
+  ) {
+    const contents = yield* readSettingsFile(filePath, directories).pipe(
       Effect.orElseSucceed(() => undefined),
     );
+    if (contents === undefined) return undefined;
+    const settings = yield* decodeClaudeEnvSettings(contents).pipe(Effect.option);
+    const value = Option.getOrUndefined(settings)?.env?.ENABLE_TOOL_SEARCH;
+    return typeof value === "string" ? value : undefined;
+  });
   // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
   // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
-  const mainCheckoutRoot = (checkout: string) =>
-    fileSystem.readFileString(path.join(checkout, ".git")).pipe(
-      Effect.flatMap((pointer) => {
-        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
-        if (gitDir === undefined) return Effect.succeed(checkout);
-        const worktreeGitDir = path.resolve(checkout, gitDir);
-        return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
-          Effect.map((commonDir) => {
-            const common = path.resolve(worktreeGitDir, commonDir.trim());
-            return path.basename(common) === ".git" ? path.dirname(common) : checkout;
-          }),
-        );
-      }),
-      Effect.orElseSucceed(() => checkout),
-    );
+  // Only a worktree's .git is a file; the reader never opens a repository's .git directory.
+  const mainCheckoutRoot = Effect.fn("ClaudeAdapterV2.mainCheckoutRoot")(function* (
+    checkout: string,
+  ) {
+    const pointer = yield* projectFiles.readFileString(path.join(checkout, ".git"));
+    const gitDir =
+      pointer === undefined ? undefined : /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+    if (gitDir === undefined) return checkout;
+    const worktreeGitDir = path.resolve(checkout, gitDir);
+    const commonDir = yield* projectFiles.readFileString(path.join(worktreeGitDir, "commondir"));
+    if (commonDir === undefined) return checkout;
+    const common = path.resolve(worktreeGitDir, commonDir.trim());
+    return path.basename(common) === ".git" ? path.dirname(common) : checkout;
+  });
   // Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
   // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
   // leaves tool search on, Claude Code's default.
@@ -4476,16 +4543,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     cwd: string,
   ) {
     if ((yield* HostProcess.Platform) === "win32") return cwd;
-    for (let directory = cwd; ; directory = path.dirname(directory)) {
-      const isCheckout = yield* fileSystem
-        .exists(path.join(directory, ".git"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (isCheckout) {
-        const root = yield* mainCheckoutRoot(directory);
-        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
-      }
-      if (path.dirname(directory) === directory) return cwd;
-    }
+    const checkout = yield* checkoutDirectory(cwd);
+    if (checkout === undefined) return cwd;
+    const root = yield* mainCheckoutRoot(checkout);
+    return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
   });
   // Settings env beats the process env, --settings over local over project over user, and a local
   // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
@@ -4495,18 +4556,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
       if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
       const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
-        ...(cwd === null || localDirectory === null
+      const projectSettingsFiles =
+        cwd === null || localDirectory === null
           ? []
           : [
               path.join(localDirectory, ".claude", "settings.local.json"),
               ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
               path.join(cwd, ".claude", "settings.json"),
-            ]),
-        path.join(homePath, "settings.json"),
-      ];
-      for (const settingsFile of settingsFiles) {
-        const value = yield* readToolSearchSetting(settingsFile);
+            ];
+      const directories = [...(yield* projectDirectories(cwd)), localDirectory];
+      for (const settingsFile of [...projectSettingsFiles, path.join(homePath, "settings.json")]) {
+        const value = yield* readToolSearchSetting(settingsFile, directories);
         if (value !== undefined) return claudeToolSearchOverride(value);
       }
       return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
@@ -4529,6 +4589,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProjectFileReader.ProjectFileReader, projectFiles),
     );
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -11193,6 +11254,7 @@ export type ClaudeAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
+  | ProjectFileReader.ProjectFileReader
   | ServerConfig.ServerConfig;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(

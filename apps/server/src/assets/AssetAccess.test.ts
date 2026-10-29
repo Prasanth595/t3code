@@ -39,6 +39,9 @@ import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { sourceControlMediaResponse } from "./sourceControlMediaResponse.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -119,7 +122,7 @@ const layerTest = Layer.mergeAll(
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(layerNodeServices));
 
 describe("AssetAccess", () => {
   describe("readMcpAppHtml", () => {

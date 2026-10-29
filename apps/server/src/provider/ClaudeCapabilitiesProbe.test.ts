@@ -10,6 +10,10 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   probeClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
+import * as Layer from "effect/Layer";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -39,5 +43,5 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
       { HOME: "/nonexistent/t3-home" },
     );
     assert.strictEqual(snapshot.slashCommandsPending, false);
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(layerNodeServices)),
 );

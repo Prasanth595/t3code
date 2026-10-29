@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -9,12 +8,14 @@ import * as Schema from "effect/Schema";
 import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
 import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 
+import * as ProjectFileReader from "./ProjectFileReader.ts";
+
 const decodeT3ProjectFileJson = Schema.decodeEffect(T3ProjectFileFromJson);
 
 export class T3ProjectFileLoadError extends Schema.TaggedError<T3ProjectFileLoadError>()(
   "T3ProjectFileLoadError",
   {
-    operation: Schema.Literals(["read", "decode"]),
+    operation: Schema.Literals(["decode"]),
     workspaceRoot: Schema.String,
     filePath: Schema.String,
     cause: Schema.Defect(),
@@ -45,32 +46,17 @@ const logT3ProjectFileLoadError = (error: T3ProjectFileLoadError) =>
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectFiles = yield* ProjectFileReader.ProjectFileReader;
 
   const load: T3ProjectFileLoader["Service"]["load"] = Effect.fn("T3ProjectFileLoader.load")(
     function* (workspaceRoot) {
       const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logT3ProjectFileLoadError(
-                  new T3ProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
-      if (Option.isNone(raw)) {
+      const raw = yield* projectFiles.readFileString(filePath);
+      if (raw === undefined) {
         return Option.none<T3ProjectFile>();
       }
-      return yield* decodeT3ProjectFileJson(raw.value).pipe(
+      return yield* decodeT3ProjectFileJson(raw).pipe(
         Effect.asSome,
         Effect.catchTags({
           SchemaError: (error) =>

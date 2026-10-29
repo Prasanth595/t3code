@@ -39,6 +39,9 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
@@ -91,7 +94,7 @@ const readProjects = (baseDir: string) =>
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
       Layer.provideMerge(SqlitePersistence.layerConfig),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(layerNodeServices),
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
     );

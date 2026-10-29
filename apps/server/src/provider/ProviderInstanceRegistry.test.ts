@@ -37,6 +37,9 @@ import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as ProjectFileReader from "../project/ProjectFileReader.ts";
+
+const layerNodeServices = ProjectFileReader.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -157,7 +160,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         endpoint: Effect.succeed("unused-private-pipe"),
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(layerNodeServices),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
