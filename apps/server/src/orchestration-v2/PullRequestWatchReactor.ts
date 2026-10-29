@@ -280,7 +280,7 @@ export const make = Effect.gen(function* () {
       threadId: target.thread.id,
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
-      expectedQuietDeadline: target.watch.quietDeadline?.dueAt ?? null,
+      expectedQuietDeadline: target.watch.quietDeadline ?? null,
       watch: next,
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined

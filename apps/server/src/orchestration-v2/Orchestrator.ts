@@ -2691,7 +2691,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         link?.watch?.startedAt !== command.startedAt ||
         (command.expectedQuietDeadline !== undefined &&
-          command.expectedQuietDeadline !== (link.watch.quietDeadline?.dueAt ?? null)) ||
+          (command.expectedQuietDeadline?.dueAt !== link.watch.quietDeadline?.dueAt ||
+            command.expectedQuietDeadline?.timeoutMinutes !==
+              link.watch.quietDeadline?.timeoutMinutes)) ||
         (command.wake && inactive)
       ) {
         return yield* new OrchestratorDispatchError({
@@ -3609,8 +3611,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : !command.watching
                 ? undefined
                 : existing.watch !== undefined
-                  ? command.quietTimeoutMinutes === undefined &&
-                    existing.watch.quietDeadline?.dueAt !== null
+                  ? (command.quietTimeoutMinutes === undefined &&
+                      existing.watch.quietDeadline?.dueAt !== null) ||
+                    (existing.watch.quietDeadline === undefined && quietDeadline === undefined)
                     ? existing.watch
                     : { ...existing.watch, quietDeadline }
                   : {

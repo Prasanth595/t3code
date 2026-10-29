@@ -3389,14 +3389,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       let state: PullRequestDetail["state"] = "open";
       let reads = 0;
+      let headSha = "abc1234def";
+      let holdRead = false;
+      const readStarted = yield* Deferred.make<void>();
+      const finishRead = yield* Deferred.make<void>();
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
           watchFingerprint: () => Effect.succeed({ status: "running", remarks: "unchanged" }),
           invalidate: () => Effect.void,
           detail: () =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               reads++;
+              if (holdRead) {
+                yield* Deferred.succeed(readStarted, undefined);
+                yield* Deferred.await(finishRead);
+              }
               return {
                 ...watchedPullRequestDetail({
                   projectId,
@@ -3404,6 +3412,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   at: "2026-10-01T00:00:00.000Z",
                 }),
                 state,
+                headSha,
                 capabilities: {
                   ...watchedPullRequestDetail({
                     projectId,
@@ -3443,7 +3452,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const delivered = yield* watchOf;
       assert.deepEqual(delivered?.quietDeadline, { timeoutMinutes: 5, dueAt: null });
       assert.lengthOf(yield* wakes, 1);
-      assert.include((yield* wakes)[0]!.text, "No actionable update");
+      assert.equal((yield* wakes)[0]!.notification?.summary, "#15: still waiting");
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual((yield* watchOf)?.quietDeadline, delivered?.quietDeadline);
 
@@ -3454,7 +3463,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           ...key,
           startedAt: initial!.startedAt,
-          expectedQuietDeadline: initial!.quietDeadline!.dueAt,
+          expectedQuietDeadline: initial!.quietDeadline!,
           watch: delivered!,
           wake: {
             messageId: MessageId.make("quiet-duplicate"),
@@ -3471,15 +3480,40 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       yield* watching("rearm");
       assert.isString((yield* watchOf)?.quietDeadline?.dueAt);
-      state = "closed";
       yield* TestClock.adjust("5 minutes");
       yield* again.sweep;
-      assert.isUndefined(yield* watchOf);
       assert.lengthOf(yield* wakes, 2);
-      assert.include((yield* wakes)[1]!.text, "was closed");
+      headSha = "new-head";
+      holdRead = true;
+      const racing = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      const inFlight = yield* Effect.forkChild(racing.sweep);
+      yield* Deferred.await(readStarted);
+      yield* watching("disable-during-read", null);
+      yield* Deferred.succeed(finishRead, undefined);
+      yield* Fiber.join(inFlight);
+      assert.isUndefined((yield* watchOf)?.quietDeadline, "a stale read must not undo disable");
+      yield* watching("keep-disabled");
+      assert.isUndefined((yield* watchOf)?.quietDeadline);
+
+      yield* watching("enable", 5);
+      const enabled = yield* watchOf;
+      yield* TestClock.adjust("1 minute");
+      yield* watching("change-duration", 7);
+      assert.equal((yield* watchOf)?.quietDeadline?.timeoutMinutes, 7);
+      assert.notEqual((yield* watchOf)?.quietDeadline?.dueAt, enabled?.quietDeadline?.dueAt);
+      state = "closed";
+      yield* TestClock.adjust("7 minutes");
+      yield* again.sweep;
+      assert.isUndefined(yield* watchOf);
+      assert.lengthOf(yield* wakes, 3);
+      assert.include((yield* wakes)[2]!.text, "was closed");
 
       yield* watching("disabled", null);
       assert.isUndefined((yield* watchOf)?.quietDeadline);
+      const disabledUpdatedAt = (yield* orchestrator.getThreadShell(threadId))?.updatedAt;
+      yield* TestClock.adjust("1 minute");
+      yield* watching("disable-again", null);
+      assert.equal((yield* orchestrator.getThreadShell(threadId))?.updatedAt, disabledUpdatedAt);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("quiet-end"),

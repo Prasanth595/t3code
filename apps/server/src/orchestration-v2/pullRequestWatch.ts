@@ -217,7 +217,7 @@ function changeLines(
       ];
     case "quiet":
       return [
-        `- No actionable update has arrived for ${change.minutes} minutes. Check whether CI or review is still progressing; this notice does not satisfy any review or merge requirement.`,
+        `- No new actionable check results, comments, reviews, conflicts, or pushes for ${change.minutes} minutes. Check whether CI or review is stuck; this notice is not a review or merge signal. The watch stays on and sends this notice once; new watch updates, a push, or calling watch_pull_request again restarts the timer.`,
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
@@ -251,7 +251,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : `Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again${changes.some((change) => change.kind === "quiet") ? ", except to deliberately start another bounded quiet wait" : ""}. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.`,
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",
