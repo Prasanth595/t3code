@@ -234,6 +234,9 @@ const runPatchCheck = files.some(
 // Cached registry metadata limits this to patches stranded by local changes, not registry drift.
 const checkPatches = async () => {
   const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
+  // The signal handlers exit before this function's finally can run.
+  const cleanup = () => NodeFS.rmSync(temp, { recursive: true, force: true });
+  process.once("exit", cleanup);
   try {
     const copy = (relative: string) => {
       const dest = NodePath.join(temp, relative);
@@ -263,7 +266,8 @@ const checkPatches = async () => {
       "or pin the dependency that pulls it in to the patched version.\n";
     return { ...result, output: Buffer.concat([result.output, Buffer.from(hint)]) };
   } finally {
-    NodeFS.rmSync(temp, { recursive: true, force: true });
+    process.removeListener("exit", cleanup);
+    cleanup();
   }
 };
 
