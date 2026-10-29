@@ -23,6 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { isClaudeModelScopedWindow } from "../provider/claudeUsageLimits.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -183,7 +184,9 @@ export function hubPoolResetAt(
   let earliest: number | null = null;
   for (const account of sources.flatMap((source) => source.accounts)) {
     if (account.driver !== driver) continue;
-    const { windows } = account.usageLimits;
+    const windows = account.usageLimits.windows.filter(
+      (window) => !isClaudeModelScopedWindow(window),
+    );
     const exhausted = windows.filter((window) => window.usedPercent >= 100);
     if (exhausted.length === 0) {
       if (windows.length > 0) return null;

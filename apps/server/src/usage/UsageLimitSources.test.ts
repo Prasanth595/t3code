@@ -95,8 +95,12 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
 describe("hubPoolResetAt", () => {
   const now = Date.parse("2026-10-30T00:00:00.000Z");
   const hours = (count: number) => DateTime.formatIso(DateTime.makeUnsafe(now + count * 3_600_000));
-  const window = (usedPercent: number, resetsAt?: string): ServerProviderUsageWindow => ({
-    id: resetsAt ?? `window-${usedPercent}`,
+  const window = (
+    usedPercent: number,
+    resetsAt?: string,
+    id = resetsAt ?? `window-${usedPercent}`,
+  ): ServerProviderUsageWindow => ({
+    id,
     kind: "session",
     label: "5h",
     usedPercent,
@@ -115,7 +119,6 @@ describe("hubPoolResetAt", () => {
       usageLimits: { checkedAt: hours(0), windows },
     })),
   });
-  const codex = ProviderDriverKind.make("codex");
 
   it.each([
     {
@@ -145,12 +148,25 @@ describe("hubPoolResetAt", () => {
       expected: hours(4),
     },
     {
+      name: "a recovery time that ignores spent model-scoped allowances",
+      driver: "claudeAgent",
+      sources: [
+        hub([
+          "claudeAgent",
+          [window(100, hours(2), "five_hour"), window(100, hours(90), "seven_day_fable")],
+        ]),
+      ],
+      expected: hours(2),
+    },
+    {
       name: "nothing when the hub pools none of the driver's accounts",
       sources: [hub(["claudeAgent", [window(100, hours(1))]])],
       expected: null,
     },
-  ])("returns $name", ({ sources, expected }) => {
-    expect(UsageLimitSources.hubPoolResetAt(sources, codex, now)).toBe(expected);
+  ])("returns $name", ({ sources, expected, driver = "codex" }) => {
+    expect(UsageLimitSources.hubPoolResetAt(sources, ProviderDriverKind.make(driver), now)).toBe(
+      expected,
+    );
   });
 });
 
