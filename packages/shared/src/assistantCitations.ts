@@ -132,8 +132,9 @@ export function assistantCitationsToPlainText(prompt: string): string {
 }
 
 // Claude 5.1+ writes some user-facing updates as thinking blocks, which the adapter shows as
-// assistant messages whose percent-encoded item id ends in `:thinking:<n>`. Sending that text back to the model is
-// rejected by the API as reasoning extraction, so only the comment and a reference go out.
+// assistant messages whose percent-encoded item id ends in `:thinking:<n>`. Sending that text
+// back to the model is rejected by the API as reasoning extraction, so only the comment and a
+// reference go out.
 const THINKING_DERIVED_MESSAGE_ID = /%3Athinking%3A\d+$/u;
 
 export function expandAssistantCitationsForProvider(prompt: string): string {
