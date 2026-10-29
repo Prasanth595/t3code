@@ -569,6 +569,7 @@ interface ProviderInstanceCardProps {
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
   readonly runtime?: ReactNode;
+  readonly instructions?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -614,6 +615,7 @@ export function ProviderInstanceCard({
   headerAction,
   setup,
   runtime,
+  instructions,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -1227,6 +1229,7 @@ export function ProviderInstanceCard({
           onChange={updateGenericEnvironment}
         />
       </SettingsSection>
+      {instructions}
       {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
         <AcpSessionManagementSection
           environmentId={environmentId}

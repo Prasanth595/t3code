@@ -2,6 +2,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -100,6 +101,19 @@ function byOpenCodeRuntime<A, E, R, PE>(
   );
 }
 
+/** OpenCode resolves its config directory from the subprocess environment, not the server's. */
+function openCodeConfigDirectory(
+  path: Path.Path,
+  env: NodeJS.ProcessEnv,
+  serverHome: string,
+  platform: string,
+): string {
+  const override = env.OPENCODE_CONFIG_DIR?.trim();
+  if (override) return path.resolve(override);
+  const home = (platform === "win32" ? env.USERPROFILE : env.HOME)?.trim() || serverHome;
+  return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config"), "opencode");
+}
+
 // Hot reads use the last successful probe; session opens await it to select the correct protocol.
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
@@ -195,6 +209,8 @@ export const OpenCodeDriver: ProviderDriver<
     const crypto = yield* Crypto.Crypto;
     const host = yield* ProviderHost.ProviderHost;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const homeDirectory = yield* HostProcess.HomeDirectory;
+    const platform = yield* HostProcess.Platform;
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -476,6 +492,20 @@ export const OpenCodeDriver: ProviderDriver<
       accentColor,
       enabled,
       snapshot,
+      instructions: {
+        fileName: "AGENTS.md",
+        // An external server reads its own host's configuration, not this one's.
+        ...(config.serverUrl.trim() === ""
+          ? {
+              globalDirectory: openCodeConfigDirectory(
+                pathService,
+                processEnv,
+                homeDirectory,
+                platform,
+              ),
+            }
+          : {}),
+      },
       snapshotForCwd: (cwd) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

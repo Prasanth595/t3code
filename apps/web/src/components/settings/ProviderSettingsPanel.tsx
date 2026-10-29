@@ -98,6 +98,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderInstructionsSection } from "./ProviderInstructionsSection";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -931,6 +932,7 @@ export function EnvironmentProviderSettings({
         canWriteSettings={canWriteSettings}
         liveProvider={serverProviders.find((candidate) => candidate.instanceId === row.instanceId)}
         isUpdateDispatching={updatingProviderInstanceIds.has(row.instanceId)}
+        instructionsProjectIds={projectIds}
         showProjectOverride={showProjectOverride}
         projectOverrideValue={
           showProjectOverride
@@ -1217,6 +1219,7 @@ function ProviderInstanceRow({
   canWriteSettings,
   liveProvider,
   isUpdateDispatching,
+  instructionsProjectIds,
   showProjectOverride,
   projectOverrideValue,
   projectOverrideEffectiveEnabled,
@@ -1237,6 +1240,7 @@ function ProviderInstanceRow({
   readonly canWriteSettings: boolean;
   readonly liveProvider: ServerProvider | undefined;
   readonly isUpdateDispatching: boolean;
+  readonly instructionsProjectIds: readonly ProjectId[];
   readonly showProjectOverride: boolean;
   readonly projectOverrideValue: boolean | undefined;
   readonly projectOverrideEffectiveEnabled: boolean;
@@ -1308,6 +1312,19 @@ function ProviderInstanceRow({
         ) : undefined
       }
       canWriteSettings={canWriteSettings}
+      instructions={
+        mode === "editor" && liveProvider !== undefined ? (
+          <ProviderInstructionsSection
+            key={`${instanceId}:${instructionsProjectIds.join(",")}`}
+            environmentId={environmentId}
+            instanceId={instanceId}
+            projectIds={instructionsProjectIds}
+            providerLabel={instance.displayName?.trim() || resetLabel}
+            environmentLabel={environmentLabel}
+            readOnly={readOnly}
+          />
+        ) : undefined
+      }
       setup={
         mode === "editor" && driver === "antigravity" ? (
           <ProviderSetupSection

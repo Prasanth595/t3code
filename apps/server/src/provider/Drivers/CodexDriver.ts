@@ -49,6 +49,7 @@ import {
   codexContinuationIdentity,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  type CodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
@@ -60,6 +61,21 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
+
+/** Codex runs with the instance environment; only a direct default home follows it. */
+function codexInstructionsDirectory(
+  path: Path.Path,
+  homeLayout: CodexHomeLayout,
+  homePath: string,
+  env: NodeJS.ProcessEnv,
+  platform: string,
+): string {
+  if (homeLayout.mode !== "direct" || homePath.trim() !== "") return homeLayout.sharedHomePath;
+  const codexHome = env.CODEX_HOME?.trim();
+  if (codexHome) return path.resolve(codexHome);
+  const home = (platform === "win32" ? env.USERPROFILE : env.HOME)?.trim();
+  return home ? path.join(home, ".codex") : homeLayout.sharedHomePath;
+}
 function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
@@ -351,6 +367,17 @@ export const CodexDriver: ProviderDriver<
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,
+      // A shadow home links the shared home's entries, so Codex reads the shared AGENTS.md.
+      instructions: {
+        fileName: "AGENTS.md",
+        globalDirectory: codexInstructionsDirectory(
+          pathService,
+          homeLayout,
+          config.homePath,
+          processEnv,
+          yield* HostProcess.Platform,
+        ),
+      },
     } satisfies ProviderInstance;
   }),
 };

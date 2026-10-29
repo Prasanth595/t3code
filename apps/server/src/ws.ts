@@ -177,6 +177,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import { latestProviderVersionCacheKeys } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
+import * as ProviderInstructions from "./provider/ProviderInstructions.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -1327,6 +1328,7 @@ export const layerWsRpc = (
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+      const providerInstructions = yield* ProviderInstructions.ProviderInstructions;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -2418,6 +2420,8 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
+        [WS_METHODS.serverReadProviderInstructions]: (input) => providerInstructions.read(input),
+        [WS_METHODS.serverWriteProviderInstructions]: (input) => providerInstructions.write(input),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -3333,6 +3337,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(ProviderInstructions.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
