@@ -3022,6 +3022,19 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
+        // Native session.fork copies history but leaves the permission policy unset,
+        // and a resumed session may still carry rules from an earlier selection.
+        const installPermissionRules = (
+          sessionID: string,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = input.runtimePolicy,
+        ) =>
+          sdkCall("session.update", { sessionID }, () =>
+            client.session.update({
+              sessionID,
+              permission: openCodePermissionRules(runtimePolicy),
+            }),
+          );
+
         const runtimeSession: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver: OPENCODE_PROVIDER,
@@ -3034,6 +3047,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               const permission = openCodePermissionRules(threadInput.runtimePolicy);
@@ -3085,6 +3099,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              yield* installPermissionRules(sessionId, threadInput.runtimePolicy);
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
@@ -3613,12 +3628,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   return yield* protocolError(
                     "OpenCode did not preserve the requested rewind boundary.",
                   );
-                yield* sdkCall("session.update", { sessionID: fork.id }, () =>
-                  client.session.update({
-                    sessionID: fork.id,
-                    permission: openCodePermissionRules(input.runtimePolicy),
-                  }),
-                );
+                yield* installPermissionRules(fork.id);
                 retainedThread = {
                   ...rollbackInput.providerThread,
                   nativeThreadRef: providerRef(fork.id),
@@ -3683,6 +3693,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   }),
               );
               const nativeSession = unwrapData("session.fork", response);
+              yield* installPermissionRules(nativeSession.id, forkInput.runtimePolicy);
               const forkedAt = yield* DateTime.now;
               const providerThread = makeProviderThread({
                 idAllocator,
