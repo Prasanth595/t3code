@@ -36,7 +36,7 @@ its sessions. Sessions it starts are recorded under the state directory and
 stopped by the next server if this one dies; sessions other tools started on
 the same account are never touched.
 
-Each session brings its own serve-sim preview host and agent-device daemon,
+Each session brings its own preview host and agent-device daemon,
 with their own tokens. The proxy asks the host to route each request
 (`DeviceHostReady.upstream`) and adds the session token server-side, so
 clients never hold it. Agent config files are written per device

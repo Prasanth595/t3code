@@ -42,14 +42,25 @@ const STATUS_TTL_MS = 15_000;
 // Expo's own CLI waits this long once a worker picks the session up.
 const START_TIMEOUT = Duration.minutes(15);
 const PREVIEW_TIMEOUT = Duration.seconds(20);
-const SERVE_SIM_PREFIX = "/vendor/serve-sim";
+const PLATFORMS = {
+  ios: { prefix: "/vendor/serve-sim", name: "iPhone (EAS Simulator)" },
+  android: { prefix: "/vendor/serve-emu", name: "Android (EAS Simulator)" },
+};
 
 /** EAS picks the simulator model; one entry starts a session. */
 const CATALOG: ReadonlyArray<DeviceHost.HostDevice> = [
   {
     id: "eas-ios",
     platform: "ios",
-    name: "iPhone (EAS Simulator)",
+    name: PLATFORMS.ios.name,
+    version: "Cloud",
+    booted: false,
+    physical: false,
+  },
+  {
+    id: "eas-android",
+    platform: "android",
+    name: PLATFORMS.android.name,
     version: "Cloud",
     booted: false,
     physical: false,
@@ -59,7 +70,8 @@ const CATALOG: ReadonlyArray<DeviceHost.HostDevice> = [
 interface RunningSession {
   readonly sessionId: string;
   readonly name: string;
-  readonly udid: string;
+  readonly platform: DevicePlatform;
+  readonly remoteDeviceId: string;
   readonly preview: { readonly origin: string; readonly token: Redacted.Redacted<string> };
   readonly agent: DeviceHost.AgentDaemonEndpoint;
   /** Set once a stop has been asked for but Expo has not confirmed it. */
@@ -94,7 +106,11 @@ const RECORD_MAX_AGE_MS = 24 * 60 * 60_000;
 const UNCERTAIN_CREATE_MS = 5 * 60_000;
 // One failed request to Expo during a minutes-long start does not end the start.
 const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
-const decodePreviewApi = Schema.decodeUnknownEffect(Schema.Struct({ device: Schema.String }));
+const remoteDeviceId = Schema.String.check(Schema.isMinLength(1));
+const decodeIosPreviewApi = Schema.decodeUnknownEffect(Schema.Struct({ device: remoteDeviceId }));
+const decodeAndroidPreviewApi = Schema.decodeUnknownEffect(
+  Schema.Struct({ serial: remoteDeviceId }),
+);
 
 /** A malformed escape names no device, so the proxy answers 404 instead of failing. */
 const decodePathSegment = (segment: string): string | null => {
@@ -116,7 +132,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   const hostId = config.id;
   const ledgerPath = path.join(server.stateDir, "device", "eas", `${hostId}.json`);
   // Keyed by Expo's session id, which is also the device id: every EAS
-  // simulator reports the same UDID, so the UDID cannot tell sessions apart.
+  // device can report the same remote ID, so it cannot tell sessions apart.
   const sessions = new Map<string, RunningSession>();
   const checkedAt = new Map<string, number>();
   const startLock = yield* Semaphore.make(1);
@@ -348,18 +364,25 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     ),
   );
 
-  const previewDevice = (origin: string, token: Redacted.Redacted<string>) =>
+  const previewDevice = (
+    origin: string,
+    token: Redacted.Redacted<string>,
+    platform: DevicePlatform,
+  ) =>
     http
       .execute(
-        HttpClientRequest.get(`${origin}/api`).pipe(
-          HttpClientRequest.bearerToken(Redacted.value(token)),
-        ),
+        HttpClientRequest.get(
+          `${origin}${platform === "android" ? PLATFORMS.android.prefix : ""}/api`,
+        ).pipe(HttpClientRequest.bearerToken(Redacted.value(token))),
       )
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap((response) => response.json),
-        Effect.flatMap(decodePreviewApi),
-        Effect.map((api) => api.device),
+        Effect.flatMap((body) =>
+          platform === "ios"
+            ? decodeIosPreviewApi(body).pipe(Effect.map((api) => api.device))
+            : decodeAndroidPreviewApi(body).pipe(Effect.map((api) => api.serial)),
+        ),
         Effect.scoped,
         Effect.timeout(PREVIEW_TIMEOUT),
         Effect.retry(TRANSIENT_RETRY),
@@ -500,7 +523,9 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
                   ),
                   Effect.mapError((error) => unavailable(error.message, error)),
                 );
-              return yield* restore(trackSession(expo, sessionId, name, startedIn)).pipe(
+              return yield* restore(
+                trackSession(expo, sessionId, name, device.platform, startedIn),
+              ).pipe(
                 Effect.onError(() =>
                   stopSession(expo, sessionId, name).pipe(
                     // Still running and billed: owned, counted, and retried by listing.
@@ -520,6 +545,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     expo: ExpoApi,
     sessionId: string,
     name: string,
+    platform: DevicePlatform,
     startedIn: number,
   ) {
     const endpoints = yield* awaitRunning(expo, sessionId);
@@ -532,7 +558,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
       });
     }
     const origin = new URL(endpoints.preview.url).origin;
-    const udid = yield* previewDevice(origin, endpoints.preview.token).pipe(
+    const remoteDeviceId = yield* previewDevice(origin, endpoints.preview.token, platform).pipe(
       Effect.mapError(
         (cause) =>
           new DeviceBootError({
@@ -549,7 +575,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     sessions.set(sessionId, {
       sessionId,
       name,
-      udid,
+      platform,
+      remoteDeviceId,
       preview: { origin, token: endpoints.preview.token },
       agent: {
         baseUrl: endpoints.agentDevice.url,
@@ -650,8 +677,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
             ...CATALOG,
             ...[...sessions.values()].map((session): DeviceHost.HostDevice => ({
               id: session.sessionId,
-              platform: "ios",
-              name: "iPhone (EAS Simulator)",
+              platform: session.platform,
+              name: PLATFORMS[session.platform].name,
               version: "Cloud",
               booted: true,
               physical: false,
@@ -708,7 +735,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
           http
             .execute(
               HttpClientRequest.post(
-                `${session.preview.origin}/api/screenshot?device=${encodeURIComponent(session.udid)}`,
+                `${session.preview.origin}${session.platform === "android" ? PLATFORMS.android.prefix : ""}/api/screenshot?device=${encodeURIComponent(session.remoteDeviceId)}`,
               ).pipe(HttpClientRequest.bearerToken(Redacted.value(session.preview.token))),
             )
             .pipe(
@@ -730,42 +757,52 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     agentEndpoint: (deviceId) =>
       Option.match(sessionFor(deviceId), {
         onNone: () => Effect.fail(unavailable("This EAS Simulator device is no longer running.")),
-        // agent-device selects the simulator by its UDID, not the session id T3 shows.
-        onSome: (session) => Effect.succeed({ ...session.agent, agentDeviceId: session.udid }),
+        onSome: (session) =>
+          Effect.succeed({ ...session.agent, agentDeviceId: session.remoteDeviceId }),
       }),
     endsDevices: true,
   };
 
-  /**
-   * serve-sim runs at the root of each session's preview host and wants its
-   * token on every request. Clients name the device by its session id; serve-sim
-   * knows it by its UDID, so the id is swapped for the UDID in the path and in
-   * the `device` parameter.
-   */
   const upstream: NonNullable<DeviceHost.DeviceHostReady["upstream"]> = (hubPath, search) =>
     Effect.sync(() => {
-      if (!hubPath.startsWith(`${SERVE_SIM_PREFIX}/`)) return null;
+      const platform = hubPath.startsWith(`${PLATFORMS.ios.prefix}/`)
+        ? "ios"
+        : hubPath.startsWith(`${PLATFORMS.android.prefix}/`)
+          ? "android"
+          : null;
+      if (!platform) return null;
       const helper = /^\/vendor\/serve-sim\/helper\/([^/]+)\//.exec(hubPath);
-      const deviceId = helper ? decodePathSegment(helper[1]!) : search.get("device");
-      if (helper && deviceId === null) return null;
+      const pathDevice = helper ? decodePathSegment(helper[1]!) : null;
+      if (helper && pathDevice === null) return null;
+      const queryDevices = search.getAll("device");
+      const queryDevice = queryDevices[0];
+      if (
+        queryDevices.some((id) => id !== queryDevice) ||
+        (pathDevice !== null && queryDevice !== undefined && pathDevice !== queryDevice)
+      )
+        return null;
+      const deviceId = pathDevice ?? queryDevice;
+      const compatible = [...sessions.values()].filter((session) => session.platform === platform);
       const session =
-        deviceId !== null && deviceId !== undefined
+        deviceId !== undefined
           ? sessions.get(deviceId)
-          : sessions.size === 1
-            ? [...sessions.values()][0]
+          : platform === "ios" && compatible.length === 1
+            ? compatible[0]
             : undefined;
-      if (!session) return null;
+      if (!session || session.platform !== platform) return null;
       const path = helper
-        ? `/helper/${encodeURIComponent(session.udid)}${hubPath.slice(helper[0].length - 1)}`
-        : hubPath.slice(SERVE_SIM_PREFIX.length);
+        ? `/helper/${encodeURIComponent(session.remoteDeviceId)}${hubPath.slice(helper[0].length - 1)}`
+        : platform === "ios"
+          ? hubPath.slice(PLATFORMS.ios.prefix.length)
+          : hubPath;
       const params = new URLSearchParams(search);
-      if (params.has("device")) params.set("device", session.udid);
+      if (params.has("device")) params.set("device", session.remoteDeviceId);
       const query = params.size > 0 ? `?${params.toString()}` : "";
       const token = Redacted.value(session.preview.token);
       return {
         url: `${session.preview.origin}${path}${query}`,
         headers: { authorization: `Bearer ${token}` },
-        protocols: [`serve-sim.token.${token}`],
+        protocols: [`${platform === "ios" ? "serve-sim" : "serve-emu"}.token.${token}`],
       };
     });
 
@@ -833,19 +870,13 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   // Each server signs in on its own, so one with no Expo credential answers for itself. Reading
   // the credential is local; whether Expo accepts it is only known once a session starts.
   const platformAvailability = (platform: DevicePlatform) =>
-    platform === "ios"
-      ? resolveExpoCredential(config.accessToken).pipe(
-          Effect.provide(services),
-          Effect.as({ platform, available: true }),
-          Effect.catch((error) =>
-            Effect.succeed({ platform, available: false, reason: error.message }),
-          ),
-        )
-      : Effect.succeed({
-          platform,
-          available: false,
-          reason: "EAS Simulator Android emulators are not supported yet.",
-        });
+    resolveExpoCredential(config.accessToken).pipe(
+      Effect.provide(services),
+      Effect.as({ platform, available: true }),
+      Effect.catch((error) =>
+        Effect.succeed({ platform, available: false, reason: error.message }),
+      ),
+    );
 
   const summary: Effect.Effect<DeviceHostSummary> = Effect.all([
     platformAvailability("ios"),

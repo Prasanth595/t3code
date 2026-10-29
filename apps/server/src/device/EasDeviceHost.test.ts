@@ -56,10 +56,12 @@ const fakeExpo = (
     readonly sessionGate?: () => Gate | undefined;
     readonly activeIncludesCreated?: boolean;
     readonly failPreview?: boolean;
+    readonly androidDiscovery?: unknown;
     readonly omitCreatedFromActive?: boolean;
   } = {},
 ) => {
   const calls: Array<{ operation: string; variables: Record<string, unknown> }> = [];
+  const previews: string[] = [];
   let created = 0;
   let createdName = "";
   let previewFails = options.failPreview ?? false;
@@ -68,8 +70,12 @@ const fakeExpo = (
   const http = HttpClient.make((request) =>
     Effect.gen(function* () {
       const url = new URL(request.url);
-      if (url.origin === "https://preview.test") {
-        expect(request.headers.authorization).toBe("Bearer preview-token");
+      if (/^https:\/\/preview(?:-\d+)?\.test$/.test(url.origin)) {
+        previews.push(request.url);
+        const index = /preview-(\d+)/.exec(url.hostname)?.[1];
+        expect(request.headers.authorization).toBe(
+          `Bearer preview-token${index ? `-${index}` : ""}`,
+        );
         if (options.previewGate) {
           yield* Deferred.succeed(options.previewGate.requested, undefined);
           yield* Deferred.await(options.previewGate.release);
@@ -77,7 +83,20 @@ const fakeExpo = (
         if (previewFails) {
           return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
         }
-        return HttpClientResponse.fromWeb(request, Response.json({ device: "UDID-1" }));
+        const body =
+          url.pathname === "/api"
+            ? { device: "UDID-1" }
+            : url.pathname === "/vendor/serve-emu/api"
+              ? (options.androidDiscovery ?? { ok: true, serial: "emulator-5554", devices: [] })
+              : null;
+        return HttpClientResponse.fromWeb(
+          request,
+          url.pathname.endsWith("/screenshot")
+            ? new Response(Uint8Array.of(137, 80, 78, 71), {
+                headers: { "content-type": "image/png" },
+              })
+            : Response.json(body),
+        );
       }
       const body =
         request.body._tag === "Uint8Array"
@@ -173,8 +192,14 @@ const fakeExpo = (
                           __typename: "AgentDeviceRunSessionRemoteConfig",
                           agentDeviceRemoteSessionUrl: "https://agent.test",
                           agentDeviceRemoteSessionToken: "agent-token",
-                          webPreviewToken: "preview-token",
-                          previewApiUrl: "https://preview.test?token=preview-token",
+                          webPreviewToken:
+                            String(body.variables.id) === "session-1"
+                              ? "preview-token"
+                              : `preview-token-${String(body.variables.id).split("-")[1]}`,
+                          previewApiUrl:
+                            String(body.variables.id) === "session-1"
+                              ? "https://preview.test?token=preview-token"
+                              : `https://preview-${String(body.variables.id).split("-")[1]}.test`,
                         },
                       },
                     },
@@ -195,7 +220,7 @@ const fakeExpo = (
   const allowCreate = () => {
     createFails = false;
   };
-  return { http, named, stopped, allowPreview, allowCreate };
+  return { http, named, stopped, allowPreview, allowCreate, previews };
 };
 
 const layer = Layer.mergeAll(
@@ -214,56 +239,70 @@ const makeHost = (
   );
 
 describe("EAS Simulator host", () => {
-  it.effect("starts a bounded session and routes its stream and agent to that session", () =>
-    Effect.gen(function* () {
-      const expo = fakeExpo();
-      const scope = yield* Scope.make();
-      const host = yield* makeHost(expo, config(), scope);
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const catalog = (yield* ready.devices.list).devices;
-      expect(catalog.map((device) => [device.id, device.booted])).toEqual([["eas-ios", false]]);
-
-      expect(yield* ready.devices.boot(catalog[0]!)).toBe("session-1");
-      expect(expo.named("T3CreateEasSimulatorSession")[0]?.variables.input).toMatchObject({
-        appId: APP_ID,
-        platform: "IOS",
-        type: "AGENT_DEVICE",
-        maxRunTimeMinutes: 25,
-        maxIdleTimeMinutes: 5,
-      });
-      const listed = (yield* ready.devices.list).devices;
-      expect(listed.find((device) => device.id === "session-1")?.booted).toBe(true);
-      expect(yield* ready.devices.agentEndpoint!("session-1")).toEqual({
-        baseUrl: "https://agent.test",
-        token: "agent-token",
-        agentDeviceId: "UDID-1",
-      });
-
-      const routed = yield* ready.upstream!(
-        "/vendor/serve-sim/helper/session-1/webrtc/offer",
-        new URLSearchParams("hostId=eas"),
-      );
-      expect(routed).toEqual({
-        url: "https://preview.test/helper/UDID-1/webrtc/offer?hostId=eas",
-        headers: { authorization: "Bearer preview-token" },
-        protocols: ["serve-sim.token.preview-token"],
-      });
-      expect(
-        yield* ready.upstream!(
-          "/vendor/serve-sim/helper/ws",
-          new URLSearchParams("device=session-1"),
-        ),
-      ).toMatchObject({ url: "https://preview.test/helper/ws?device=UDID-1" });
-      expect(yield* ready.upstream!("/vendor/serve-emu/ws", new URLSearchParams())).toBeNull();
-      expect(
-        yield* ready.upstream!("/vendor/serve-sim/helper/%E0/config", new URLSearchParams()),
-      ).toBeNull();
-
-      yield* Scope.close(scope, Exit.void);
-      expect(expo.named("T3StopEasSimulatorSession").map((call) => call.variables.id)).toEqual([
-        "session-1",
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+  it.effect.each(["ios", "android"] as const)(
+    "starts a bounded %s session and routes its stream and agent to that session",
+    (platform) =>
+      Effect.gen(function* () {
+        const expo = fakeExpo();
+        const scope = yield* Scope.make();
+        const host = yield* makeHost(expo, config(), scope);
+        const ready = yield* host.ensureReady(() => Effect.void);
+        const catalog = (yield* ready.devices.list).devices;
+        expect(catalog.map((device) => [device.id, device.booted])).toEqual([
+          ["eas-ios", false],
+          ["eas-android", false],
+        ]);
+        expect(yield* host.platformAvailability(platform)).toMatchObject({
+          platform,
+          available: true,
+        });
+        expect(
+          yield* ready.devices.boot(catalog.find((device) => device.platform === platform)!),
+        ).toBe("session-1");
+        expect(expo.named("T3CreateEasSimulatorSession")[0]?.variables.input).toMatchObject({
+          appId: APP_ID,
+          platform: platform.toUpperCase(),
+          type: "AGENT_DEVICE",
+          maxRunTimeMinutes: 25,
+          maxIdleTimeMinutes: 5,
+        });
+        const running = (yield* ready.devices.list).devices.find(
+          (device) => device.id === "session-1",
+        )!;
+        expect(running).toMatchObject({
+          booted: true,
+          platform,
+          name: platform === "ios" ? "iPhone (EAS Simulator)" : "Android (EAS Simulator)",
+        });
+        const remote = platform === "ios" ? "UDID-1" : "emulator-5554";
+        expect(yield* ready.devices.agentEndpoint!("session-1")).toEqual({
+          baseUrl: "https://agent.test",
+          token: "agent-token",
+          agentDeviceId: remote,
+        });
+        const vendor = platform === "ios" ? "serve-sim" : "serve-emu";
+        const route = platform === "ios" ? "/helper/session-1/webrtc/offer" : "/webrtc/offer";
+        expect(
+          yield* ready.upstream!(
+            `/vendor/${vendor}${route}`,
+            new URLSearchParams("device=session-1"),
+          ),
+        ).toEqual({
+          url: `https://preview.test${platform === "ios" ? "/helper/UDID-1" : "/vendor/serve-emu"}/webrtc/offer?device=${remote}`,
+          headers: { authorization: "Bearer preview-token" },
+          protocols: [`${vendor}.token.preview-token`],
+        });
+        expect(Array.from(yield* ready.devices.screenshot(running))).toEqual([137, 80, 78, 71]);
+        expect(expo.previews).toEqual([
+          `https://preview.test${platform === "ios" ? "/api" : "/vendor/serve-emu/api"}`,
+          `https://preview.test${platform === "ios" ? "" : "/vendor/serve-emu"}/api/screenshot?device=${remote}`,
+        ]);
+        expect(
+          yield* ready.upstream!("/vendor/serve-sim/helper/%E0/config", new URLSearchParams()),
+        ).toBeNull();
+        yield* Scope.close(scope, Exit.void);
+        expect(expo.stopped()).toEqual(["session-1"]);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("refuses to start past its session limit", () =>
@@ -281,36 +320,89 @@ describe("EAS Simulator host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("tells concurrent sessions apart although EAS gives each the same UDID", () =>
+  it.effect("isolates iOS and Android sessions even when remote device IDs collide", () =>
     Effect.gen(function* () {
       const expo = fakeExpo();
       const scope = yield* Scope.make();
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 2 }), scope);
+      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 3 }), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-2");
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
-        "eas-ios",
-        "session-1",
-        "session-2",
-      ]);
+      const catalog = (yield* ready.devices.list).devices;
+      const ios = catalog.find((device) => device.platform === "ios")!;
+      const android = catalog.find((device) => device.platform === "android")!;
+      expect(yield* ready.devices.boot(ios)).toBe("session-1");
+      expect(yield* ready.devices.boot(android)).toBe("session-2");
+      expect(yield* ready.devices.boot(android)).toBe("session-3");
+      for (const index of [2, 3]) {
+        for (const route of ["/api", "/ws", "/webrtc/offer", "/webrtc/close", "/api/screenshot"]) {
+          expect(
+            yield* ready.upstream!(
+              `/vendor/serve-emu${route}`,
+              new URLSearchParams(`device=session-${index}`),
+            ),
+          ).toEqual({
+            url: `https://preview-${index}.test/vendor/serve-emu${route}?device=emulator-5554`,
+            headers: { authorization: `Bearer preview-token-${index}` },
+            protocols: [`serve-emu.token.preview-token-${index}`],
+          });
+        }
+      }
+      for (const [route, query] of [
+        ["/vendor/serve-emu/api", ""],
+        ["/vendor/serve-emu/api", "device=unknown"],
+        ["/vendor/serve-emu/api", "device=session-1"],
+        ["/vendor/serve-sim/api", "device=session-2"],
+        ["/vendor/serve-emu/api", "device=session-2&device=session-3"],
+        ["/vendor/serve-sim/helper/session-1/config", "device=session-2"],
+        ["/vendor/serve-sim/helper/%E0/config", "device=session-1"],
+      ])
+        expect(yield* ready.upstream!(route!, new URLSearchParams(query))).toBeNull();
       expect(
-        yield* ready.upstream!(
-          "/vendor/serve-sim/api",
-          new URLSearchParams("device=session-2&hostId=eas"),
-        ),
-      ).toMatchObject({ url: "https://preview.test/api?device=UDID-1&hostId=eas" });
-
-      yield* ready.devices.shutdown({ id: "session-1", platform: "ios" });
-      expect(expo.stopped()).toEqual(["session-1"]);
+        yield* ready.upstream!("/vendor/serve-sim/api", new URLSearchParams("device=session-1")),
+      ).toMatchObject({ url: "https://preview.test/api?device=UDID-1" });
+      expect(yield* ready.upstream!("/vendor/serve-sim/api", new URLSearchParams())).toMatchObject({
+        url: "https://preview.test/api",
+      });
+      yield* ready.devices.shutdown({ id: "session-2", platform: "android" });
+      expect(expo.stopped()).toEqual(["session-2"]);
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
         "eas-ios",
-        "session-2",
+        "eas-android",
+        "session-1",
+        "session-3",
       ]);
       yield* Scope.close(scope, Exit.void);
-      expect(expo.stopped()).toEqual(["session-1", "session-2"]);
+      expect(expo.stopped()).toEqual(["session-2", "session-1", "session-3"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect.each([{ serial: "" }, { currentSerial: "emulator-5554" }, { serial: 42 }])(
+    "stops a billed Android session when device discovery is invalid (%j)",
+    (androidDiscovery) =>
+      Effect.gen(function* () {
+        const gate = yield* makeGate;
+        const expo = fakeExpo({ androidDiscovery, previewGate: gate });
+        const scope = yield* Scope.make();
+        const host = yield* makeHost(expo, config(), scope);
+        const ready = yield* host.ensureReady(() => Effect.void);
+        const boot = ready.devices
+          .boot({
+            id: "eas-android",
+            platform: "android",
+            name: "Android",
+            version: "Cloud",
+            booted: false,
+            physical: false,
+          })
+          .pipe(Effect.flip, Effect.forkChild);
+        const fiber = yield* boot;
+        yield* Deferred.await(gate.requested);
+        yield* Deferred.succeed(gate.release, undefined);
+        yield* TestClock.adjust("10 seconds");
+        const failure = yield* Fiber.join(fiber);
+        expect(failure._tag).toBe("DeviceBootError");
+        expect(expo.stopped()).toEqual(["session-1"]);
+        yield* Scope.close(scope, Exit.void);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect(
@@ -421,7 +513,10 @@ describe("EAS Simulator host", () => {
       expect(refused.message).toContain("limited to 1 running session");
       stopFails = false;
       yield* ready.devices.list;
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
       expect(expo.stopped().filter((id) => id === "session-1").length).toBeGreaterThanOrEqual(2);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
@@ -438,7 +533,10 @@ describe("EAS Simulator host", () => {
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toContain("session-1");
       // Expo ended it by itself: the stop keeps failing, but the status says so.
       status = "STOPPED";
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
       status = "IN_PROGRESS";
       expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-2");
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -456,7 +554,7 @@ describe("EAS Simulator host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("reports iOS unavailable on a server with no Expo credential", () =>
+  it.effect("reports both platforms unavailable on a server with no Expo credential", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-expo-home-" });
@@ -468,9 +566,13 @@ describe("EAS Simulator host", () => {
         Effect.provideService(HostProcess.HomeDirectory, home),
         Effect.provideService(HostProcess.Environment, {}),
       );
-      const [ios] = (yield* host.summary).platforms;
-      expect(ios).toMatchObject({ platform: "ios", available: false });
-      expect(ios?.reason).toContain("No Expo credential on the server");
+      const platforms = (yield* host.summary).platforms;
+      expect(platforms).toMatchObject([
+        { platform: "ios", available: false },
+        { platform: "android", available: false },
+      ]);
+      for (const platform of platforms)
+        expect(platform.reason).toContain("No Expo credential on the server");
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -488,7 +590,10 @@ describe("EAS Simulator host", () => {
       expect(expo.stopped()).toEqual(["session-1"]);
       const failure = yield* Fiber.join(booting).pipe(Effect.flip);
       expect(failure.message).toContain("was stopped while the session started");
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

@@ -75,7 +75,7 @@ describe("native device stream transport", () => {
       }
     }
     vi.stubGlobal("WebSocket", FakeSocket);
-    const fetch = vi.fn(() => Promise.resolve(new Response("frame")));
+    const fetch = vi.fn(() => Promise.resolve(Response.json({})));
     vi.stubGlobal("fetch", fetch);
     const events = {
       onStatus: vi.fn(),
@@ -251,6 +251,7 @@ function recoveryFixture(
   const fetch = vi.fn((url: string, init: RequestInit) => {
     const signal = init.signal!;
     signals.push(signal);
+    if (url.includes("/api?")) return Promise.resolve(Response.json({}));
     if (!url.includes("stream.avcc")) return Promise.resolve(new Response("prime"));
     return Promise.resolve(
       new Response(
@@ -450,9 +451,11 @@ describe("shared device stream readiness and recovery", () => {
         }),
     );
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     sockets[0]!.onmessage?.({ data: sps });
     client.stop();
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     resolveSupport({ supported: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(decoders).toHaveLength(0);
@@ -490,4 +493,303 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+function deferred<A>() {
+  let resolve!: (value: A) => void;
+  const promise = new Promise<A>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function webRtcFixture(options: { platform?: "ios" | "android"; videoOnly?: boolean } = {}) {
+  vi.useFakeTimers();
+  const sockets: Socket[] = [];
+  class Socket {
+    static OPEN = 1;
+    readyState = 1;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
+    onclose: ((event: { code: number; reason: string }) => void) | null = null;
+    send = vi.fn();
+    close = vi.fn();
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+  }
+  const videos: Video[] = [];
+  class Video {
+    muted = false;
+    playsInline = false;
+    style = { cssText: "" };
+    srcObject: unknown = null;
+    videoWidth = 400;
+    videoHeight = 800;
+    setAttribute = vi.fn();
+    remove = vi.fn();
+    play = vi.fn(async () => {});
+    callback: (() => void) | null = null;
+    requestVideoFrameCallback(callback: () => void) {
+      this.callback = callback;
+      return 0;
+    }
+    frame() {
+      this.callback?.();
+    }
+    constructor() {
+      videos.push(this);
+    }
+  }
+  const peers: Peer[] = [];
+  class Peer extends EventTarget {
+    iceGatheringState = "complete";
+    connectionState = "connected";
+    localDescription = { type: "offer", sdp: "offer-sdp" };
+    ontrack: ((event: { streams: unknown[]; track: unknown }) => void) | null = null;
+    onconnectionstatechange: (() => void) | null = null;
+    close = vi.fn();
+    createOffer = vi.fn(async () => this.localDescription);
+    setLocalDescription = vi.fn(async () => {});
+    setRemoteDescription = vi.fn(async () => {});
+    addTransceiver = vi.fn(() => ({ setCodecPreferences: vi.fn() }));
+    readonly configuration: RTCConfiguration;
+    constructor(configuration: RTCConfiguration) {
+      super();
+      this.configuration = configuration;
+      peers.push(this);
+    }
+  }
+  vi.stubGlobal("WebSocket", Socket);
+  vi.stubGlobal("RTCPeerConnection", Peer);
+  vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs: [] }) });
+  vi.stubGlobal("document", {
+    createElement: () => new Video(),
+    body: { append: vi.fn() },
+  });
+  vi.stubGlobal("VideoDecoder", undefined);
+  vi.stubGlobal("EncodedVideoChunk", undefined);
+  if (options.platform === "ios") {
+    vi.stubGlobal("VideoDecoder", vi.fn());
+    vi.stubGlobal("EncodedVideoChunk", vi.fn());
+  } else {
+    Reflect.deleteProperty(globalThis, "VideoDecoder");
+    Reflect.deleteProperty(globalThis, "EncodedVideoChunk");
+  }
+  const settings = {
+    transport: "webrtc",
+    iceServers: [{ urls: ["turn:turn.test"], username: "user", credential: "pass" }],
+    iceTransportPolicy: "relay",
+  };
+  const fetch = vi.fn((url: string, _init?: RequestInit): Promise<Response> => {
+    if (url.includes("/api?"))
+      return Promise.resolve(Response.json({ serial: "emulator-5554", stream: settings }));
+    if (url.includes("/webrtc/offer"))
+      return Promise.resolve(Response.json({ type: "answer", sdp: "answer-sdp" }));
+    if (url.includes("stream.avcc"))
+      return Promise.resolve(
+        Response.json({ error: "stream_transport_locked", transport: "webrtc" }, { status: 409 }),
+      );
+    return Promise.resolve(Response.json({ ok: true }));
+  });
+  vi.stubGlobal("fetch", fetch);
+  const events = {
+    onStatus: vi.fn(),
+    onScreen: vi.fn(),
+    onUnauthorized: vi.fn(),
+    onMjpegFallback: vi.fn(),
+    onInputConnected: vi.fn(),
+  };
+  const present = vi.fn(() => true);
+  const client = createDeviceStreamClient(
+    {
+      platform: options.platform ?? "android",
+      deviceId: "session id",
+      ...(options.videoOnly === undefined ? {} : { videoOnly: options.videoOnly }),
+      access: {
+        httpBase: "https://test/api/device-hub",
+        wsBase: "wss://test/api/device-hub",
+        credentials: true,
+        query: { hostId: "eas", wsTicket: "ticket" },
+      },
+    },
+    { present },
+    events,
+  );
+  return { client, events, fetch, peers, videos, sockets, present, settings };
+}
+
+describe("shared WebRTC device streams", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("receives Android WebRTC without WebCodecs and reconnects only JSON input when its socket closes", async () => {
+    const { client, fetch, peers, videos, sockets, present, events, settings } = webRtcFixture();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      "https://test/api/device-hub/vendor/serve-emu/api?device=session%20id&hostId=eas&wsTicket=ticket",
+    );
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.configuration).toEqual({
+      iceServers: settings.iceServers,
+      iceTransportPolicy: "relay",
+    });
+    expect(peers[0]?.setRemoteDescription).toHaveBeenCalledWith({
+      type: "answer",
+      sdp: "answer-sdp",
+    });
+    const offer = fetch.mock.calls.find(([url]) => url.includes("/webrtc/offer"));
+    expect(offer?.[0]).toBe(
+      "https://test/api/device-hub/vendor/serve-emu/webrtc/offer?device=session%20id&hostId=eas&wsTicket=ticket",
+    );
+    expect(sockets[0]?.url).toBe(
+      "wss://test/api/device-hub/vendor/serve-emu/ws?device=session%20id&video=0&hostId=eas&wsTicket=ticket",
+    );
+    peers[0]?.ontrack?.({ streams: [{}], track: {} });
+    videos[0]?.frame();
+    expect(present).toHaveBeenCalledWith(videos[0], 400, 800);
+    expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    const input = sockets[0]!;
+    input.onopen?.();
+    client.pressButton("back");
+    client.sendText("hello");
+    client.sendTouch("begin", 0.25, 0.5);
+    expect(input.send.mock.calls.map(([body]) => JSON.parse(body))).toEqual([
+      { type: "back" },
+      { type: "text", text: "hello" },
+      { type: "touch", action: "down", x: 0.25, y: 0.5 },
+    ]);
+    events.onStatus.mockClear();
+    input.onmessage?.({ data: '{"type":"video-session"}' });
+    input.onclose?.({ code: 1001, reason: "reconnecting" });
+    expect(events.onInputConnected).toHaveBeenLastCalledWith(false, "reconnecting");
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[1]?.onopen?.();
+    expect(events.onInputConnected).toHaveBeenLastCalledWith(true);
+    expect(events.onStatus).not.toHaveBeenCalled();
+    expect(peers[0]?.close).not.toHaveBeenCalled();
+    expect(peers).toHaveLength(1);
+    expect(sockets[1]?.send).not.toHaveBeenCalled();
+    peers[0]!.connectionState = "failed";
+    peers[0]?.onconnectionstatechange?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(peers).toHaveLength(2);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[1]?.close).not.toHaveBeenCalled();
+    client.stop();
+    const closed = fetch.mock.calls.find(([url]) => url.includes("/webrtc/close"));
+    expect(closed?.[0]).toBe(
+      "https://test/api/device-hub/vendor/serve-emu/webrtc/close?device=session%20id&hostId=eas&wsTicket=ticket",
+    );
+    expect(JSON.parse(String(closed?.[1]?.body)).sessionId).toBe(
+      JSON.parse(String(offer?.[1]?.body)).sessionId,
+    );
+  });
+
+  it("does not open an Android input socket for a video-only viewer", async () => {
+    const { client, peers, sockets } = webRtcFixture({ videoOnly: true });
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(1);
+    expect(sockets).toHaveLength(0);
+    client.stop();
+  });
+
+  it.each(["ios", "android"] as const)(
+    "closes a late %s offer with its captured viewer ID without closing a replacement peer",
+    async (platform) => {
+      const { client, fetch, peers, videos, events } = webRtcFixture({ platform, videoOnly: true });
+      const late = deferred<Response>();
+      const defaultFetch = fetch.getMockImplementation()!;
+      let offered = false;
+      fetch.mockImplementation((url, init) => {
+        if (!offered && url.includes("/webrtc/offer")) {
+          offered = true;
+          return late.promise;
+        }
+        return defaultFetch(url, init);
+      });
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const offer = fetch.mock.calls.find(([url]) => url.includes("/webrtc/offer"));
+      expect(offer).toBeDefined();
+      client.stop();
+      expect(peers[0]?.close).toHaveBeenCalledOnce();
+      expect(videos[0]?.srcObject).toBeNull();
+      expect(videos[0]?.remove).toHaveBeenCalledOnce();
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(peers).toHaveLength(2);
+      late.resolve(Response.json({ type: "answer", sdp: "late-answer" }));
+      await vi.advanceTimersByTimeAsync(0);
+      const viewerId = JSON.parse(String(offer?.[1]?.body)).sessionId;
+      const closes = fetch.mock.calls.filter(
+        ([url, init]) =>
+          url.includes("/webrtc/close") && JSON.parse(String(init?.body)).sessionId === viewerId,
+      );
+      expect(closes).toHaveLength(2);
+      expect(peers[0]?.setRemoteDescription).not.toHaveBeenCalled();
+      expect(peers[1]?.close).not.toHaveBeenCalled();
+      expect(events.onUnauthorized).not.toHaveBeenCalled();
+      client.stop();
+    },
+  );
+
+  it("ignores an Android probe completed after stop and a replacement start", async () => {
+    const { client, fetch, peers, sockets, events } = webRtcFixture();
+    const late = deferred<Response>();
+    fetch.mockImplementationOnce(() => late.promise);
+    client.start();
+    client.stop();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    late.resolve(new Response(null, { status: 401 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(1);
+    expect(sockets).toHaveLength(1);
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+    client.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([401, 403])("renews a rejected Android capability request once (%s)", async (status) => {
+    const { client, fetch, peers, sockets, events } = webRtcFixture();
+    fetch.mockResolvedValue(new Response(null, { status }));
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(peers).toHaveLength(0);
+    expect(sockets).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ["transient failure", () => Promise.resolve(new Response(null, { status: 502 }))],
+    [
+      "invalid WebRTC settings",
+      () =>
+        Promise.resolve(
+          Response.json({ stream: { transport: "webrtc", iceTransportPolicy: "invalid" } }),
+        ),
+    ],
+  ] as const)(
+    "retries Android capability discovery after %s instead of opening SEMU",
+    async (_reason, response) => {
+      const { client, fetch, peers, sockets } = webRtcFixture();
+      fetch.mockImplementationOnce(response);
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(peers).toHaveLength(1);
+      expect(sockets[0]?.url).toContain("video=0");
+      client.stop();
+    },
+  );
 });
