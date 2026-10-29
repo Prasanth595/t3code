@@ -230,6 +230,24 @@ function antigravityEnvironment(
   };
 }
 
+const preferredSkillDirectory = Effect.fn("linkAntigravityUserSkills.preferredSkillDirectory")(
+  function* (fs: FileSystem.FileSystem, candidates: readonly [string, string, string]) {
+    let empty: string | undefined;
+    for (const candidate of candidates) {
+      const info = yield* fs
+        .stat(candidate)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
+      if (info?.type !== "Directory") continue;
+      const entries = yield* fs
+        .readDirectory(candidate)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+      if (entries.length > 0) return candidate;
+      empty ??= candidate;
+    }
+    return empty;
+  },
+);
+
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
@@ -240,15 +258,31 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   const path = yield* Path.Path;
   const links = antigravityUserSkillDirectories(path, input.profileDirectory);
   const targets = antigravityUserSkillDirectories(path, path.join(input.userHome, ".gemini"));
+  // The harness reads GEMINI_HOME/config/skills. After the Gemini CLI move, agy
+  // often leaves that directory empty or missing; a junction to a missing path
+  // makes session/new mkdir fail with ERROR_ALREADY_EXISTS on Windows.
+  const configTarget = yield* preferredSkillDirectory(fs, targets);
   for (const [link, target] of [
-    [links[0], targets[0]],
+    [links[0], configTarget],
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      const targetInfo =
+        target === undefined
+          ? undefined
+          : yield* fs
+              .stat(target)
+              .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
       );
+      if (targetInfo?.type !== "Directory") {
+        if (existing !== undefined) {
+          yield* fs.remove(link);
+        }
+        return;
+      }
       if (existing === target) return;
       if (existing !== undefined) {
         yield* fs.remove(link);

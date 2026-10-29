@@ -95,8 +95,10 @@ wins in this order: `.gemini/skills`, `.agents/skills`, `.agent/skills`. See
 [commands and skills](./composer.md#commands-and-skills) for invoking them.
 
 Skills for every project go in `~/.gemini/config/skills` or
-`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
-so a skill there only appears when the project itself is your home directory.
+`~/.gemini/antigravity-cli/skills`. Skills still in the Gemini CLI directory
+`~/.gemini/skills` are used when those two directories are empty or missing.
+Antigravity does not read `~/.agents/skills`, so a skill there only appears when
+the project itself is your home directory.
 
 Antigravity receives images directly. Every other attachment, including PDFs,
 text, audio, archives, and videos, is passed as a saved file path for the agent

@@ -76,6 +76,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           directory: path.join(input.userHome, ".gemini", "antigravity-cli", "skills"),
           scope: "user",
         },
+        { directory: path.join(input.userHome, ".gemini", "skills"), scope: "user" },
         { directory: path.join(input.cwd, ".agents", "skills"), scope: "project" },
       ];
       const expected = [];
@@ -102,6 +103,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         path.join(input.userHome, ".gemini", "config", "skills"),
         path.join(input.cwd, ".gemini", "skills"),
         path.join(input.userHome, ".gemini", "antigravity-cli", "skills"),
+        path.join(input.userHome, ".gemini", "skills"),
         path.join(input.cwd, ".agents", "skills"),
         path.join(input.cwd, ".agent", "skills"),
       ];

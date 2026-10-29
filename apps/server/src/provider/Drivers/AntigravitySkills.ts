@@ -23,14 +23,15 @@ export function resolveAntigravityUserHome(
   return environment.HOME || home;
 }
 
-/** Link private GEMINI_HOME skills to ~/.gemini; ~/.agents/skills is ignored because .agents/skills is project-only. */
+/** User skill roots under a Gemini home: Antigravity config, agy, then Gemini CLI. */
 export function antigravityUserSkillDirectories(
   path: Path.Path,
   geminiHome: string,
-): readonly [configSkills: string, cliSkills: string] {
+): readonly [configSkills: string, cliSkills: string, legacySkills: string] {
   return [
     path.join(geminiHome, "config", "skills"),
     path.join(geminiHome, "antigravity-cli", "skills"),
+    path.join(geminiHome, "skills"),
   ];
 }
 
@@ -148,7 +149,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
+  const [configSkills, cliSkills, legacySkills] = antigravityUserSkillDirectories(
     path,
     path.join(input.userHome, ".gemini"),
   );
@@ -156,6 +157,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     { directory: configSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
+    { directory: legacySkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
     { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
   ];

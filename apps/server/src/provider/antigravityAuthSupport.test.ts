@@ -577,7 +577,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "links the user's global skill directories into the profile without touching real content",
+    "links existing global skill directories and removes junctions whose targets are missing",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -593,13 +593,18 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
-        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(Result.isFailure(yield* fs.readLink(cliLink).pipe(Effect.result))).toBe(true);
         expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
           false,
         );
 
-        yield* fs.remove(cliLink);
+        yield* fs.makeDirectory(path.dirname(cliLink), { recursive: true });
+        yield* fs.symlink(cliSkills, cliLink);
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(Result.isFailure(yield* fs.readLink(cliLink).pipe(Effect.result))).toBe(true);
+
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
         yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
         yield* fs.remove(configLink);
         yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
@@ -607,6 +612,32 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links Gemini CLI skills when the agy skill directories are empty",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const configSkills = path.join(userHome, ".gemini", "config", "skills");
+        const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        const legacySkills = path.join(userHome, ".gemini", "skills");
+        yield* fs.makeDirectory(configSkills, { recursive: true });
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
+        yield* fs.makeDirectory(path.join(legacySkills, "review"), { recursive: true });
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        const configLink = path.join(profileDirectory, "config", "skills");
+        expect(yield* fs.readLink(configLink)).toBe(legacySkills);
+
+        yield* fs.makeDirectory(path.join(configSkills, "newer"), { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(configLink)).toBe(configSkills);
       }),
   );
 
