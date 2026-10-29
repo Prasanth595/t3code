@@ -33,6 +33,10 @@ Provider-specific behavior belongs behind an adapter. Orchestration works with n
 and events, so adding a provider should not require branches throughout the domain or clients.
 See [provider constraints](./providers.md).
 
+A sandbox driver provisions a workspace and reports where it can be reached. A new driver is a
+package registered with the server, the same shape as an agent driver. Turns still run through
+agent providers, and a sandbox is not a connection route.
+
 ## Settings ownership
 
 Client preferences stay in the current client; environment defaults and project overrides stay

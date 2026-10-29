@@ -1,0 +1,29 @@
+{
+  "name": "@t3tools/sandbox-core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./schema": {
+      "types": "./src/schema.ts",
+      "import": "./src/schema.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/errors": {
+      "types": "./src/server/errors.ts",
+      "import": "./src/server/errors.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

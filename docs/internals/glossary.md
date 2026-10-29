@@ -8,6 +8,8 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Term           | Meaning                                                                                           |
 | -------------- | ------------------------------------------------------------------------------------------------- |
 | Environment    | One running server and the machine, credentials, workspace access, and state it owns.             |
+| Sandbox        | A workspace a sandbox driver provisions. Separate from the environment and the agent provider.    |
+| Sandbox driver | The integration for one sandbox kind. An instance is one configuration of that driver.            |
 | Client         | A web, desktop, or mobile UI connected to an environment. The desktop app can also host a server. |
 | Project        | An environment-local workspace record rooted at a directory.                                      |
 | Workspace root | The project's base filesystem directory on the environment.                                       |

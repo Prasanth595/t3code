@@ -5,6 +5,9 @@ whether a turn runs. This page lists the decisions and evidence a new driver nee
 [provider constraints](./providers.md) and the
 [capability system](../orchestration-v2/provider-capability-system.md) explain why these rules exist.
 
+Agent providers run turns. A machine that hosts a workspace, such as a cloud sandbox, is a sandbox
+driver registered with the server. It is not added here.
+
 ## Choose the integration shape
 
 - **ACP agents** start as [ACP Registry](../user/providers-acp.md) entries, which follow the ACP
