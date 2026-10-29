@@ -38,6 +38,7 @@ import {
   isListedSettledThread,
   olderSettledCountKey,
   settledShelfFrontier,
+  sortOlderSettledScopes,
   unloadedOlderSettledCount,
   wantedOlderSettledPages,
   type OlderSettled,
@@ -200,6 +201,20 @@ it("counts older threads the client does not hold, once", () => {
       ],
     }),
   ).toBe(18);
+});
+
+it("orders a shelf's scopes the same however its projects are ordered", () => {
+  const otherEnvironment = EnvironmentId.make("env-b");
+  const other = ProjectId.make("project-b");
+  expect(
+    sortOlderSettledScopes([
+      { environmentId: otherEnvironment, projectIds: null },
+      { environmentId, projectIds: [other, project] },
+    ]),
+  ).toEqual([
+    { environmentId, projectIds: [project, other] },
+    { environmentId: otherEnvironment, projectIds: null },
+  ]);
 });
 
 describe("wantedOlderSettledPages", () => {
