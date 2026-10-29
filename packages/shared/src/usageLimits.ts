@@ -290,7 +290,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
-      displayName: previous.displayName ?? next.displayName,
+      // A hub names its accounts the same on every machine; instances signed in elsewhere do not.
+      displayName:
+        next.sourceLabel === null ? (previous.displayName ?? next.displayName) : next.displayName,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -344,7 +346,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         merge(resolveKey(account) ?? key, {
           key,
           driver: account.driver,
-          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          displayName: account.email ? source.label : account.id.replace(/\.json$/i, ""),
           email: account.email,
           plan: account.plan,
           accentColor: undefined,

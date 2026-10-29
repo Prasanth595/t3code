@@ -632,6 +632,51 @@ describe("pools", () => {
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
   });
 
+  it("names a hub account after its hub, even where an instance is signed in to it", () => {
+    const hubOnly = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                label: "Team hub",
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: { checkedAt, windows: [window] },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const names = (input: Parameters<typeof collectLimitAccounts>[0]) =>
+      collectLimitAccounts(input).map((account) => account.displayName);
+    expect(names(hubOnly)).toEqual(["Team hub"]);
+    const unrenamed = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const desktop = {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [unrenamed] },
+    };
+    expect(names(new Map([...hubOnly, [EnvironmentId.make("env-b"), desktop]]))).toEqual([
+      "Team hub",
+    ]);
+  });
+
   it("pools Codex windows by kind, whichever slot reported them", () => {
     const codexAccount = (id: string, slots: readonly string[]) => ({
       id,
