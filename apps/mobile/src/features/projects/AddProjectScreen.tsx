@@ -17,7 +17,6 @@ import {
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
-  getCloneDirectoryLeafName,
   getCloneDirectoryPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
@@ -297,16 +296,14 @@ function ProjectPathInput(props: {
 function useBrowsePathInput(
   environment: EnvironmentOption | null,
   pinnedDirectoryName = "",
-  remoteUrl?: string | null,
+  cloneDirectoryPath = pinnedDirectoryName,
 ) {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const seedPath = getCloneDestinationPath(
     getAddProjectInitialQuery(environmentBaseDirectory),
-    remoteUrl && environment?.ghqCloneLayout
-      ? getCloneDirectoryPath(remoteUrl, true, pinnedDirectoryName)
-      : pinnedDirectoryName,
+    cloneDirectoryPath,
   );
   // Each host keeps the path last typed or browsed for it, and shows its own default until then,
   // so switching hosts and back loses nothing. With no host selected (one dropping out briefly),
@@ -1368,14 +1365,15 @@ export function AddProjectDestinationScreen(props: {
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
-  const cloneDirectoryName =
+  const ghqDirectoryPath =
     remoteUrl && environment?.ghqCloneLayout
-      ? getCloneDirectoryLeafName(remoteUrl, true, repositoryName)
-      : repositoryName;
+      ? getCloneDirectoryPath(remoteUrl, true, repositoryName)
+      : null;
+  const cloneDirectoryName = ghqDirectoryPath?.split("/").at(-1) ?? repositoryName;
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
     cloneDirectoryName,
-    remoteUrl,
+    ghqDirectoryPath ?? repositoryName,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
