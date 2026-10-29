@@ -97,6 +97,7 @@ describe("preventMiddleButtonDefault", () => {
       <div data-testid="row">
         <input data-testid="rename" />
       </div>,
+      // Plain markup; nothing here links or navigates.
       { router: false },
     );
     const middleButtonDefaultPrevented = (testId: string, button = 1) => {
