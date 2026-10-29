@@ -859,6 +859,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
 
     const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
+      // Pre-pagination clients get the window as a plain projection, never the whole transcript.
       const snapshot = yield* (
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
@@ -866,7 +867,9 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               deferWork: input.acceptDeferredWork === true,
               userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
             })
-          : threadManagement.getThreadSnapshot(input.threadId)
+          : threadManagement.getThreadSnapshotWindow(input.threadId, {
+              rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+            })
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -886,7 +889,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             compactIds: input.acceptCompactIds === true,
           })
         : (() => {
-            const projection = projectThreadProjectionForWire(snapshot.projection);
+            const projection = buildBoundedThreadProjection({
+              projection: projectThreadProjectionForWire(snapshot.projection),
+              snapshotSequence,
+            }).projection;
             return {
               kind: "snapshot" as const,
               snapshotSequence,
