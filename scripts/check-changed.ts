@@ -232,7 +232,7 @@ const runPatchCheck = files.some(
 // Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
 // Copy mobile modules too: they are file: dependencies, not workspace packages.
 // Cached registry metadata limits this to patches stranded by local changes, not registry drift.
-const checkPatches = (): boolean => {
+const checkPatches = async () => {
   const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
   try {
     const copy = (relative: string) => {
@@ -253,24 +253,15 @@ const checkPatches = (): boolean => {
     for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
       if (NodeFS.existsSync(NodePath.join(root, extra))) copy(extra);
     }
-    const { status, stdout, stderr, error } = NodeChildProcess.spawnSync(
-      "vp",
-      ["install", "--lockfile-only", "--ignore-scripts"],
-      { cwd: temp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: timeoutSeconds * 1000 },
-    );
-    if (status === 0) return true;
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
-    if (error) console.error(error.message);
-    if (`${stdout ?? ""}${stderr ?? ""}`.includes("ERR_PNPM_UNUSED_PATCH")) {
-      console.error(
-        "Unused dependency patches: remove each patch named above from " +
-          "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
-          "update it to the version the install resolves, " +
-          "or pin the dependency that pulls it in to the patched version.",
-      );
-    }
-    return false;
+    const result = await spawnStep(["install", "--lockfile-only", "--ignore-scripts"], temp);
+    if (result.outcome !== "FAIL" || !result.output.includes("ERR_PNPM_UNUSED_PATCH"))
+      return result;
+    const hint =
+      "Unused dependency patches: remove each patch named above from " +
+      "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
+      "update it to the version the install resolves, " +
+      "or pin the dependency that pulls it in to the patched version.\n";
+    return { ...result, output: Buffer.concat([result.output, Buffer.from(hint)]) };
   } finally {
     NodeFS.rmSync(temp, { recursive: true, force: true });
   }
@@ -284,18 +275,18 @@ const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script has no Effect runtime.
 const platform = process.platform;
 // The typecheck step gets the same budget for its own package runs. macOS
-// counts its file cache as used, so freemem() there would starve a large Mac.
+// counts its file cache as used, so available memory there would starve a large
+// Mac. Elsewhere availableMemory() also honors a container's cgroup limit.
 const concurrency =
   positiveInteger(process.env.CHECK_CHANGED_CONCURRENCY) ??
   defaultConcurrency(
     NodeOS.availableParallelism(),
-    platform === "darwin" ? NodeOS.totalmem() : NodeOS.freemem(),
+    platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
   );
 const timeoutSeconds = positiveInteger(process.env.CHECK_CHANGED_TIMEOUT) ?? 900;
 
 const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
 const steps = [
-  // Runs first; it takes about a second.
   runPatchCheck && { name: "unused patches", run: checkPatches },
   present.length > 0 && {
     name: "format",
@@ -354,6 +345,15 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.exit(signal === "SIGINT" ? 130 : 143);
   });
 }
+const spawnStep = async (args: ReadonlyArray<string>, cwd = root) => {
+  const child = NodeChildProcess.spawn("vp", args, { cwd, env, detached: !windows });
+  running.add(child);
+  try {
+    return await awaitStep(child, timeoutSeconds * 1000, () => killTree(child));
+  } finally {
+    running.delete(child);
+  }
+};
 const runStep = async (step: (typeof steps)[number]) => {
   const started = performance.now();
   const finish = (outcome: StepOutcome, output?: Buffer) => {
@@ -365,13 +365,7 @@ const runStep = async (step: (typeof steps)[number]) => {
     if (output) process.stdout.write(output);
     return { name: step.name, outcome, time };
   };
-  // In-process steps print their own output. The patch check is first and
-  // takes about a second, so the commands start right after it.
-  if ("run" in step) return finish(step.run() ? "pass" : "FAIL");
-  const child = NodeChildProcess.spawn("vp", step.args, { cwd: root, env, detached: !windows });
-  running.add(child);
-  const { outcome, output } = await awaitStep(child, timeoutSeconds * 1000, () => killTree(child));
-  running.delete(child);
+  const { outcome, output } = await ("run" in step ? step.run() : spawnStep(step.args));
   return finish(outcome, output);
 };
 

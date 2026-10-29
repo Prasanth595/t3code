@@ -35,6 +35,9 @@ interface Child {
   on(event: "close", listener: (status: number | null) => void): unknown;
 }
 
+// Node fires a delay above its 32-bit maximum after 1 ms instead.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 // Collects a step's output and settles when it exits. Past timeoutMs it calls
 // kill, which must end the whole process tree, and reports TIMEOUT whatever the
 // exit status.
@@ -42,10 +45,13 @@ export const awaitStep = (child: Child, timeoutMs: number, kill: () => void) =>
   new Promise<{ outcome: StepOutcome; output: Buffer }>((resolve) => {
     const output: Array<Buffer> = [];
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill();
-    }, timeoutMs);
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        kill();
+      },
+      Math.min(timeoutMs, MAX_TIMER_MS),
+    );
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
     child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
     // A failed spawn emits "error", then "close" with a nonzero code.

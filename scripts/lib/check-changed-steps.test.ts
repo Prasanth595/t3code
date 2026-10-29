@@ -77,7 +77,11 @@ describe("check:changed step timeout", () => {
       [2, "FAIL"],
     ] as const) {
       const child = fakeChild();
-      const result = awaitStep(child, 1000, () => {});
+      const kill = vi.fn();
+      // Past Node's 32-bit timer limit, which would otherwise fire after 1 ms.
+      const result = awaitStep(child, 2 ** 32, kill);
+      vi.advanceTimersByTime(1);
+      expect(kill).not.toHaveBeenCalled();
       child.stdout.emit("data", Buffer.from("out "));
       child.stderr.emit("data", Buffer.from("err"));
       child.emit("close", status);
