@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the server provision check reads source text, as boundary.test.ts does.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import {
   type VcsError,
@@ -10,13 +14,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { driver as gitHubDriver } from "@t3tools/source-control-github/server/driver";
-import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ServerSourceControlHost from "../../sourceControl/ServerSourceControlHost.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "../../vcs/VcsProcess.ts";
 import { decorate, layer } from "./ghCredentialProcess.ts";
 
@@ -300,10 +307,10 @@ describe("ghCredentialProcess.layer", () => {
   );
 });
 
-describe("ghCredentialProcess with upstream's GitHub driver", () => {
+describe("ghCredentialProcess in the server graph", () => {
   // Fails when upstream renames the operation or reshapes the lookup, since nothing else would.
   it.effect(
-    "retries upstream's own gh credential lookup and fetches with the token it reads",
+    "retries upstream's own gh credential lookup through the server's source-control host",
     () => {
       const inner = fakeInner([fail(timeout()), ok]);
       const authorizations: Array<string | undefined> = [];
@@ -321,7 +328,16 @@ describe("ghCredentialProcess with upstream's GitHub driver", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            TestSourceControlHost.layer({ process: decorate(inner.service) }),
+            ServerSourceControlHost.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(VcsProcess, decorate(inner.service)),
+                  ServerSettings.layerTest(),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                  Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
+                ),
+              ),
+            ),
             SourceControlRateLimit.layer,
             NodeCrypto.layer,
             NodeServices.layer,
@@ -339,4 +355,21 @@ describe("ghCredentialProcess with upstream's GitHub driver", () => {
       );
     },
   );
+
+  // server.ts cannot be built in a test, so its provision is pinned by source.
+  it("is the only VcsProcess the server provides, apart from workspace entries' own", () => {
+    const srcRoot = NodePath.resolve(import.meta.dirname, "../..");
+    const server = NodeFS.readFileSync(NodePath.join(srcRoot, "server.ts"), "utf8");
+    assert.include(server, "Layer.provide(FactoryGhCredentialProcess.layer)");
+    const providers = NodeFS.readdirSync(srcRoot, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.tsx?$/.test(file) && !/\.test(kit)?\.tsx?$/.test(file))
+      .filter(
+        (file) => !file.split(NodePath.sep).some((dir) => dir === "factory" || dir === "testkit"),
+      )
+      .filter((file) =>
+        /\bVcsProcess\.layer\b/.test(NodeFS.readFileSync(NodePath.join(srcRoot, file), "utf8")),
+      )
+      .map((file) => file.split(NodePath.sep).join("/"));
+    assert.deepStrictEqual(providers, ["workspace/WorkspaceEntries.ts"]);
+  });
 });
