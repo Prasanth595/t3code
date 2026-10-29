@@ -38,6 +38,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -155,12 +156,17 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
   return { enqueue, drain: worker.drain };
 });
 
-function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): string {
+// Projected state carries no run, so without it a later run with the same title and phase
+// looks unchanged and never alerts.
+function agentAwarenessPublishIdentity(
+  state: RelayAgentActivityState | null,
+  runId: string | null,
+): string {
   if (state === null) {
     return "null";
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
-  return JSON.stringify(meaningfulState);
+  return JSON.stringify({ ...meaningfulState, runId });
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -364,6 +370,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -410,6 +417,9 @@ export const make = Effect.gen(function* () {
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
+  // Last result published quietly per thread. It survives connection resets, whose republish
+  // would otherwise ring for a result the person already saw.
+  const quietResultByThread = new Map<ThreadId, string>();
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
   const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
@@ -466,18 +476,29 @@ export const make = Effect.gen(function* () {
     const publishState = Effect.fn("relay.agent_activity.publish")(function* (input: {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
+      readonly runId: string | null;
       readonly reason: string;
     }) {
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
       const relayClient = cachedRelayClient;
+      // Quiet until the result changes: the relay alerts on any republish, so a rename after
+      // the person walks away would ring for a result they saw. A later run is a new result.
+      const result = input.state && `${input.state.phase}:${input.runId ?? ""}`;
+      const notify =
+        !(yield* backgroundPolicy.hasAttendedClient) &&
+        quietResultByThread.get(threadId) !== result;
+      const state = input.state && !notify ? { ...input.state, notify: false } : input.state;
+      // Before sending: a publish the relay stored but whose response timed out stays quiet.
+      if (result !== null && !notify) quietResultByThread.set(threadId, result);
+      else quietResultByThread.delete(threadId);
       const proof = yield* makePublishProof({
         privateKey: cloudLinkKeyPair.privateKey,
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
-        state: input.state,
+        state,
         jti: yield* crypto.randomUUIDv4(),
       });
 
@@ -487,6 +508,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         statePhase: input.state?.phase ?? null,
         hasState: input.state !== null,
+        notify,
         reason: input.reason,
       });
 
@@ -497,7 +519,7 @@ export const make = Effect.gen(function* () {
             threadId,
           },
           payload: {
-            state: input.state,
+            state,
             proof,
           },
         })
@@ -532,7 +554,10 @@ export const make = Effect.gen(function* () {
       thread,
       project,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
+    const runId = Option.isSome(thread)
+      ? (thread.value.activeRunId ?? thread.value.latestRunId)
+      : null;
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, runId);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -557,7 +582,7 @@ export const make = Effect.gen(function* () {
     // alerts on every move into completed.
     const requiresConfirmation =
       (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
+        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null, null)) ||
       snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
@@ -603,12 +628,13 @@ export const make = Effect.gen(function* () {
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
+          runId,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion, runId)),
         );
         yield* schedulePublishConfirm(threadId);
         return;
@@ -634,6 +660,7 @@ export const make = Effect.gen(function* () {
     yield* publishState({
       projectId: snapshot.projectId,
       state: snapshot.state,
+      runId,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);

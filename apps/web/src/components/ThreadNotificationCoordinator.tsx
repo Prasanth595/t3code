@@ -17,11 +17,13 @@ import {
 } from "lucide-react";
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import { registerCanNotifyOutsideWindow } from "../lib/backgroundActivityReporter";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
+  canNotifyOutsideWindow,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
@@ -340,6 +342,9 @@ export function startThreadNotifications(
     syncEnvironments();
   };
   const unsubscribeSettings = subscribeClientSettings(onSettings);
+  const unregisterCanNotify = registerCanNotifyOutsideWindow(() =>
+    canNotifyOutsideWindow(getClientSettings().notificationMode),
+  );
   const unsubscribeEnvironmentIds = registry.subscribe(
     environmentSummaries.environmentIdsAtom,
     () => {
@@ -351,6 +356,7 @@ export function startThreadNotifications(
 
   return () => {
     unsubscribeSettings();
+    unregisterCanNotify();
     unsubscribeEnvironmentIds();
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();

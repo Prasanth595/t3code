@@ -15,6 +15,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -92,8 +94,14 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
-const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
+const PublishPayload = Schema.Struct({
+  state: Schema.NullOr(RelayAgentActivityState),
+  proof: Schema.String,
+});
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
+const decodeSignedState = Schema.decodeUnknownSync(
+  Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) }),
+);
 const unused = () => Effect.die("Unexpected test dependency call");
 
 describe("startup agent activity", () => {
@@ -144,6 +152,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly attended?: Ref.Ref<boolean>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -230,6 +239,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly url: string;
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
+    readonly notify: boolean | undefined;
+    readonly signedNotify: boolean | undefined;
   }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (
@@ -247,6 +258,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
+        notify: payload.state?.notify,
+        signedNotify: decodeSignedState(decodeRelayJwt(payload.proof)).state?.notify,
       });
       return Promise.resolve(
         options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
@@ -283,6 +296,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
           deletedAt: null,
         }),
     }),
+    Effect.provide(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy, {
+        hasAttendedClient: options.attended ? Ref.get(options.attended) : Effect.succeed(false),
+      }),
+    ),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
@@ -351,6 +369,61 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
+    }),
+  );
+
+  it.effect("signs quietness and keeps it until the published phase changes", () =>
+    Effect.gen(function* () {
+      const attended = yield* Ref.make(true);
+      const { relay, currentShell, publications } = yield* makeTestRelay({ attended });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(attended, false);
+      yield* Ref.set(currentShell, shell({ title: "Renamed thread" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ title: "Renamed thread", status: "failed" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ notify, signedNotify }) => ({ notify, signedNotify })),
+        [
+          { notify: false, signedNotify: false },
+          { notify: false, signedNotify: false },
+          { notify: undefined, signedNotify: undefined },
+        ],
+      );
+    }),
+  );
+
+  it.effect("treats a later run as a new result, even in the same phase", () =>
+    Effect.gen(function* () {
+      const attended = yield* Ref.make(true);
+      const { relay, currentShell, publications } = yield* makeTestRelay({ attended });
+      yield* Ref.set(currentShell, shell({ activeRunId: RunId.make("run-a") }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(attended, false);
+      yield* Ref.set(currentShell, shell({ activeRunId: RunId.make("run-b") }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ notify }) => notify),
+        [false, undefined],
+      );
+    }),
+  );
+
+  it.effect("keeps a seen result quiet when relinking republishes it", () =>
+    Effect.gen(function* () {
+      const attended = yield* Ref.make(true);
+      const { relay, secrets, publications } = yield* makeTestRelay({ attended });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(attended, false);
+      yield* secrets.set(
+        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+        new TextEncoder().encode("credential-2"),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ notify }) => notify),
+        [false, false],
+      );
     }),
   );
 

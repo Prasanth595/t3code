@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { allowsAlert } from "./agentActivityAlerts.ts";
 import { isTerminalPhase } from "./agentActivityPayloads.ts";
 
 export { isExpiredAgentActivityState } from "./agentActivityPayloads.ts";
@@ -205,6 +206,7 @@ const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
+        "relay.agent_activity.notify": !input.state || allowsAlert(input.state),
       });
       if (input.state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
