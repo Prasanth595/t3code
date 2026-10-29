@@ -43,10 +43,6 @@ import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
-  CHATGPT_USAGE_LIMIT_CODE,
-  CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
-} from "@t3tools/shared/usageLimits";
-import {
   latestExecutedRun,
   latestRootProviderFailure,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -971,12 +967,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
   const activeThreadShell = serverThread;
-  // ChatGPT sharing limits keep their own banner; OpenAI's partner guidelines specify it.
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
-    serverRuntime.lastErrorCode !== CHATGPT_USAGE_LIMIT_CODE &&
-    serverRuntime.lastErrorCode !== CHATGPT_WORKSPACE_USAGE_LIMIT_CODE &&
     activeThreadShell?.latestRun &&
     visibleThreadError === serverRuntime.lastError
       ? null
@@ -2507,6 +2500,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
           runId: activeThreadShell.latestRun.runId,
+          errorCode: serverRuntime.lastErrorCode ?? null,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
