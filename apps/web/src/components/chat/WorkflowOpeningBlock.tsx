@@ -1,4 +1,3 @@
-import { PROGRESS_CLASS_NAME } from "../ui/progress";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isTerminalSubagentStatus,
@@ -22,6 +21,7 @@ import { cn } from "../../lib/utils";
 import { providersIgnoringCheckedAtAtom } from "../../state/server";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { Button } from "../ui/button";
+import { PROGRESS_CLASS_NAME } from "../ui/progress";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
