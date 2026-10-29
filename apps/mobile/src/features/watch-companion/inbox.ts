@@ -1,9 +1,10 @@
 import * as Schema from "effect/Schema";
 
 import { SerializedAsyncQueue } from "../../lib/serialized-async-queue";
-import { EMPTY_INBOX, InboxState, type InboxEntry } from "./model";
+import { EMPTY_INBOX, InboxState, WatchAction, type InboxEntry } from "./model";
 
 const decodeInbox = Schema.decodeUnknownSync(InboxState);
+const decodeAction = Schema.decodeUnknownSync(WatchAction);
 const RECORDING_FIELDS = ["id", "createdAt", "kind", "environmentId", "threadId"] as const;
 const ACTION_FIELDS = [
   "id",
@@ -134,6 +135,32 @@ export function createWatchInbox(storage: {
     ingestAndAcknowledge: async (entry: InboxEntry, acknowledge: () => Promise<void>) => {
       await ingest(entry);
       await acknowledge();
+    },
+    importActions: async (
+      raw: unknown,
+      options: {
+        readonly commandId: () => string;
+        readonly acknowledge: (id: string) => Promise<void>;
+        readonly report: (error: unknown) => void;
+      },
+    ) => {
+      if (!Array.isArray(raw)) throw new Error("Invalid pending Watch action list.");
+      for (const candidate of raw) {
+        try {
+          const action = decodeAction(candidate);
+          const current = await queue.run(load);
+          await ingest({
+            id: `action:${action.id}`,
+            action,
+            owner: current.owners[action.environmentId] ?? null,
+            commandId: options.commandId(),
+            state: "review",
+          });
+          await options.acknowledge(action.id);
+        } catch (error) {
+          options.report(error);
+        }
+      }
     },
     edit: (id: string, change: (entry: InboxEntry) => InboxEntry) =>
       update((current) => ({

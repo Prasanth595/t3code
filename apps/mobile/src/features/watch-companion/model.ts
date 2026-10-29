@@ -1,3 +1,5 @@
+import { CommandId, OrchestrationV2Command, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 export const WatchRecording = Schema.Struct({
@@ -192,4 +194,51 @@ export function validateWatchMutation(entry: InboxEntry, thread: WatchThread): v
   ) {
     throw new Error("The thread has running or pending work. Review it on iPhone instead.");
   }
+}
+
+const decodeMutationCommand = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2Command)),
+);
+
+export function prepareWatchMutation(entry: InboxEntry, thread: WatchThread) {
+  const action = entry.action;
+  if (action?.kind !== "settle" && action?.kind !== "reopen")
+    throw new Error("Review questions and permissions in the thread on iPhone.");
+  if (action.environmentId !== thread.environmentId || action.threadId !== thread.id)
+    throw new Error("The stored command differs; review this thread manually.");
+  if (entry.state === "prepared") {
+    if (!entry.payload) throw new Error("The prepared Watch command is missing.");
+    const command = decodeMutationCommand(entry.payload);
+    if (command.type !== "thread.settle" && command.type !== "thread.unsettle")
+      throw new Error("The stored command differs; review this thread manually.");
+    if (
+      command.type !== (action.kind === "settle" ? "thread.settle" : "thread.unsettle") ||
+      command.commandId !== entry.commandId ||
+      command.threadId !== action.threadId ||
+      command.expectedUpdatedAt === undefined ||
+      action.expectedUpdatedAt === undefined ||
+      DateTime.toEpochMillis(command.expectedUpdatedAt) !==
+        DateTime.toEpochMillis(DateTime.makeUnsafe(action.expectedUpdatedAt)) ||
+      (command.type === "thread.settle" && command.settledAt !== undefined)
+    )
+      throw new Error("The stored command differs; review this thread manually.");
+    return command;
+  }
+  validateWatchMutation(entry, thread);
+  const commandId = CommandId.make(entry.commandId);
+  const threadId = ThreadId.make(thread.id);
+  const expectedUpdatedAt = DateTime.makeUnsafe(thread.updatedAt);
+  const command =
+    entry.action?.kind === "settle"
+      ? { type: "thread.settle" as const, commandId, threadId, expectedUpdatedAt }
+      : {
+          type: "thread.unsettle" as const,
+          commandId,
+          threadId,
+          expectedUpdatedAt,
+          reason: "user" as const,
+        };
+  if (entry.payload !== undefined && entry.payload !== JSON.stringify(command))
+    throw new Error("The stored command differs; review this thread manually.");
+  return command;
 }

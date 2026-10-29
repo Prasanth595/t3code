@@ -9,6 +9,7 @@ import {
   WatchRecording,
   buildWatchSnapshot,
   prepareWatchHandoff,
+  prepareWatchMutation,
   validateWatchMutation,
   validateWatchTarget,
   type InboxEntry,
@@ -203,6 +204,45 @@ describe("durable Watch inbox", () => {
       ),
     ).rejects.toThrow("reused an ID");
     expect(removes).toBe(1);
+    await restarted.update((current) => ({ ...current, owners: { "env-a": "account-a" } }));
+    const errors: unknown[] = [];
+    const removed: string[] = [];
+    const valid = { ...actionEntry.action!, id: "later" };
+    const importOptions = {
+      commandId: () => "new-import-command",
+      acknowledge: async (id: string) => {
+        expect(
+          JSON.parse((await storage.read())!).entries.some(
+            (entry: InboxEntry) => entry.id === `action:${id}`,
+          ),
+        ).toBe(true);
+        if (id === "ack-lost") throw new Error("acknowledgement lost");
+        removed.push(id);
+      },
+      report: (error: unknown) => {
+        errors.push(error);
+      },
+    };
+    await restarted.importActions(
+      [
+        { ...actionEntry.action!, kind: "reopen" },
+        valid,
+        { ...valid, id: "invalid", kind: "approval", decision: "allow" },
+        { ...valid, id: "ack-lost" },
+        { ...valid, id: "last" },
+      ],
+      importOptions,
+    );
+    expect(removed).toEqual(["later", "last"]);
+    expect(errors).toHaveLength(3);
+    expect((await restarted.load()).entries[0]?.state).toBe("dismissed");
+    expect((await restarted.load()).entries.map((entry) => entry.id)).toEqual([
+      actionEntry.id,
+      "action:later",
+      "action:ack-lost",
+      "action:last",
+    ]);
+    await expect(restarted.importActions(null, importOptions)).rejects.toThrow();
   });
 
   it("serializes duplicate arrivals and rejects reused IDs without replacing the original payload", async () => {
@@ -219,36 +259,47 @@ describe("durable Watch inbox", () => {
   });
 
   it("persists immutable IDs and payload before sending, retries a lost ack with the same ID, and never replays completed actions", async () => {
-    const { inbox, storage } = fixture();
-    const prepared: InboxEntry = {
-      ...actionEntry,
-      state: "prepared",
-      payload: JSON.stringify({
-        type: "thread.settle",
-        commandId: "command-one",
-        threadId: "thread-a",
-      }),
-    };
-    await inbox.ingest(prepared);
-    const receipts = new Set<string>();
-    const attempts: string[] = [];
-    let applications = 0;
-    const send = async (entry: InboxEntry) => {
-      expect((await storage.read())!).toContain(entry.payload!.replaceAll('"', '\\"'));
-      attempts.push(entry.commandId);
-      if (!receipts.has(entry.commandId)) {
-        receipts.add(entry.commandId);
-        applications++;
-        throw new Error("ack lost");
-      }
-    };
-    await expect(inbox.dispatch(prepared.id, () => "account-a", send)).rejects.toThrow("ack lost");
-    const restarted = createWatchInbox(storage);
-    await restarted.dispatch(prepared.id, () => "account-a", send);
-    await restarted.dispatch(prepared.id, () => "account-a", send);
-    expect(attempts).toEqual(["command-one", "command-one"]);
-    expect(applications).toBe(1);
-    expect((await restarted.load()).entries[0]?.state).toBe("completed");
+    for (const kind of ["settle", "reopen"] as const) {
+      const { inbox, storage } = fixture();
+      const review: InboxEntry = { ...actionEntry, action: { ...actionEntry.action!, kind } };
+      const prepared: InboxEntry = {
+        ...review,
+        state: "prepared",
+        payload: JSON.stringify(prepareWatchMutation(review, thread)),
+      };
+      await inbox.ingest(prepared);
+      const receipts = new Set<string>();
+      const attempts: string[] = [];
+      let applications = 0;
+      let currentThread = thread;
+      const send = async (entry: InboxEntry) => {
+        const command = prepareWatchMutation(
+          entry,
+          validateWatchTarget(entry, "account-a", [currentThread]),
+        );
+        expect(JSON.stringify(command)).toBe(prepared.payload);
+        expect((await storage.read())!).toContain(entry.payload!.replaceAll('"', '\\"'));
+        attempts.push(command.commandId);
+        if (!receipts.has(command.commandId)) {
+          receipts.add(command.commandId);
+          applications++;
+          currentThread = { ...thread, updatedAt: "2026-10-28T11:00:00Z", status: "running" };
+          throw new Error("ack lost");
+        }
+      };
+      await expect(inbox.dispatch(prepared.id, () => "account-a", send)).rejects.toThrow(
+        "ack lost",
+      );
+      const restarted = createWatchInbox(storage);
+      await restarted.dispatch(prepared.id, () => "account-a", send);
+      await restarted.dispatch(prepared.id, () => "account-a", send);
+      expect(attempts).toEqual(["command-one", "command-one"]);
+      expect(applications).toBe(1);
+      expect((await restarted.load()).entries[0]?.state).toBe("completed");
+      expect(() =>
+        prepareWatchMutation({ ...review, commandId: "fresh-command" }, currentThread),
+      ).toThrow("changed");
+    }
   });
 
   it("retains the prepared payload after a local acknowledgement write fails", async () => {
@@ -445,6 +496,29 @@ describe("Watch validation and routing", () => {
         pendingRequest: { id: "request", kind: "approval", title: "Permission", detail: "Review" },
       }),
     ).toThrow("pending work");
+    const original = prepareWatchMutation(actionEntry, thread);
+    const prepared: InboxEntry = {
+      ...actionEntry,
+      state: "prepared",
+      payload: JSON.stringify(original),
+    };
+    for (const payload of [
+      "not-json",
+      JSON.stringify({ ...original, type: "thread.delete" }),
+      JSON.stringify({ ...original, type: "thread.unsettle", reason: "user" }),
+      JSON.stringify({ ...original, commandId: "different-command" }),
+      JSON.stringify({ ...original, threadId: "different-thread" }),
+      JSON.stringify({ ...original, expectedUpdatedAt: undefined }),
+      JSON.stringify({ ...original, expectedUpdatedAt: "2026-10-28T11:00:00Z" }),
+      JSON.stringify({ ...original, settledAt: thread.updatedAt }),
+    ])
+      expect(() => prepareWatchMutation({ ...prepared, payload }, thread)).toThrow();
+    expect(() => prepareWatchMutation({ ...prepared, payload: undefined }, thread)).toThrow();
+    expect(() =>
+      prepareWatchMutation(prepared, { ...thread, environmentId: "different-env" }),
+    ).toThrow();
+    expect(() => prepareWatchMutation(prepared, { ...thread, id: "different-thread" })).toThrow();
+    expect(() => validateWatchTarget(prepared, "account-b", [thread])).toThrow("another account");
   });
 
   it("clears snapshots on sign-out or switch and bounds UTF8, count and whole JSON without leaking extra fields", () => {

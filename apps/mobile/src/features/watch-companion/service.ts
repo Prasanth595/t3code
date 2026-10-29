@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { CommandId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -22,11 +22,11 @@ import { supportsDurableWatchActions, watchBridge } from "./bridge";
 import { createWatchInbox } from "./inbox";
 import {
   EMPTY_INBOX,
-  WatchAction,
   WatchRecording,
   boundWatchText,
   buildWatchSnapshot,
   prepareWatchHandoff,
+  prepareWatchMutation,
   validateWatchMutation,
   validateWatchTarget,
   type InboxEntry,
@@ -34,7 +34,6 @@ import {
 } from "./model";
 
 const decodeRecordings = Schema.decodeUnknownSync(Schema.Array(WatchRecording));
-const decodeActions = Schema.decodeUnknownSync(Schema.Array(WatchAction));
 const actionImports = new SerializedAsyncQueue();
 
 export const watchInboxAtom = Atom.make(EMPTY_INBOX).pipe(Atom.keepAlive);
@@ -132,20 +131,11 @@ export function refreshWatchActions(): Promise<void> {
     const listPendingActions = bridge.listPendingActions?.bind(bridge);
     const removeAction = bridge.removeAction?.bind(bridge);
     if (!listPendingActions || !removeAction) return;
-    const actions = decodeActions(await listPendingActions());
-    for (const action of actions) {
-      const state = await watchInbox.load();
-      await watchInbox.ingestAndAcknowledge(
-        {
-          id: `action:${action.id}`,
-          action,
-          owner: state.owners[action.environmentId] ?? null,
-          commandId: randomUUID(),
-          state: "review",
-        },
-        () => removeAction(action.id),
-      );
-    }
+    await watchInbox.importActions(await listPendingActions(), {
+      commandId: randomUUID,
+      acknowledge: removeAction,
+      report,
+    });
   });
 }
 
@@ -333,24 +323,12 @@ export async function confirmWatchMutation(id: string): Promise<void> {
     appAtomRegistry.get(watchOwnerAtom),
     appAtomRegistry.get(watchThreadsAtom),
   );
-  validateWatchMutation(entry, thread);
-  const commandId = CommandId.make(entry.commandId);
-  const threadId = ThreadId.make(thread.id);
-  const expectedUpdatedAt = DateTime.makeUnsafe(thread.updatedAt);
-  const command =
-    entry.action?.kind === "settle"
-      ? { type: "thread.settle" as const, commandId, threadId, expectedUpdatedAt }
-      : {
-          type: "thread.unsettle" as const,
-          commandId,
-          threadId,
-          expectedUpdatedAt,
-          reason: "user" as const,
-        };
-  const payload = JSON.stringify(command);
-  if (entry.payload !== undefined && entry.payload !== payload)
-    throw new Error("The stored command differs; review this thread manually.");
-  await watchInbox.edit(id, (current) => ({ ...current, payload, state: "prepared" }));
+  const retry = entry.state === "prepared" && entry.payload !== undefined;
+  const command = prepareWatchMutation(entry, thread);
+  if (!retry) {
+    const payload = JSON.stringify(command);
+    await watchInbox.edit(id, (current) => ({ ...current, payload, state: "prepared" }));
+  }
   await watchInbox.dispatch(
     id,
     () => appAtomRegistry.get(watchOwnerAtom),
@@ -360,13 +338,13 @@ export async function confirmWatchMutation(id: string): Promise<void> {
         appAtomRegistry.get(watchOwnerAtom),
         appAtomRegistry.get(watchThreadsAtom),
       );
-      validateWatchMutation(stored, current);
+      if (!retry) validateWatchMutation(stored, current);
       const result = await runAtomCommand(
         appAtomRegistry,
         orchestrationEnvironment.v2.dispatchCommand,
         {
           environmentId: EnvironmentId.make(current.environmentId),
-          input: command,
+          input: prepareWatchMutation(stored, current),
         },
         { reportFailure: false },
       );
