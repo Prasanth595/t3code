@@ -23,6 +23,15 @@ export function modelSelectionCommandType(
     : ("provider.switch" as const);
 }
 
+/** Option ids a provider uses for its reasoning level, in lookup order. */
+export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
+  "reasoningEffort",
+  "effort",
+  "reasoning",
+  "variant",
+  "reasoning_effort",
+];
+
 export interface SelectableModelOption {
   slug: string;
   name: string;
