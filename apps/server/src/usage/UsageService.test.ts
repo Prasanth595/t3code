@@ -1334,6 +1334,11 @@ describe("UsageService", () => {
                   "devin",
                   NodePath.join(home, "devin-home"),
                 ),
+                // Another agent on the driver-kind ID must not hide the host's Copilot home.
+                [ProviderInstanceId.make("acpRegistry")]: copilotInstance(
+                  "gemini",
+                  NodePath.join(home, "devin-home"),
+                ),
               },
             },
           }),
