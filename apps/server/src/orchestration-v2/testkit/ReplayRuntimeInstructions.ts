@@ -19,6 +19,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   // The ACP adapter resends these instructions until a prompt that carried them succeeds.
+  // A prompt the adapter sees as cancelled does not count; its transcript spells out the resend.
   const instructedSessionIds = new Set<unknown>();
   let pendingInstructedPrompt: { readonly sessionId: unknown } | undefined;
 

@@ -3677,7 +3677,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
-            const summary = textFromUnknown(rawOutput);
+            const summary = textFromUnknown(toolCall.data.error ?? rawOutput);
             turnItem = {
               ...base,
               type: "compaction",
@@ -7647,32 +7647,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
-                    // Record delivery only for the current runtime. A replacement can reuse
-                    // this session id after clearing what was sent to it.
-                    yield* Ref.update(promptInstructionStates, (current) => {
-                      if (promptParts?.instructionState === undefined) return current;
-                      const updated = new Map(current);
-                      updated.set(requestedSessionId, promptParts.instructionState);
-                      return updated;
-                    });
-                    yield* Ref.update(promptRuntimeInstructions, (current) => {
-                      if (promptParts?.runtimeInstructions === undefined) return current;
-                      const updated = new Map(current);
-                      updated.set(requestedSessionId, promptParts.runtimeInstructions);
-                      return updated;
-                    });
-                    yield* Ref.update(compactionMarkers, (current) => {
-                      if (promptParts?.instructionState === undefined) return current;
-                      const observedMarker = promptParts.compactionMarker;
-                      if (
-                        observedMarker === undefined ||
-                        current.get(requestedSessionId) !== observedMarker
-                      )
-                        return current;
-                      const updated = new Map(current);
-                      updated.delete(requestedSessionId);
-                      return updated;
-                    });
+                    // Record delivery only for the current runtime, since a replacement can
+                    // reuse this session id. A cancelled prompt may never have reached the
+                    // agent (Grok cancels locally), so the next prompt resends the notes.
+                    if (result.stopReason !== "cancelled") {
+                      yield* Ref.update(promptInstructionStates, (current) => {
+                        if (promptParts?.instructionState === undefined) return current;
+                        const updated = new Map(current);
+                        updated.set(requestedSessionId, promptParts.instructionState);
+                        return updated;
+                      });
+                      yield* Ref.update(promptRuntimeInstructions, (current) => {
+                        if (promptParts?.runtimeInstructions === undefined) return current;
+                        const updated = new Map(current);
+                        updated.set(requestedSessionId, promptParts.runtimeInstructions);
+                        return updated;
+                      });
+                      yield* Ref.update(compactionMarkers, (current) => {
+                        if (promptParts?.instructionState === undefined) return current;
+                        const observedMarker = promptParts.compactionMarker;
+                        if (
+                          observedMarker === undefined ||
+                          current.get(requestedSessionId) !== observedMarker
+                        )
+                          return current;
+                        const updated = new Map(current);
+                        updated.delete(requestedSessionId);
+                        return updated;
+                      });
+                    }
                     if (context.finalized || followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;

@@ -351,6 +351,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
     | undefined;
   let duringNextPreparation: Effect.Effect<void, EffectAcpErrors.AcpError> = Effect.void;
+  let reportNextPromptCancelled = false;
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
@@ -387,7 +388,15 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
             }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
-            runtime.prompt(payload, options).pipe(Effect.tap(() => runtime.drainEvents)),
+            runtime.prompt(payload, options).pipe(
+              Effect.tap(() => runtime.drainEvents),
+              // Grok's local cancel reports `cancelled` even when the agent never saw the prompt.
+              Effect.map((result) => {
+                if (!reportNextPromptCancelled) return result;
+                reportNextPromptCancelled = false;
+                return { ...result, stopReason: "cancelled" as const };
+              }),
+            ),
         }),
       }),
     },
@@ -437,6 +446,9 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     idleSessionUpdate: Effect.fnUntraced(function* (update: EffectAcpSchema.SessionUpdate) {
       assert.isDefined(sessionUpdate);
       yield* sessionUpdate({ sessionId, update });
+    }),
+    reportNextPromptCancelled: Effect.sync(() => {
+      reportNextPromptCancelled = true;
     }),
     sessionUpdateDuringNextPreparation: (update: EffectAcpSchema.SessionUpdate) =>
       Effect.sync(() => {
@@ -1101,12 +1113,17 @@ describe("AcpAdapterV2", () => {
           idleSessionUpdate,
           idleCopilotSessionEvent,
           sessionUpdateDuringNextPreparation,
+          reportNextPromptCancelled,
         } = yield* makeInstructionCompactionHarness({
           T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
           T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
         });
-        yield* runTurn("Start work.");
-        yield* runTurn("Continue until context compacts.");
+        yield* reportNextPromptCancelled;
+        assertReinjectedInstructions(yield* runTurn("Start work.", "cancelled"), "Start work.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue until context compacts."),
+          "Continue until context compacts.",
+        );
         assert.deepEqual(yield* runTurn("  /repro-skill"), [
           { type: "text", text: "  /repro-skill" },
         ]);
@@ -1197,6 +1214,20 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(yield* runTurn("Finish after that reinjection."), [
           { type: "text", text: "Finish after that reinjection." },
         ]);
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-before-local-cancel",
+          status: "completed",
+        });
+        yield* reportNextPromptCancelled;
+        assertReinjectedInstructions(
+          yield* runTurn("Stop before the agent sees this.", "cancelled"),
+          "Stop before the agent sees this.",
+        );
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the local cancel."),
+          "Continue after the local cancel.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
