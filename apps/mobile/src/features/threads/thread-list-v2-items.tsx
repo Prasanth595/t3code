@@ -637,7 +637,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const metadataTypography = useScaledTextRole("label");
   const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
-  const titleLineHeight = titleTypography.lineHeight * fontScale;
+  // Android's nonlinear system text scaling can differ from the fontScale estimate.
+  const [titleLineHeight, setTitleLineHeight] = useState(titleTypography.lineHeight * fontScale);
   const {
     thread,
     variant,
@@ -1081,6 +1082,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
           )}
           numberOfLines={2}
+          onTextLayout={({ nativeEvent }) => {
+            const firstLine = nativeEvent.lines[0];
+            if (firstLine) setTitleLineHeight(firstLine.height);
+          }}
         >
           {thread.title}
         </Text>
