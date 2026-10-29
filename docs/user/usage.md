@@ -117,8 +117,9 @@ closes when you dismiss it or send your next message. It uses the same snapshot 
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 To keep them in view, turn on **Settings → Labs → Usage in thread details** on web and desktop.
-The bottom of the thread details card then shows how much is left in each of the current model's
-limit windows and in the thread's context window. Hover a row to see when it resets, your pace, or
+The bottom of the thread details card then shows how much is left in each limit window of the
+current provider account and in the thread's context window. Some windows, such as a weekly Opus
+limit, count only one model. Hover a row to see when it resets, your pace, or
 the token count.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in

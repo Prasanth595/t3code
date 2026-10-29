@@ -51,10 +51,13 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
       : null;
-  // Match the thread's own instance only; any other entry may be a different login or workspace.
-  const account = report?.accounts.find((entry) => entry.instanceId === providerInstanceId);
-  const notice = account ? limitsNotice(account.limits) : null;
-  if (!account && !contextWindow) return null;
+  // Only this instance's data: the report keeps one instance per login, and any other entry may be
+  // a different login or workspace, so fall back to the instance's own snapshot.
+  const limits =
+    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
+    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
+  const notice = limits ? limitsNotice(limits) : null;
+  if (!limits && !contextWindow) return null;
 
   return (
     <ThreadDetailsSection
@@ -71,12 +74,10 @@ export function ThreadDetailsUsage({
             tooltip={<span className="text-foreground">{notice}</span>}
           />
         ) : null}
-        {account && !notice
-          ? account.limits.windows.map((window) => (
-              <LimitRow key={window.id} window={window} now={now} />
-            ))
+        {limits && !notice
+          ? limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
           : null}
-        {contextWindow ? <ContextRow usage={contextWindow} spaced={account !== undefined} /> : null}
+        {contextWindow ? <ContextRow usage={contextWindow} spaced={limits !== undefined} /> : null}
       </div>
     </ThreadDetailsSection>
   );
