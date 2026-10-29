@@ -377,11 +377,18 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-quiet-thread-shell:${key}`));
   });
 
-  const hasChildThreadInputsAtom = Atom.make((get) =>
-    enabledEnvironmentIds(get(input.catalogValueAtom)).some((environmentId) =>
-      get(environmentThreadsAtom(environmentId)).some((thread) => subagentRequest(thread) !== null),
-    ),
-  );
+  const hasChildThreadInputsAtom = Atom.make((get) => {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      if (
+        get(environmentThreadsAtom(environmentId)).some(
+          (thread) => subagentRequest(thread) !== null,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
 
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript. A task
