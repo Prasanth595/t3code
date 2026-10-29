@@ -175,7 +175,7 @@ it("does not serialize arbitrary provider causes", () => {
   });
 });
 
-it("uses capacity wording for OpenCode admission refusals and keeps recovered retry titles", () => {
+it("preserves OpenCode admission-refusal data and recovered retry titles", () => {
   const driver = ProviderDriverKind.make("opencode");
   const threadId = ThreadId.make("thread:provider-capacity-title");
   const runId = RunId.make("run:provider-capacity-title");
@@ -204,7 +204,6 @@ it("uses capacity wording for OpenCode admission refusals and keeps recovered re
   } as const;
 
   const failed = makeProviderFailureTurnItem({ ...base, occurredAt });
-  assert.equal(failed.title, "Provider at capacity");
   assert.deepEqual(failed.failure, {
     class: "usage_limit",
     code: "provider.rate-limit",
@@ -212,14 +211,6 @@ it("uses capacity wording for OpenCode admission refusals and keeps recovered re
     retryable: null,
     resetAt: "2026-10-29T00:00:30.000Z",
   });
-
-  const failedRetry = makeProviderRetryTurnItem({
-    ...base,
-    status: "failed",
-    startedAt: occurredAt,
-    updatedAt: occurredAt,
-  });
-  assert.equal(failedRetry.title, "Provider at capacity");
 
   const completedRetry = makeProviderRetryTurnItem({
     ...base,

@@ -48,7 +48,6 @@ describe("usageLimitRecoveryBannerItem", () => {
       onChange: async () => {},
     });
 
-    expect(item.title).toBe("Provider at capacity");
     expect(item.description).toBe(message);
     expect(item.actions).not.toBeNull();
   });

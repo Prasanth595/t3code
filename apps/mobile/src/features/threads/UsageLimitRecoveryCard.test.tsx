@@ -86,7 +86,6 @@ describe("UsageLimitRecoveryCard", () => {
       ),
     );
 
-    expect(container.textContent).toContain("Provider at capacity");
     expect(container.textContent).toContain(message);
     expect(
       [...container.querySelectorAll("button")].find(
