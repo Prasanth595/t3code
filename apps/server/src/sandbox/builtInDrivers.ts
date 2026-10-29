@@ -23,7 +23,7 @@ export const builtInSandboxInstances = Effect.gen(function* () {
     {
       instanceId: LOCAL_SANDBOX_INSTANCE_ID,
       driver: SandboxDriverKind.make("local"),
-      enabled: true,
+      enabled: false,
       config: localConfig,
     },
   ] satisfies ReadonlyArray<SandboxInstanceConfig>;

@@ -134,19 +134,24 @@ export const LocalSandboxDriver = defineSandboxDriver({
       return resolved;
     });
 
-    // A linked record would write outside the sandbox the driver owns.
+    // resolveSymlinkTarget leaves symlinks in parent directories lexical, so a path that
+    // still looks inside the sandbox can write outside. Realpath the parent first.
     const locateRecord = Effect.fnUntraced(function* (
       operation: SandboxDriverOperation,
       sandboxId: Sandbox["id"],
       sandboxReal: string,
     ) {
-      const target = yield* resolveSymlinkTarget(path.join(sandboxReal, RECORD_FILE)).pipe(
+      const lexical = yield* resolveSymlinkTarget(path.join(sandboxReal, RECORD_FILE)).pipe(
         Effect.mapError((cause) => driverError(operation, cause, sandboxId)),
       );
-      if (!isInside(path, sandboxReal, target)) {
+      const parent = yield* fs
+        .realPath(path.dirname(lexical))
+        .pipe(Effect.mapError((cause) => driverError(operation, cause, sandboxId)));
+      const canonical = path.join(parent, path.basename(lexical));
+      if (!isInside(path, sandboxReal, canonical)) {
         return yield* escapes(operation, sandboxId);
       }
-      return target;
+      return canonical;
     });
 
     const sandboxRealPath = Effect.fnUntraced(function* (

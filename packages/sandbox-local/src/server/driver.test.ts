@@ -169,6 +169,18 @@ describe("LocalSandboxDriver", () => {
         assert.equal(stopped._tag, "SandboxPathEscapesError");
         assert.equal(yield* fs.readFileString(outside), outsideRecord);
 
+        const outsideDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sandbox-outside-" });
+        const outsideFile = path.join(outsideDir, "record.json");
+        yield* fs.writeFileString(outsideFile, "kept\n");
+        yield* fs.symlink(outsideDir, path.join(root, created.id, "linkdir"));
+        yield* fs.remove(recordPath);
+        yield* fs.symlink(path.join("linkdir", "record.json"), recordPath);
+        const throughParent = yield* opened.stop(created.id).pipe(Effect.flip);
+        assert.equal(throughParent._tag, "SandboxPathEscapesError");
+        const throughParentStart = yield* opened.start(created.id).pipe(Effect.flip);
+        assert.equal(throughParentStart._tag, "SandboxPathEscapesError");
+        assert.equal(yield* fs.readFileString(outsideFile), "kept\n");
+
         const linkRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sandbox-linkdir-" });
         const linkedDriver = yield* openAt(linkRoot);
         const made = yield* linkedDriver.create({});

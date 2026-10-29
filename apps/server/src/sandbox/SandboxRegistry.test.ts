@@ -11,6 +11,7 @@ import { SandboxDriverError, SandboxNotFoundError } from "@t3tools/sandbox-core/
 import { LocalSandboxDriver } from "@t3tools/sandbox-local/server/driver";
 import { defineSandboxDriver, type SandboxInstance } from "@t3tools/sandbox-core/server/driver";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -253,19 +254,22 @@ describe("SandboxRegistry", () => {
     );
   });
 
-  it.effect("stores the built-in local sandbox under the server base directory", () =>
+  it.effect("leaves the built-in local sandbox disabled", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
       const registry = yield* SandboxRegistry.SandboxRegistry;
-      const created = yield* registry.create({ instanceId: LOCAL_SANDBOX_INSTANCE_ID });
-      const root = path.join(config.baseDir, "sandboxes");
-      const relative = path.relative(root, created.workspacePath ?? "");
-      assert.equal(relative.startsWith(".."), false);
-      assert.equal(path.isAbsolute(relative), false);
-      assert.notEqual(relative, "");
-      assert.equal(created.driver, SandboxDriverKind.make("local"));
-      assert.equal(created.endpoint, null);
+      const local = (yield* registry.listInstances).find(
+        (snapshot) => snapshot.instanceId === LOCAL_SANDBOX_INSTANCE_ID,
+      );
+      assert.equal(local?.enabled, false);
+      assert.equal(local?.available, false);
+      const disabled = yield* registry
+        .create({ instanceId: LOCAL_SANDBOX_INSTANCE_ID })
+        .pipe(Effect.flip);
+      assert.equal(disabled._tag, "SandboxInstanceDisabledError");
+      assert.equal(yield* fs.exists(path.join(config.baseDir, "sandboxes")), false);
     }).pipe(
       Effect.provide(
         SandboxRegistry.layer.pipe(
