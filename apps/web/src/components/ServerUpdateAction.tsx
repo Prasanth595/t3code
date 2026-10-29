@@ -47,7 +47,14 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
 const CROSS_TRACK_NOTE = "Switch tracks from the desktop app: Settings → About → Update track.";
 
 /** Hosts refuse a Stable/Nightly crossing outside a track switch, which checks the database first. */
-function refusedCrossing(target: ServerUpdateTarget, serverVersion: string | undefined): boolean {
+function refusedCrossing(
+  target: {
+    readonly selfUpdate: ServerSelfUpdateCapability | null;
+    readonly targetVersion: string;
+    readonly channel?: DesktopUpdateChannel | undefined;
+  },
+  serverVersion: string | undefined,
+): boolean {
   return (
     target.channel === undefined &&
     target.selfUpdate !== null &&
@@ -299,12 +306,7 @@ export function ServerUpdateAction({
     );
   }
 
-  if (
-    refusedCrossing(
-      { environmentId, serverLabel, selfUpdate, targetVersion, channel },
-      serverVersion,
-    )
-  ) {
+  if (refusedCrossing({ selfUpdate, targetVersion, channel }, serverVersion)) {
     return <CrossTrackNote />;
   }
 
