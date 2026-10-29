@@ -3,6 +3,7 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
@@ -168,3 +169,52 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(UsageLimitSources, make);
+
+/**
+ * A hub answers for a 429 only when every account it pools for the driver is spent;
+ * the pool recovers when its first account does.
+ */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  nowMs: number,
+): string | null {
+  let earliest: number | null = null;
+  for (const account of sources.flatMap((source) => source.accounts)) {
+    if (account.driver !== driver) continue;
+    const { windows } = account.usageLimits;
+    const exhausted = windows.filter((window) => window.usedPercent >= 100);
+    if (exhausted.length === 0) {
+      if (windows.length > 0) return null;
+      continue;
+    }
+    const resets = exhausted.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) continue;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= nowMs) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+/** Supplies a reset time for usage limits a provider reports without one. */
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (driver: ProviderDriverKind) => Effect.Effect<string | null>;
+}>("t3/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver: ProviderDriverKind) {
+        // The terminal waits on this read, so a slow hub falls back to its last snapshot.
+        yield* sources.refresh.pipe(Effect.timeoutOption("5 seconds"));
+        const now = yield* DateTime.now;
+        return hubPoolResetAt(yield* sources.current, driver, DateTime.toEpochMillis(now));
+      }),
+    };
+  }),
+);

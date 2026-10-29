@@ -146,6 +146,11 @@ This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
 
+CLIProxyAPI does not pass its reset time through Claude Code or Codex. When a Claude or Codex
+turn stops on a usage limit without one, and every account the hub pools for that provider is
+spent, the thread resets when the first of those accounts refills. **Resume at reset**, automatic
+resume, and snooze then work as they do for direct subscriptions.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

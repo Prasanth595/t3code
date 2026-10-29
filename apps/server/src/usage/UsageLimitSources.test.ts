@@ -1,6 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { expect, it } from "@effect/vitest";
-import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  ProviderDriverKind,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -83,3 +90,65 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
     Effect.scoped,
   ),
 );
+
+describe("hubPoolResetAt", () => {
+  const now = Date.parse("2026-10-30T00:00:00.000Z");
+  const hours = (count: number) => DateTime.formatIso(DateTime.makeUnsafe(now + count * 3_600_000));
+  const window = (usedPercent: number, resetsAt?: string): ServerProviderUsageWindow => ({
+    id: resetsAt ?? `window-${usedPercent}`,
+    kind: "session",
+    label: "5h",
+    usedPercent,
+    ...(resetsAt === undefined ? {} : { resetsAt }),
+  });
+  const hub = (
+    ...accounts: ReadonlyArray<readonly [string, ReadonlyArray<ServerProviderUsageWindow>]>
+  ): UsageLimitSourceSnapshot => ({
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy",
+    label: "hub",
+    checkedAt: hours(0),
+    accounts: accounts.map(([driver, windows], index) => ({
+      id: `account-${index}`,
+      driver: ProviderDriverKind.make(driver),
+      usageLimits: { checkedAt: hours(0), windows },
+    })),
+  });
+  const codex = ProviderDriverKind.make("codex");
+
+  it.each([
+    {
+      name: "the first spent account to recover, after all its spent windows reset",
+      sources: [
+        hub(
+          ["codex", [window(100, hours(2))]],
+          ["codex", [window(100, hours(1)), window(100, hours(3))]],
+        ),
+        hub(["claudeAgent", [window(100, hours(0.5))]]),
+      ],
+      expected: hours(2),
+    },
+    {
+      name: "nothing while an account still has quota",
+      sources: [hub(["codex", [window(100, hours(2))]], ["codex", [window(40, hours(1))]])],
+      expected: null,
+    },
+    {
+      name: "nothing once a spent window's reset has passed",
+      sources: [hub(["codex", [window(100, hours(2))]], ["codex", [window(100, hours(-1))]])],
+      expected: null,
+    },
+    {
+      name: "a recovery time while skipping accounts without readings or reset times",
+      sources: [hub(["codex", []], ["codex", [window(100)]], ["codex", [window(100, hours(4))]])],
+      expected: hours(4),
+    },
+    {
+      name: "nothing when the hub pools none of the driver's accounts",
+      sources: [hub(["claudeAgent", [window(100, hours(1))]])],
+      expected: null,
+    },
+  ])("returns $name", ({ sources, expected }) => {
+    expect(UsageLimitSources.hubPoolResetAt(sources, codex, now)).toBe(expected);
+  });
+});

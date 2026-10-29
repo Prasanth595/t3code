@@ -47,6 +47,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -233,6 +234,16 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
   Effect.scoped(
     Effect.gen(function* () {
       const refreshed = yield* Deferred.make<void>();
+      const hubResetAt = "2026-10-30T05:00:00.000Z";
+      const nativeResetAt = "2026-10-30T03:00:00.000Z";
+      const fallbackDrivers: ProviderDriverKind[] = [];
+      const layerResetFallback = Layer.succeed(UsageLimitSources.UsageLimitResetFallback, {
+        resetAt: (driver) =>
+          Effect.sync(() => {
+            fallbackDrivers.push(driver);
+            return hubResetAt;
+          }),
+      });
       const adapter = yield* ProviderAdapter.ProviderAdapterV2.pipe(
         Effect.provide(
           Layer.mock(ProviderAdapter.ProviderAdapterV2)({
@@ -290,7 +301,11 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           providerInstanceId: instance.instanceId,
           threadId: threadEvent.threadId,
         };
-        for (const failureClass of ["validation_error", "usage_limit"] as const) {
+        for (const [failureClass, resetAt, expectedResetAt] of [
+          ["validation_error", undefined, undefined],
+          ["usage_limit", undefined, hubResetAt],
+          ["usage_limit", nativeResetAt, nativeResetAt],
+        ] as const) {
           const stored = yield* ingestor.ingestNormalized({
             ...input,
             event: {
@@ -302,7 +317,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
               }),
               providerTurnId: idAllocator.derive.providerTurn({
                 driver: instance.driverKind,
-                nativeTurnId: failureClass,
+                nativeTurnId: `${failureClass}:${resetAt ?? "unknown"}`,
               }),
               runOrdinal: 1,
               failureItemOrdinal: 1,
@@ -310,16 +325,25 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
               failure: makeProviderFailure({
                 class: failureClass,
                 message: "Provider rejected turn.",
+                ...(resetAt === undefined ? {} : { resetAt }),
               }),
               threadDisposition: "reusable",
             },
           });
           assert.equal(stored.length, 1);
+          const event = stored[0]?.event;
+          const item = event?.type === "turn-item.updated" ? event.payload : undefined;
+          assert.equal(item?.type === "error" ? item.failure.resetAt : null, expectedResetAt);
           if (failureClass === "validation_error") assert.deepEqual(lookups, []);
         }
-        assert.deepEqual(lookups, [instance.instanceId]);
+        assert.deepEqual(lookups, [instance.instanceId, instance.instanceId]);
+        assert.deepEqual(fallbackDrivers, [instance.driverKind]);
         yield* Deferred.await(refreshed);
-      }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
+      }).pipe(
+        Effect.provide(
+          makeLayerTest(layerTestEventSink, instances).pipe(Layer.provide(layerResetFallback)),
+        ),
+      );
     }),
   ),
 );
