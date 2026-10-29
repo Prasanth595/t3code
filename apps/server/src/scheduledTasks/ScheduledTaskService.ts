@@ -1017,12 +1017,17 @@ export const layer = Layer.effect(
         NodeSqliteClient.readOnly,
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
-      const nextDueAt =
-        next?.next_run_at == null
-          ? Option.some(Infinity)
-          : DateTime.make(next.next_run_at).pipe(Option.map(DateTime.toEpochMillis));
-      if (Option.isSome(nextDueAt) && nextDueAt.value > nowMs) {
-        return yield* dueTasks.record(readVersion, nextDueAt.value, nowMs);
+      // Compare as text like listDueTasks: expanded years (`+011533-…`) sort first but parse far ahead.
+      const nextRunAt = next?.next_run_at ?? null;
+      if (nextRunAt === null || nextRunAt > iso(now)) {
+        const nextDueAt =
+          nextRunAt === null
+            ? Option.some(Infinity)
+            : DateTime.make(nextRunAt).pipe(Option.map(DateTime.toEpochMillis));
+        if (Option.isSome(nextDueAt) && nextDueAt.value > nowMs) {
+          yield* dueTasks.record(readVersion, nextDueAt.value, nowMs);
+        }
+        return;
       }
       const tasks = yield* listDueTasks(now).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
