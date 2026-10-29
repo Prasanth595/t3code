@@ -219,6 +219,24 @@ describe("assistant citation references", () => {
     expect(expanded).not.toContain("t3-citation://");
   });
 
+  it("sends only the comment and a reference for quotes of thinking-derived messages", () => {
+    const thinking = {
+      ...citation,
+      messageId: MessageId.make("message:provider:claudeAgent:native-item:msg_01:thinking:1"),
+      comment: "Can I fix this?",
+    };
+    const expanded = expandAssistantCitationsForProvider(
+      `${serializeAssistantCitation(thinking)} ${serializeAssistantCitation(citation)}`,
+    );
+    const { text: _text, prefix: _prefix, suffix: _suffix, ...reference } = thinking;
+
+    expect(readProviderContext(expanded)).toStrictEqual([
+      { id: "assistant-quote-1", citation: { ...reference, textWithheld: true } },
+      { id: "assistant-quote-2", citation },
+    ]);
+    expect(expanded).not.toContain(thinking.text);
+  });
+
   it("includes bound comments in plain-text titles and stash previews without escaping", () => {
     const commented = { ...citation, comment: 'Why "this"?\nKeep <tags> & `code` $& $1 $$.' };
     const marker = serializeAssistantCitation(commented);
