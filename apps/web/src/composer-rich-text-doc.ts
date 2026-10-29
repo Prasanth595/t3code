@@ -138,6 +138,13 @@ export const ComposerCodeExtension = Code.extend({
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
+  // Mod+E formats selected text only; without a selection the key falls
+  // through to the Recent Threads shortcut.
+  addKeyboardShortcuts() {
+    return {
+      "Mod-e": () => !this.editor.state.selection.empty && this.editor.commands.toggleCode(),
+    };
+  },
 });
 
 /**

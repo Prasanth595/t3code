@@ -104,6 +104,12 @@ describe("reduceCommandPaletteUiState", () => {
       openIntent: { kind: "add-project" },
       session: 2,
     });
+    state = reduceCommandPaletteUiState(state, { _tag: "OpenRecentThreads" });
+    expect(state).toMatchObject({
+      mode: "command",
+      openIntent: { kind: "recent-threads" },
+      session: 3,
+    });
   });
 });
 

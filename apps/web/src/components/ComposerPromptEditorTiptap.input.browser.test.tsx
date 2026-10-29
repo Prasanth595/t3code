@@ -168,6 +168,34 @@ it("bolds with Mod+B only when text is selected", async () => {
   await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
 });
 
+it("formats code with Mod+E only when text is selected, leaving the key to app shortcuts", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const modE = isMacPlatform(navigator.platform) ? "{Meta>}e{/Meta}" : "{Control>}e{/Control}";
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  const consumed: boolean[] = [];
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "e") consumed.push(event.defaultPrevented);
+  };
+  using listener = new DisposableStack();
+  window.addEventListener("keydown", onKeyDown);
+  listener.defer(() => window.removeEventListener("keydown", onKeyDown));
+
+  await userEvent.keyboard(modE);
+  expect(consumed).toEqual([false]);
+  expect(editor.state.storedMarks).toBeNull();
+
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+  });
+  await userEvent.keyboard(modE);
+  await vi.waitFor(() => expect(textWithMark(editor, "code")).toEqual(["ship"]));
+  expect(consumed).toEqual([false, true]);
+});
+
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {

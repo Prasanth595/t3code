@@ -180,6 +180,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  RECENT_THREADS_GROUP,
   createCommandPaletteSearchState,
   type CommandPaletteGroup,
   resolveAddProjectEntry,
@@ -264,6 +265,7 @@ function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPalette
         groups: [{ value: "themes", label: "Change theme", items: [] }],
       };
     case "search":
+    case "recent-threads":
     case undefined:
       return null;
   }
@@ -385,6 +387,7 @@ function OpenCommandPaletteDialog(props: {
       },
   );
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
+  const [opensOnRecentThreads] = useState(() => props.openIntent?.kind === "recent-threads");
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
@@ -1608,7 +1611,10 @@ function OpenCommandPaletteDialog(props: {
             ? changeThemeItem.groups
             : currentView?.groups[0]?.value === "appearance"
               ? changeAppearanceItem.groups
-              : (currentView?.groups ?? rootGroups);
+              : (currentView?.groups ??
+                (opensOnRecentThreads && deferredQuery === "" && recentThreadItems.length > 0
+                  ? rootGroups.filter((group) => group.value === RECENT_THREADS_GROUP)
+                  : rootGroups));
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

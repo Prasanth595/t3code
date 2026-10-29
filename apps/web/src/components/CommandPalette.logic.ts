@@ -34,6 +34,7 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarSubagentThread } from "./Sidebar.logic";
 
 export const RECENT_THREAD_LIMIT = 12;
+export const RECENT_THREADS_GROUP = "recent-threads";
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -71,7 +72,7 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "add-project" | "new-thread-in" | "change-theme" | "recent-threads" }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -100,6 +101,7 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
+  | { readonly _tag: "OpenRecentThreads" }
   | {
       readonly _tag: "OpenChildSearch";
       readonly mode: "files" | "content";
@@ -157,6 +159,8 @@ export function reduceCommandPaletteUiState(
       return openWithIntent({ kind: "new-thread-in" });
     case "OpenChangeTheme":
       return openWithIntent({ kind: "change-theme" });
+    case "OpenRecentThreads":
+      return openWithIntent({ kind: "recent-threads" });
   }
 }
 
@@ -569,7 +573,7 @@ export function filterCommandPaletteGroups(input: {
   if (isActionsFilter) {
     baseGroups = baseGroups.filter((group) => group.value === "actions");
   } else if (!input.isInSubmenu) {
-    baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
+    baseGroups = baseGroups.filter((group) => group.value !== RECENT_THREADS_GROUP);
   }
 
   const searchableGroups = [...baseGroups];
@@ -756,7 +760,7 @@ export function buildRootGroups(input: {
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({
-      value: "recent-threads",
+      value: RECENT_THREADS_GROUP,
       label: "Recent Threads",
       items: input.recentThreadItems,
     });
