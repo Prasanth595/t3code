@@ -946,6 +946,59 @@ describe("AssetAccess", () => {
           });
         }
       }
+      const nestedDirectory = path.join(root, "site #1", "pages");
+      yield* fileSystem.makeDirectory(nestedDirectory, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(nestedDirectory, "img"));
+      for (const relativePath of ["style.css", "a.png", "img/b.png"]) {
+        yield* fileSystem.writeFileString(path.join(nestedDirectory, relativePath), "asset");
+      }
+      yield* fileSystem.writeFileString(path.join(root, "private.db"), "private");
+      yield* fileSystem.makeDirectory(path.join(root, ".hidden"));
+      yield* fileSystem.writeFileString(path.join(root, ".hidden", "private.css"), "private");
+      if (symlinksSupported) {
+        const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-outside-" });
+        yield* fileSystem.writeFileString(path.join(outside, "outside.css"), "outside");
+        yield* fileSystem.symlink(path.join(outside, "outside.css"), path.join(root, "escape.css"));
+      }
+      for (const extension of ["html", "htm"]) {
+        const entryPath = `site #1/pages/index.${extension}`;
+        yield* fileSystem.writeFileString(path.join(root, entryPath), "<p>nested preview</p>");
+        for (const resource of [
+          { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: entryPath },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: entryPath },
+        ]) {
+          const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const entryUrl = new URL(issued.relativeUrl, "http://preview.test");
+          const token = entryUrl.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+          for (const reference of [
+            `index.${extension}`,
+            "style.css",
+            "./a.png",
+            "img/b.png",
+            "../../report.css",
+          ]) {
+            const resourceUrl = new URL(reference, entryUrl);
+            expect(resourceUrl.pathname.startsWith(`${ASSET_ROUTE_PREFIX}/${token}/`)).toBe(true);
+            const requestPath = resourceUrl.pathname.slice(
+              `${ASSET_ROUTE_PREFIX}/${token}/`.length,
+            );
+            expect(yield* resolveAsset(token, requestPath)).toEqual({
+              kind: "file",
+              path: yield* fileSystem.realPath(path.resolve(nestedDirectory, reference)),
+            });
+          }
+          for (const requestPath of [
+            "../report.css",
+            "%2e%2e/report.css",
+            ".env",
+            ".hidden/private.css",
+            "private.db",
+            "escape.css",
+          ]) {
+            expect(yield* resolveAsset(token, requestPath)).toBeNull();
+          }
+        }
+      }
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
