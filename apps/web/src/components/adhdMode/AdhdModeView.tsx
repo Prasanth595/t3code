@@ -39,6 +39,7 @@ import {
   useSnoozeWakeClock,
 } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
+import { InlineButton } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Kbd } from "../ui/kbd";
 import { SidebarInset } from "../ui/sidebar";
@@ -681,51 +682,27 @@ function AdhdCard(props: {
             <Kbd>Space</Kbd> pick
           </span>
         ) : null}
-        <button
-          type="button"
-          className="flex items-center gap-1 hover:text-foreground"
-          onClick={() => accept(selected)}
-        >
+        <InlineButton tone="muted" onClick={() => accept(selected)}>
           <Kbd>E</Kbd> accept
-        </button>
+        </InlineButton>
         {replying ? (
-          <button
-            type="button"
-            className="flex items-center gap-1 hover:text-foreground"
-            onClick={sendReply}
-          >
+          <InlineButton tone="muted" onClick={sendReply}>
             <Kbd>Enter</Kbd> send
-          </button>
+          </InlineButton>
         ) : (
-          <button
-            type="button"
-            className="flex items-center gap-1 hover:text-foreground"
-            onClick={startReply}
-          >
+          <InlineButton tone="muted" onClick={startReply}>
             <Kbd>R</Kbd> reply
-          </button>
+          </InlineButton>
         )}
-        <button
-          type="button"
-          className="flex items-center gap-1 hover:text-foreground"
-          onClick={snooze}
-        >
+        <InlineButton tone="muted" onClick={snooze}>
           <Kbd>⌫</Kbd> snooze 15m
-        </button>
-        <button
-          type="button"
-          className="flex items-center gap-1 hover:text-foreground"
-          onClick={dismiss}
-        >
+        </InlineButton>
+        <InlineButton tone="muted" onClick={dismiss}>
           <Kbd>Esc</Kbd> dismiss
-        </button>
-        <button
-          type="button"
-          className="flex items-center gap-1 hover:text-foreground"
-          onClick={openThread}
-        >
+        </InlineButton>
+        <InlineButton tone="muted" onClick={openThread}>
           <Kbd>O</Kbd> open thread
-        </button>
+        </InlineButton>
       </footer>
     </section>
   );

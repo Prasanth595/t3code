@@ -3974,11 +3974,12 @@ export class OrchestrationV2SuggestNextPromptsError extends Schema.TaggedError<O
   "OrchestrationV2SuggestNextPromptsError",
   {
     threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect()),
+    stage: Schema.Literals(["load-thread", "load-project", "load-settings", "generate"]),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Could not suggest next prompts for this thread.";
+    return `Could not suggest next prompts for this thread (${this.stage}).`;
   }
 }
 
