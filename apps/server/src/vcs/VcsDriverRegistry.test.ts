@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,7 +25,7 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
 describe("VcsDriverRegistry", () => {
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
@@ -55,7 +56,10 @@ describe("VcsDriverRegistry", () => {
                 return processOutput(`${path.relative(input.cwd, path.join(repoDir, ".git"))}\n`);
               }
               return processOutput("");
-            }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
+            }).pipe(
+              Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              Effect.orDie,
+            ),
         }),
       ),
     );
@@ -77,7 +81,7 @@ describe("VcsDriverRegistry", () => {
         assert.equal(yield* registry.detect({ cwd: repoDir }), null);
         assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("detects again when git init creates a repository inside a cached one", () =>
@@ -101,7 +105,7 @@ describe("VcsDriverRegistry", () => {
           projectDir,
         );
       }).pipe(Effect.provide(makeDiskBackedLayer(parentDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("detects a repository created after a negative lookup", () =>
@@ -120,6 +124,6 @@ describe("VcsDriverRegistry", () => {
         assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
         assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
