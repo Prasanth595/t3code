@@ -100,10 +100,12 @@ describe("composer list indentation", () => {
     },
   );
 
-  it("renumbers the parent list after outdenting a numbered item", () => {
-    const value = "1. a\n   1. b\n2. c";
+  it.each([
+    ["1. a\n   1. b\n2. c", "1. a\n2. b\n3. c"],
+    ["- a\n  5. b", "- a\n5. b"],
+  ])("outdents %j to %j and renumbers only within the parent's list", (value, expected) => {
     const edit = listOutdentForTab(value, value.indexOf("b"), value.indexOf("b"))!;
-    expect(applyEdit(value, edit)).toBe("1. a\n2. b\n3. c");
+    expect(applyEdit(value, edit)).toBe(expected);
   });
 
   it("leaves a top-level item alone so Shift+Tab can still switch Build/Plan", () => {

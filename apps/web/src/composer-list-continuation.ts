@@ -318,17 +318,18 @@ export function listOutdentForTab(
   const parent = parentMarker(value, line.start, marker, tokens);
   // With no parent above, undo one step of Tab's two-space fallback.
   const indent = parent?.indent ?? marker.indent.replace(/^(?:\t| {1,2})/, "");
-  const number = parent ? nestedNumber(marker, parent) : { replacedLength: 0, text: "" };
+  const continues =
+    parent?.kind === "ordered" &&
+    marker.kind === "ordered" &&
+    parent.delimiter === marker.delimiter;
+  const number = continues ? nestedNumber(marker, parent) : { replacedLength: 0, text: "" };
   const replacedEnd = line.start + marker.indent.length + number.replacedLength;
   const replacement = indent + number.text;
   const cursorAfter =
     start < replacedEnd
       ? line.start + indent.length
       : start - replacedEnd + line.start + replacement.length;
-  const renumbered =
-    parent?.kind === "ordered" && marker.kind === "ordered" && parent.delimiter === marker.delimiter
-      ? renumberFollowingItems(value, line.end, parent, tokens)
-      : null;
+  const renumbered = continues ? renumberFollowingItems(value, line.end, parent, tokens) : null;
   if (renumbered) {
     return {
       start: line.start,
