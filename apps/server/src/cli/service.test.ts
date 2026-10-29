@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it, live } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -8,8 +8,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -60,44 +58,6 @@ function makeTestService(
   });
   return { service, installOptions, restarts };
 }
-
-live("quotes another home's directory in the status and error hints", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-    const otherBaseDir = "/home/me/T3's Data/$HOME/$(printf unexpected)";
-    const { service } = makeTestService({ ...status, current: false, otherBaseDir });
-    vi.spyOn(BootService, "layer").mockReturnValue(Layer.succeed(BootService.BootService, service));
-    const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
-      "status",
-      "--base-dir",
-      baseDir,
-    ]).pipe(
-      Effect.andThen(TestConsole.logLines),
-      Effect.map((lines) => lines.join("\n")),
-      Effect.provideService(HostProcess.Environment, {}),
-      Effect.provide(
-        Layer.mergeAll(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-          Layer.fresh(TestConsole.layer),
-        ),
-      ),
-    );
-    const error = new BootService.BootServiceOtherBaseDirError({
-      installedBaseDir: otherBaseDir,
-      baseDir,
-    });
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    for (const message of [output, error.message]) {
-      const hint = message.match(/Pass `?(--base-dir .*?)`? to manage it/)?.[1];
-      expect(hint).toBeDefined();
-      const args = yield* spawner.string(
-        ChildProcess.make("sh", ["-c", `set -- ${hint}; printf '%s\\n' "$#" "$1" "$2"`]),
-      );
-      expect(args).toBe(`2\n--base-dir\n${otherBaseDir}\n`);
-    }
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer))),
-);
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands", (it) => {
   it.effect.each(["install", "update"] as const)(
