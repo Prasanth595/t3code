@@ -51,7 +51,9 @@ const certificateErrorCode = (error: unknown) => {
     if (
       Predicate.hasProperty(current, "code") &&
       typeof current.code === "string" &&
-      /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/.test(current.code)
+      /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)|INVALID_(CA|PURPOSE)|PATH_LENGTH_EXCEEDED|HOSTNAME_MISMATCH/.test(
+        current.code,
+      )
     )
       return current.code;
     current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
