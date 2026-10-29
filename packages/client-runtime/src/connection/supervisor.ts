@@ -198,7 +198,6 @@ function connectingState(
 }
 
 function failureFromExit<A>(
-  target: ConnectionTarget,
   exit: Exit.Exit<A, TracedAttemptFailure>,
   established: boolean,
   stable: boolean,
@@ -222,7 +221,7 @@ function failureFromExit<A>(
     failure: {
       error: new ConnectionTransientError({
         reason: "transport",
-        detail: `${target.label} connection failed unexpectedly.`,
+        detail: "The environment connection failed unexpectedly.",
       }),
       attemptSpan: Option.none(),
     },
@@ -257,7 +256,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const usesRelay = connectionRoutes(entry).some(
     (route) => route.target._tag === "RelayConnectionTarget",
   );
-  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
+  const setupTimeoutDetail = `The environment did not respond during connection setup.${
     usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
   }`;
   yield* annotateTarget(target);
@@ -755,7 +754,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (longResume) return true;
           return yield* new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond to a connection health check.`,
+            detail: "The environment did not respond to a connection health check.",
           });
         }
         if (probeEvent._tag === "ProbeCompleted") {
@@ -860,7 +859,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const isUnexpectedDefect =
         !Cause.hasInterruptsOnly(establishment.exit.cause) &&
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
-      const outcome = failureFromExit(target, establishment.exit, false, false);
+      const outcome = failureFromExit(establishment.exit, false, false);
       if (isUnexpectedDefect) {
         const defect = establishment.exit.cause.reasons.find(Cause.isDieReason)?.defect;
         yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
@@ -936,12 +935,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
-    const outcome = failureFromExit(
-      target,
-      connectedExit,
-      true,
-      connectedForMs >= BACKOFF_RESET_AFTER_MS,
-    );
+    const outcome = failureFromExit(connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
     if (outcome._tag === "Failure") {
       yield* Effect.void.pipe(
         Effect.withSpan("EnvironmentSupervisor.connectionLost", {

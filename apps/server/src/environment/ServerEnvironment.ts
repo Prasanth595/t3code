@@ -21,6 +21,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -45,6 +46,9 @@ export class ServerEnvironment extends Context.Service<
   {
     readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
     readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
+    readonly getDescriptorForSettings: (settings: {
+      readonly environmentLabel: string;
+    }) => Effect.Effect<ExecutionEnvironmentDescriptor>;
   }
 >()("t3/environment/ServerEnvironment") {}
 
@@ -185,12 +189,13 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const defaultLabel = yield* resolveServerEnvironmentLabel({ cwdBaseName });
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
@@ -203,9 +208,9 @@ export const make = Effect.gen(function* () {
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
 
-  const descriptor: ExecutionEnvironmentDescriptor = {
+  const defaultDescriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
-    label,
+    label: defaultLabel,
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
@@ -257,6 +262,7 @@ export const make = Effect.gen(function* () {
       threadStop: true,
       ...(hostPlatform === "win32" ? {} : { localServerStop: true }),
       environmentIcon: true,
+      environmentLabel: true,
       projectCloneTracking: true,
       ignoredFileListing: true,
       triage: true,
@@ -272,16 +278,24 @@ export const make = Effect.gen(function* () {
       linkFence: true,
     },
   };
+  // Relay publishing can change while the server is running; read it for every descriptor.
+  const getDescriptorForSettings = Effect.fn("ServerEnvironment.getDescriptorForSettings")(
+    (settings: { readonly environmentLabel: string }) =>
+      readAgentActivityPublishingActive(secrets).pipe(
+        Effect.map((agentActivityPublishing): ExecutionEnvironmentDescriptor => ({
+          ...defaultDescriptor,
+          label: settings.environmentLabel || defaultLabel,
+          capabilities: { ...defaultDescriptor.capabilities, agentActivityPublishing },
+        })),
+      ),
+  );
 
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
+    getDescriptor: serverSettings.getEnvironmentLabel.pipe(
+      Effect.flatMap((environmentLabel) => getDescriptorForSettings({ environmentLabel })),
     ),
+    getDescriptorForSettings,
   });
 });
 

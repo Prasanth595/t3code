@@ -641,6 +641,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),
+    getEnvironmentLabel: Ref.get(settings).pipe(Effect.map((current) => current.environmentLabel)),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),

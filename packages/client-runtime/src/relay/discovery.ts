@@ -54,6 +54,24 @@ export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryS
   error: Option.none(),
 };
 
+function withoutStatuses(
+  environments: RelayEnvironmentDiscoveryState["environments"],
+  availability: RelayEnvironmentAvailability,
+  error: Option.Option<ConnectionAttemptError> = Option.none(),
+) {
+  return new Map(
+    [...environments].map(([id, entry]) => [
+      id,
+      {
+        ...entry,
+        availability,
+        status: Option.none<RelayEnvironmentStatusResponse>(),
+        error,
+      },
+    ]),
+  );
+}
+
 function validateStatus(
   environment: RelayClientEnvironmentRecord,
   status: RelayEnvironmentStatusResponse,
@@ -187,6 +205,12 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       }
       yield* updateEnvironment(generation, environment.environmentId, (current) => ({
         ...current,
+        environment: result.success.descriptor
+          ? {
+              ...current.environment,
+              label: result.success.descriptor.label,
+            }
+          : current.environment,
         availability: result.success.status,
         status: Option.some(result.success),
         error: Option.none(),
@@ -208,6 +232,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       if ((yield* connectivity.status) === "offline") {
         yield* SubscriptionRef.update(state, (current) => ({
           ...current,
+          environments: withoutStatuses(current.environments, "offline"),
           refreshing: false,
           offline: true,
         }));
@@ -216,12 +241,13 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
 
       let generation = yield* Ref.get(accountGeneration);
       yield* Ref.set(refreshGeneration, generation);
-      yield* SubscriptionRef.set(state, {
-        environments: new Map(),
+      yield* SubscriptionRef.update(state, (current) => ({
+        ...current,
+        environments: withoutStatuses(current.environments, "checking"),
         refreshing: true,
         offline: false,
         error: Option.none(),
-      });
+      }));
 
       // Sign-out triggers credentials-changed refreshes and must settle to an empty list.
       // Only session-level missing credentials are benign; relay-side auth failures must surface.
@@ -232,10 +258,8 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           if ((yield* Ref.get(accountGeneration)) !== generation) {
             return;
           }
-          yield* SubscriptionRef.update(state, (current) => ({
-            ...current,
-            refreshing: false,
-          }));
+          yield* Ref.set(activeAccountId, Option.none());
+          yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
           return;
         }
         return yield* failure;
@@ -247,11 +271,17 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       const accountId = relayAccountId(clerkToken);
       const previousAccountId = yield* Ref.get(activeAccountId);
       if (
-        Option.isSome(previousAccountId) &&
-        (!Option.isSome(accountId) || previousAccountId.value !== accountId.value)
+        Option.isNone(previousAccountId) ||
+        Option.isNone(accountId) ||
+        previousAccountId.value !== accountId.value
       ) {
         generation = yield* Ref.updateAndGet(accountGeneration, (current) => current + 1);
         yield* Ref.set(refreshGeneration, generation);
+        yield* Ref.set(offlineReportFingerprints, new Map());
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          environments: new Map(),
+        }));
       }
       yield* Ref.set(activeAccountId, accountId);
 
@@ -299,6 +329,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           }
           yield* SubscriptionRef.update(state, (current) => ({
             ...current,
+            environments: withoutStatuses(current.environments, "error", Option.some(error)),
             refreshing: false,
             error: Option.some(error),
           }));
@@ -313,6 +344,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       networkStatus === "offline"
         ? SubscriptionRef.update(state, (current) => ({
             ...current,
+            environments: withoutStatuses(current.environments, "offline"),
             refreshing: false,
             offline: true,
           }))

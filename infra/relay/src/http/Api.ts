@@ -1206,6 +1206,7 @@ export const layerServerApi = HttpApiBuilder.group(
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     const heldHooks = yield* HeldHooks.HeldHooks;
+    const links = yield* EnvironmentLinks.EnvironmentLinks;
     const requireOwnEnvironment =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(function* (environmentId: string) {
@@ -1434,6 +1435,19 @@ export const layerServerApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "updateEnvironmentLabel",
+        Effect.fn("relay.api.server.updateEnvironmentLabel")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          yield* links.recordEnvironmentLabel({
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            label: payload.label,
+          });
+          return { ok: true as const };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "wakeHeldHooks",
         Effect.fn("relay.api.server.wakeHeldHooks")(function* ({ params }) {
           yield* requireOwnEnvironment(params.environmentId);
@@ -1487,6 +1501,7 @@ const RelayCommonPersistenceError = Schema.Union([
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
   EnvironmentLinks.EnvironmentLinkEnvironmentLookupPersistenceError,
+  EnvironmentLinks.EnvironmentLinkLabelUpdatePersistenceError,
   HookInbox.HookInboxError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;

@@ -176,6 +176,7 @@ export class ServerSettingsService extends Context.Service<
     readonly ready: Effect.Effect<void, ServerSettingsError>;
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly getEnvironmentLabel: Effect.Effect<string>;
 
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -234,6 +235,9 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
+    getEnvironmentLabel: Ref.get(currentSettingsRef).pipe(
+      Effect.map((settings) => settings.environmentLabel),
+    ),
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -562,6 +566,7 @@ const make = Effect.gen(function* () {
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
+  const trustedEnvironmentLabel = yield* Ref.make(DEFAULT_SERVER_SETTINGS.environmentLabel);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
@@ -665,7 +670,11 @@ const make = Effect.gen(function* () {
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         // The file may hold an opt-out we can no longer read; never resume threads on a guess.
-        settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
+        settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          environmentLabel: yield* Ref.get(trustedEnvironmentLabel),
+          continueThreadsAfterServerUpdate: false,
+        };
         if (failure._tag === "Failure") {
           parseFailure = Option.some(Cause.squash(failure.cause));
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
@@ -781,6 +790,9 @@ const make = Effect.gen(function* () {
       for (const move of sourceControlMigration.secretMoves) {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
+    }
+    if (settingsFileTrusted) {
+      yield* Ref.set(trustedEnvironmentLabel, migrated.environmentLabel);
     }
     return { settings: migrated, parseFailure };
   });
@@ -1021,6 +1033,7 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
             }
+            yield* Ref.set(trustedEnvironmentLabel, next.environmentLabel);
             return materializedExit.value;
           }),
         );
@@ -1145,6 +1158,10 @@ const make = Effect.gen(function* () {
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeSettingsSecrets),
       Effect.map(resolveTextGenerationProvider),
+    ),
+    getEnvironmentLabel: getSettingsFromCache.pipe(
+      Effect.map((settings) => settings.environmentLabel),
+      Effect.catch(() => Ref.get(trustedEnvironmentLabel)),
     ),
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
