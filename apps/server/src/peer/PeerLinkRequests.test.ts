@@ -977,3 +977,221 @@ it.live(
       }),
     ),
 );
+
+/** Every link card in the thread, oldest first. */
+const linkCards = (a: Laptop) =>
+  a.orchestrator
+    .getThreadProjection(threadId)
+    .pipe(
+      Effect.map((projection) =>
+        projection.turnItems.flatMap((item) => (item.type === "link_request" ? [item] : [])),
+      ),
+    );
+
+/** Asks through the tool and returns the card that ask left. */
+const ask = (a: Laptop, args: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const asked = yield* a.call(args);
+    const { turnItemId } = asked.structuredContent as { readonly turnItemId: TurnItemId };
+    return (yield* linkCards(a)).find((card) => card.id === turnItemId)!;
+  });
+
+/** The user links the box from `cardId` with a fresh code; returns the code. */
+const linkBox = (a: Laptop, b: ServedPeer, cardId: TurnItemId) =>
+  Effect.gen(function* () {
+    const pairing = yield* b.auth.issuePairingCredential();
+    yield* a.requests.answer({
+      threadId,
+      turnItemId: cardId,
+      answer: {
+        type: "link",
+        urls: [b.url],
+        access: "full-access",
+        pairingCode: pairing.credential,
+      },
+    });
+    return pairing.credential;
+  });
+
+it.live("linking the machine an older card asked for by hint ends that card too", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      // The agent first asks by the user's word, then again by the box's address.
+      const older = yield* ask(a, {
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-hint",
+      });
+      const newer = yield* ask(a, {
+        url: b.url,
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-url",
+      });
+      const credential = yield* linkBox(a, b, newer.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === newer.id)).toMatchObject({
+        status: "completed",
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      // The older card keeps what it asked and ends; it no longer asks the user.
+      expect(cards.find((card) => card.id === older.id)).toMatchObject({
+        status: "cancelled",
+        linkStatus: "cancelled",
+        hint: "Box",
+        reason: "Delegate to the box.",
+        requestedAccess: "full-access",
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      // The agent hears of the one link it made, and nothing about the card that link ended.
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
+      expect(yield* storedText(a)).not.toContain(credential);
+
+      const late = yield* a.requests
+        .answer({ threadId, turnItemId: older.id, answer: { type: "decline" } })
+        .pipe(Effect.flip);
+      expect(late.reason).toBe("already_answered");
+    }),
+  ),
+);
+
+/** Records an open card with exactly the ask in `fields`, as `request` would. */
+const recordCard = (
+  a: Laptop,
+  key: string,
+  fields: {
+    readonly url?: string;
+    readonly environmentId?: typeof box.environmentId;
+    readonly hint?: string;
+    readonly requestedAccess?: "read-only" | "full-access";
+  },
+) =>
+  Effect.gen(function* () {
+    const id = TurnItemId.make(`turn-item:link-request:${key}`);
+    yield* a.orchestrator.dispatch({
+      type: "link_request.record",
+      commandId: CommandId.make(`command:pending:${key}`),
+      threadId,
+      runId,
+      nodeId: rootNode,
+      turnItemId: id,
+      reason: "",
+      linkStatus: "pending",
+      ...fields,
+    });
+    return id;
+  });
+
+it.live("a link ends older cards for the same machine by id or address", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const byId = yield* ask(a, {
+        environmentId: box.environmentId,
+        requestedAccess: "full-access",
+      });
+      expect(byId.environmentId).toBe(box.environmentId);
+      const byAddress = yield* recordCard(a, "by-address", {
+        url: b.url,
+        requestedAccess: "full-access",
+      });
+      const newer = yield* ask(a, { url: b.url, requestedAccess: "full-access" });
+      yield* linkBox(a, b, newer.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === byId.id)).toMatchObject({ linkStatus: "cancelled" });
+      expect(cards.find((card) => card.id === byAddress)).toMatchObject({
+        linkStatus: "cancelled",
+      });
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
+    }),
+  ),
+);
+
+it.live("a link leaves open the cards that asked for something else, or asked later", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const other = descriptorOf("environment-other", "Other");
+      const left = [
+        // Another machine, and a word that names neither.
+        yield* recordCard(a, "other-hint", { hint: "vps", requestedAccess: "full-access" }),
+        yield* recordCard(a, "no-hint", { requestedAccess: "full-access" }),
+        // The same word, but for less access than the link was asked with.
+        yield* recordCard(a, "less-access", { hint: "Box", requestedAccess: "read-only" }),
+        // The same word, on a card that named another machine.
+        yield* recordCard(a, "other-id", {
+          environmentId: other.environmentId,
+          hint: "Box",
+          requestedAccess: "full-access",
+        }),
+        yield* recordCard(a, "other-address", {
+          url: "http://127.0.0.1:9",
+          hint: "Box",
+          requestedAccess: "full-access",
+        }),
+        // A word the label only contains.
+        yield* recordCard(a, "partial-hint", { hint: "Bo", requestedAccess: "full-access" }),
+      ];
+      const linked = yield* ask(a, { url: b.url, hint: "Box", requestedAccess: "full-access" });
+      const later = yield* recordCard(a, "later", { hint: "Box", requestedAccess: "full-access" });
+      yield* linkBox(a, b, linked.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === linked.id)).toMatchObject({ linkStatus: "linked" });
+      for (const id of [...left, later]) {
+        expect(cards.find((card) => card.id === id)).toMatchObject({
+          status: "waiting",
+          linkStatus: "pending",
+        });
+      }
+    }),
+  ),
+);
+
+it.live("a later card's failed link leaves the older card open", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const older = yield* ask(a, { hint: "Box", requestedAccess: "full-access" });
+      const byAddress = yield* recordCard(a, "by-address", {
+        url: b.url,
+        requestedAccess: "full-access",
+      });
+      const newer = yield* ask(a, { url: b.url, hint: "Box", requestedAccess: "full-access" });
+      yield* a.requests.answer({
+        threadId,
+        turnItemId: newer.id,
+        answer: { type: "link", urls: [b.url], access: "full-access", pairingCode: "not-a-code" },
+      });
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === newer.id)).toMatchObject({ linkStatus: "failed" });
+      for (const id of [older.id, byAddress]) {
+        expect(cards.find((card) => card.id === id)).toMatchObject({
+          status: "waiting",
+          linkStatus: "pending",
+        });
+      }
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toMatchObject(
+        { kind: "user_input" },
+      );
+
+      // The older card still takes its answer, and the failed one stays as it ended.
+      yield* linkBox(a, b, older.id);
+      const after = yield* linkCards(a);
+      expect(after.find((card) => card.id === older.id)).toMatchObject({ linkStatus: "linked" });
+      expect(after.find((card) => card.id === newer.id)).toMatchObject({ linkStatus: "failed" });
+    }),
+  ),
+);
