@@ -200,6 +200,15 @@ export function getCloneDirectoryPath(
   );
 }
 
+/** The clone's own folder, which folder browsing keeps at the end of the destination. */
+export function getCloneDirectoryLeafName(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return getCloneDirectoryPath(remoteUrl, ghqCloneLayout, repository).split("/").at(-1) ?? "";
+}
+
 export function getCloneDestinationPath(
   directoryPath: string,
   directoryName: string | null | undefined,

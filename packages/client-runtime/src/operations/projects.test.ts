@@ -5,6 +5,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   findExistingAddProject,
   getCloneDestinationPath,
+  getCloneDirectoryLeafName,
   getCloneDirectoryName,
   getCloneDirectoryPath,
   getDefaultCloneUrl,
@@ -82,6 +83,13 @@ describe("add project shared logic", () => {
         "Project/My Repo",
       ),
     ).toBe("My Repo");
+    expect(
+      getCloneDirectoryLeafName(
+        "git@ssh.dev.azure.com:v3/org/Project/My%20Repo",
+        true,
+        "Project/My Repo",
+      ),
+    ).toBe("My%20Repo");
     expect(
       getCloneDestinationPath(
         "C:\\Users\\me\\ghq",

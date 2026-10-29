@@ -17,6 +17,7 @@ import {
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
+  getCloneDirectoryLeafName,
   getCloneDirectoryPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
@@ -304,7 +305,7 @@ function useBrowsePathInput(
   const seedPath = getCloneDestinationPath(
     getAddProjectInitialQuery(environmentBaseDirectory),
     remoteUrl && environment?.ghqCloneLayout
-      ? getCloneDirectoryPath(remoteUrl, true)
+      ? getCloneDirectoryPath(remoteUrl, true, pinnedDirectoryName)
       : pinnedDirectoryName,
   );
   // Each host keeps the path last typed or browsed for it, and shows its own default until then,
@@ -1367,9 +1368,13 @@ export function AddProjectDestinationScreen(props: {
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
+  const cloneDirectoryName =
+    remoteUrl && environment?.ghqCloneLayout
+      ? getCloneDirectoryLeafName(remoteUrl, true, repositoryName)
+      : repositoryName;
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
-    repositoryName,
+    cloneDirectoryName,
     remoteUrl,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1475,7 +1480,7 @@ export function AddProjectDestinationScreen(props: {
             navigateToBrowsePath={navigateToBrowsePath}
             pathInput={pathInput}
             setPathInput={setPathInput}
-            pinnedDirectoryName={repositoryName}
+            pinnedDirectoryName={cloneDirectoryName}
             cloning={Boolean(remoteUrl)}
           />
         </>

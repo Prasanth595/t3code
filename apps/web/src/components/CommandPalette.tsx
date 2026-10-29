@@ -10,7 +10,7 @@ import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
-  getCloneDirectoryName,
+  getCloneDirectoryLeafName,
   getCloneDirectoryPath,
   getDefaultCloneUrl,
   getNewProjectPathPreview,
@@ -590,7 +590,11 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   const pinnedCloneDirectoryName =
     addProjectCloneFlow?.step === "confirm"
-      ? getCloneDirectoryName(
+      ? getCloneDirectoryLeafName(
+          addProjectCloneFlow.remoteUrl,
+          environments.find(
+            (candidate) => candidate.environmentId === addProjectCloneFlow.environmentId,
+          )?.serverConfig?.settings.ghqCloneLayout === true,
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
