@@ -99,14 +99,19 @@ export function AndroidWorkspaceNavigation(props: {
   const barWidth =
     props.paneWidth ??
     window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
-  // Only the Chats list draws the compose button beside the bar.
+  // A phone draws compose on the Chats list only; the split sidebar draws it on every tab
+  // except the Settings and Usage pages.
+  const composeBesideBar =
+    props.paneWidth === undefined
+      ? selectedTab === "threads"
+      : selectedTab !== "settings" && selectedTab !== "usage";
   const metrics = floatingTabsMetrics(
     tabs.length,
     scale,
     fabSize,
     barWidth,
     props.fillWidth,
-    selectedTab === "threads" && connectionState.hasConnections,
+    composeBesideBar && connectionState.hasConnections,
   );
   if (!rail && keyboardVisible) return null;
 
