@@ -3712,9 +3712,10 @@ describe("AcpAdapterV2", () => {
           appRunOrdinal: 0,
         },
       });
-      // Closing the replaced runtime settles its open prompt as cancelled. Its completion
-      // callback must finish before the next turn reads delivery state.
-      yield* Deferred.succeed(firstPromptGate, { stopReason: "cancelled" });
+      // The replaced runtime's prompt settles late. A successful result would record delivery
+      // without the generation check; a cancelled one never records it, so it proves nothing.
+      // Its completion callback must finish before the next turn reads delivery state.
+      yield* Deferred.succeed(firstPromptGate, { stopReason: "end_turn" });
       yield* Deferred.await(firstPromptCallbackDone);
       yield* runtime.startTurn(
         makeTurnInput({
