@@ -97,7 +97,7 @@ describe("DelegatedTaskAnalytics", () => {
             drained,
           ),
         );
-        yield* Deferred.await(drained).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(drained);
         expect(recorded).toHaveLength(1);
         expect(recorded[0]![0]).toBe("mcp.delegated_task.finished");
         expect(recorded[0]![1]).toMatchObject({ status: "completed", durationSeconds: 10 });
