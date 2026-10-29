@@ -128,7 +128,6 @@ export function useReviewDiffData(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
   readonly expandedFileIds: ReadonlyArray<string> | undefined;
-  readonly enabled: boolean;
 }) {
   const { draftMessage, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
@@ -164,7 +163,7 @@ export function useReviewDiffData(input: {
   );
   const queries = useMemo(
     () =>
-      !input.enabled || !environmentId || !cwd || !lazySource
+      !environmentId || !cwd || !lazySource
         ? []
         : (lazySource.files ?? []).map((file) =>
             requestedPaths.has(file.path)
@@ -187,7 +186,7 @@ export function useReviewDiffData(input: {
                 })
               : null,
           ),
-    [input.enabled, environmentId, cwd, lazySource, requestedPaths, scope],
+    [environmentId, cwd, lazySource, requestedPaths, scope],
   );
   const parsedQuery = useMemo(
     () =>

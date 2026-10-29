@@ -478,7 +478,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     expandedFileIds: selectedSection?.id
       ? reviewCache.expandedFileIdsBySection[selectedSection.id]
       : undefined,
-    enabled: isEnvironmentReady,
   });
   // Expo may return null before registration or in older binaries; use the fallback.
   const NativeReviewDiffView = resolveNativeReviewDiffView();
