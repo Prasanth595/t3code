@@ -92,3 +92,31 @@ describe("Codex device context", () => {
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
 }
+
+describe("Codex instruction overrides", () => {
+  it("keeps long Unicode replacements complete without exceeding per-entry limits", () => {
+    const replacement = "Custom policy 🙂\n".repeat(1000);
+    const context = buildCodexAdditionalContext(
+      { model: "custom" },
+      { browser: true, device: true },
+      { orchestration: "", visuals: replacement, browser: "", devices: replacement },
+    );
+    const collect = (prefix: string) =>
+      Object.entries(context)
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, entry]) => entry.value)
+        .join("");
+    NodeAssert.equal(collect("t3_code_orchestration_"), replacement);
+    NodeAssert.equal(collect("t3_code_tools"), replacement);
+    for (const entry of Object.values(context)) {
+      NodeAssert.ok(
+        Buffer.byteLength(entry.value, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+      );
+    }
+    const unavailable = buildCodexAdditionalContext({ model: "custom" }, false, {
+      devices: replacement,
+      browser: replacement,
+    });
+    NodeAssert.ok(!Object.keys(unavailable).some((key) => key.startsWith("t3_code_tools")));
+  });
+});

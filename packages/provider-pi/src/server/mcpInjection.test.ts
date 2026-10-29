@@ -1,13 +1,21 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildPiT3McpExtensionSource,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
-import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import {
+  materializePiT3McpExtension,
+  buildPiRpcLaunch,
+  resolvePiLaunchArgs,
+} from "./mcpInjection.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -134,3 +142,28 @@ describe("pi T3 MCP injection", () => {
     assert.isTrue(resolvePiLaunchArgs("--model deepseek/v4").ok);
   });
 });
+
+it.effect("keeps concurrently published Pi guidance revisions isolated and reusable", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cacheDir = yield* fs.makeTempDirectoryScoped();
+    const first = { visuals: "Publish the document and return a link." };
+    const second = { visuals: "Show the comparison in chat." };
+    const overrides = [first, second, first];
+    const paths = yield* Effect.forEach(
+      overrides,
+      (value) => materializePiT3McpExtension(cacheDir, value),
+      { concurrency: "unbounded" },
+    );
+    assert.notEqual(paths[0], paths[1]);
+    assert.equal(paths[0], paths[2]);
+    for (const [index, filePath] of paths.entries()) {
+      assert.equal(
+        yield* fs.readFileString(filePath),
+        buildPiT3McpExtensionSource(overrides[index]),
+      );
+    }
+    assert.equal(yield* materializePiT3McpExtension(cacheDir, first), paths[0]);
+    assert.equal(yield* fs.readFileString(paths[1]!), buildPiT3McpExtensionSource(second));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

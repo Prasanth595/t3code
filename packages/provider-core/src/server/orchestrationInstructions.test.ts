@@ -4,6 +4,7 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  resolveAgentInstructions,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -81,5 +82,69 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+  });
+});
+
+describe("agent instruction overrides", () => {
+  it("replaces selected sections, omits empty ones, and restores defaults with null", () => {
+    const defaults = resolveAgentInstructions();
+    assert.equal(defaults.orchestration, T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.deepEqual(resolveAgentInstructions(null), defaults);
+    assert.deepEqual(resolveAgentInstructions({ visuals: null, browser: null }), defaults);
+    const resolved = resolveAgentInstructions({
+      visuals: "Return a link for standalone artifacts.",
+      browser: "",
+      devices: "Use the team's device workflow.",
+    });
+    assert.include(resolved.orchestration, "Return a link for standalone artifacts.");
+    assert.notInclude(resolved.orchestration, "### Visuals and preview");
+    assert.include(resolved.orchestration, "orchestrator_capabilities");
+    assert.equal(resolved.browser, "");
+    assert.equal(resolved.devices, "Use the team's device workflow.");
+    assert.equal(resolved.devicesWithToolSearch, resolved.devices);
+    assert.notInclude(
+      resolveAgentInstructions({ orchestration: "" }).orchestration,
+      "orchestrator_capabilities",
+    );
+  });
+
+  it("uses replacements in system, first-prompt and ACP instruction channels", () => {
+    const instructionOverrides = {
+      orchestration: "Custom coordination.",
+      visuals: "",
+      devices: "Custom device guidance.",
+    };
+    const expected = t3OrchestrationSystemPrompt(true, true, instructionOverrides)!;
+    assert.include(expected, "Custom coordination.");
+    assert.include(expected, "Custom device guidance.");
+    assert.notInclude(expected, "html_render");
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, true, instructionOverrides));
+    const cursor = t3OrchestrationPrompt({
+      prompt: "Do the work.",
+      hasT3Mcp: true,
+      hasDeviceTools: true,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+      instructionOverrides,
+    });
+    assert.include(cursor, expected.trim());
+    const acp = t3AcpPromptWithInstructions({
+      prompt: "Do the work.",
+      state: { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true },
+      instructionOverrides,
+    });
+    assert.include(acp, "Custom coordination.");
+    assert.include(acp, "Custom device guidance.");
+    assert.notInclude(acp, "html_render");
+    const lateDevices = t3OrchestrationPrompt({
+      prompt: "Use the device.",
+      hasT3Mcp: true,
+      hasDeviceTools: true,
+      orchestrationDelivered: true,
+      deviceInstructionsDelivered: false,
+      instructionOverrides,
+    });
+    assert.include(lateDevices, "Custom device guidance.");
+    assert.notInclude(lateDevices, "Custom coordination.");
   });
 });

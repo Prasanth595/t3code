@@ -3049,9 +3049,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (mcpAvailable) state.mcp = wanted;
       }
+      const instructionOverrides = (yield* host.settings.get.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: "Could not read agent instruction overrides",
+              cause,
+            }),
+        ),
+      )).agentInstructionOverrides;
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
+        t3OrchestrationSystemPrompt(
+          mcpAvailable,
+          mcpSession?.capabilities?.has("device") === true,
+          instructionOverrides,
+        ),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
