@@ -1,5 +1,6 @@
 import {
   CommandId,
+  linkOriginIsFenced,
   MessageId,
   type ProjectId,
   WorktreeMcpFailure,
@@ -228,13 +229,21 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const worktree = yield* restore(
           gitWorkflow
-            .createWorktree({
-              cwd: projectCwd,
-              refName: worktreeBaseRef,
-              newRefName: input.branch,
-              baseRefName,
-              path: null,
-            })
+            .createWorktree(
+              {
+                cwd: projectCwd,
+                refName: worktreeBaseRef,
+                newRefName: input.branch,
+                baseRefName,
+                path: null,
+              },
+              {
+                skipSetup:
+                  input.runSetupScript === false ||
+                  (projection.thread.linkOrigin !== undefined &&
+                    linkOriginIsFenced(projection.thread.linkOrigin)),
+              },
+            )
             .pipe(asOperationFailed("Unable to create the worktree")),
         );
         const worktreePath = worktree.worktree.path;
@@ -336,7 +345,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
 
         let setupScript: WorktreeMcpSetupScriptStatus = { status: "skipped" };
-        if (input.runSetupScript ?? true) {
+        if ((input.runSetupScript ?? true) && !worktree.setupHandled) {
           setupScript = yield* setupScriptRunner
             .runForThread({
               threadId: scope.thread.threadId,

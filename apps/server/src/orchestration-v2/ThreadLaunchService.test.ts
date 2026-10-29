@@ -2290,3 +2290,50 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect.each([false, true])("waits for gtr setup and does not repeat it (fenced: %s)", (fenced) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (_input, options) =>
+        Effect.gen(function* () {
+          assert.equal(options?.skipSetup, fenced);
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(finish);
+          return { worktree: { path: "/gtr/feature", refName: "feature" }, setupHandled: true };
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = {
+        ...launchInput({
+          command: "launch:gtr",
+          thread: "thread:gtr",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main", branch: "feature" },
+        }),
+        ...(fenced ? { linkOrigin: { sessionId: "linked-session", label: "Linked" } } : {}),
+      };
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(entered);
+      assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      yield* Deferred.succeed(finish, undefined);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.commandId === CommandId.make(`${input.commandId}:release`) &&
+            stored.event.type === "run.updated",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+        "/gtr/feature",
+      );
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

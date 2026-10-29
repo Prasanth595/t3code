@@ -175,6 +175,34 @@ such as another drive, set **Settings → Worktrees → Worktree location** to a
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
 are, and cleanup covers both the default folder and the custom one.
 
+## Use git gtr for new worktrees
+
+If you use [CodeRabbit's git gtr](https://github.com/coderabbitai/git-worktree-runner), install
+version 2.10 or newer on the machine hosting the project and opt in from that repository:
+
+```sh
+git config --local t3.worktreeManager gtr
+```
+
+gtr chooses the directory and handles configured copying and post-create hooks, including any
+submodule setup in those hooks.
+T3 preserves your selected base commit and waits for gtr to finish before starting the agent;
+it does not also run the project's T3 setup scripts. Review and trust project hooks with
+`git gtr trust` if you want gtr to run them. T3 never grants that trust automatically.
+Skipping setup during a worktree handoff also skips gtr's post-create hooks; configured copying
+still runs. Hooks are also skipped for work started from a restricted environment link.
+
+Existing worktrees stay where they are. Removal and recreation at an existing path still use
+Git directly, so gtr removal hooks do not run. If creation or setup fails, inspect
+`git worktree list` before retrying: gtr may have left a worktree and branch for you to repair
+or remove. Creation and setup have a 30-minute limit.
+
+To return new worktrees to T3's configured location and setup:
+
+```sh
+git config --local --unset t3.worktreeManager
+```
+
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected

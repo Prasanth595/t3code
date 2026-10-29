@@ -289,6 +289,8 @@ export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
+  /** An external worktree manager already handled project setup. */
+  setupHandled: Schema.optional(Schema.Boolean),
 });
 export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
 

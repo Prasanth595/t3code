@@ -44,6 +44,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import { parseGtrCreation } from "./gtrOutput.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -3805,12 +3806,185 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
-    const targetBranch = input.newRefName ?? input.refName;
+    const managerConfig =
+      input.path == null
+        ? yield* executeGit(
+            "GitVcsDriver.worktreeManager",
+            input.cwd,
+            ["config", "--local", "--get", "t3.worktreeManager"],
+            { allowNonZeroExit: true },
+          )
+        : null;
+    if (managerConfig !== null && managerConfig.exitCode !== 0 && managerConfig.exitCode !== 1) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.worktreeManager",
+        command: "git config",
+        cwd: input.cwd,
+        detail: "Unable to read repository-local t3.worktreeManager.",
+      });
+    }
+    const manager = managerConfig?.stdout.trim() ?? "";
+    if (manager !== "" && manager !== "git" && manager !== "gtr") {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git",
+        cwd: input.cwd,
+        detail: "Set repository-local t3.worktreeManager to git or gtr, or unset it.",
+      });
+    }
+    const useGtr = manager === "gtr";
+    const targetBranch =
+      useGtr && !input.newRefName
+        ? input.refName.replace(/^refs\/heads\//, "")
+        : (input.newRefName ?? input.refName);
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
-    if (worktreePath == null) {
+    if (useGtr) {
+      const operation = "GitVcsDriver.createGtrWorktree";
+      yield* refuseOptionLikeRefName(operation, input.cwd, targetBranch);
+      const version = yield* executeGit(operation, input.cwd, ["gtr", "--version"], {
+        fallbackErrorDetail:
+          "Install git gtr 2.10 or newer on this environment, or unset t3.worktreeManager.",
+      });
+      const match = /^git gtr version (\d+)\.(\d+)\.\d+\s*$/.exec(version.stdout);
+      if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 10)) {
+        return yield* new GitCommandError({
+          operation,
+          command: "git gtr",
+          cwd: input.cwd,
+          detail: "git gtr 2.10 or newer is required for machine-readable worktree creation.",
+        });
+      }
+      if (!input.newRefName && !(yield* branchExists(input.cwd, targetBranch))) {
+        return yield* new GitCommandError({
+          operation,
+          command: "git gtr",
+          cwd: input.cwd,
+          detail:
+            "gtr requires an existing local branch or a new branch name; detached worktrees are not supported.",
+        });
+      }
+      const before = parseWorktreeBranchPaths(
+        (yield* executeWorktreeList(operation, input.cwd, [])).stdout,
+      );
+      if (before.has(targetBranch)) {
+        return yield* new GitCommandError({
+          operation,
+          command: "git gtr",
+          cwd: input.cwd,
+          detail: "The requested branch is already checked out in a worktree.",
+        });
+      }
+      const from = input.newRefName
+        ? (yield* resolveCommit({ cwd: input.cwd, revision: input.refName })).commitSha
+        : undefined;
+      const skipSetup = Effect.isEffect(options?.skipSetup)
+        ? yield* options.skipSetup
+        : options?.skipSetup;
+      const args = [
+        "gtr",
+        "new",
+        targetBranch,
+        ...(from ? ["--from", from] : []),
+        "--track",
+        input.newRefName ? "none" : "local",
+        "--no-fetch",
+        "--porcelain",
+        ...(skipSetup ? ["--no-hooks"] : []),
+      ];
+      worktreePath = yield* Effect.gen(function* () {
+        const created = yield* executeGit(operation, input.cwd, args, {
+          timeoutMs: Duration.toMillis(Duration.minutes(30)),
+          forceKillAfterMs: 5_000,
+          allowNonZeroExit: true,
+          appendTruncationMarker: true,
+          ...(options?.progress?.onSetupLine
+            ? { progress: { onStderrLine: options.progress.onSetupLine } }
+            : {}),
+        }).pipe(
+          Effect.flatMap((result) => {
+            const output =
+              result.exitCode === 0 && !result.stdoutTruncated
+                ? parseGtrCreation(result.stdout, hostPlatform === "win32")
+                : null;
+            return output && output.branch === targetBranch && path.isAbsolute(output.path)
+              ? Effect.succeed(output)
+              : Effect.fail(
+                  new GitCommandError({
+                    operation,
+                    command: "git gtr",
+                    cwd: input.cwd,
+                    detail:
+                      "git gtr creation or setup failed, or returned invalid output. Check git worktree list before retrying; any created worktree has been kept.",
+                    ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+                  }),
+                );
+          }),
+          Effect.catchTags({
+            GitCommandError: Effect.fn("GitVcsDriver.reconcileGtrFailure")(function* (cause) {
+              const after = yield* executeWorktreeList(operation, input.cwd, []).pipe(
+                Effect.result,
+              );
+              const partialPath = Result.isSuccess(after)
+                ? parseWorktreeBranchPaths(after.success.stdout).get(targetBranch)
+                : undefined;
+              return yield* new GitCommandError({
+                operation,
+                command: "git gtr",
+                cwd: partialPath ?? input.cwd,
+                detail: partialPath
+                  ? "git gtr did not finish successfully. The newly registered worktree at this location has been kept; inspect its setup before using it or removing it."
+                  : "git gtr did not finish successfully. Check git worktree list before retrying; creation may have left a worktree or branch.",
+                cause,
+              });
+            }),
+          }),
+        );
+        const registered = parseWorktreeBranchPaths(
+          (yield* executeWorktreeList(operation, input.cwd, [])).stdout,
+        );
+        const registeredPath = registered.get(targetBranch);
+        const canonicalPath = yield* fileSystem
+          .realPath(created.path)
+          .pipe(Effect.orElseSucceed(() => null));
+        const canonicalRegisteredPath =
+          registeredPath === undefined
+            ? null
+            : yield* fileSystem.realPath(registeredPath).pipe(Effect.orElseSucceed(() => null));
+        if (canonicalPath === null || canonicalPath !== canonicalRegisteredPath) {
+          return yield* new GitCommandError({
+            operation,
+            command: "git gtr",
+            cwd: input.cwd,
+            detail:
+              "git gtr returned a path that does not match the registered worktree. Inspect git worktree list before retrying.",
+          });
+        }
+        if (created.hookStatus === "skipped-untrusted" || created.hookStatus === "partial") {
+          yield* Effect.logWarning(
+            "git gtr skipped untrusted project hooks; review them with git gtr trust",
+            { cwd: input.cwd },
+          );
+        }
+        if (options?.progress?.onWorktreeClaimed) {
+          yield* options.progress.onWorktreeClaimed(created.path);
+        }
+        return created.path;
+      }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            if (!options?.progress?.onWorktreeClaimed) return;
+            const after = yield* executeWorktreeList(operation, input.cwd, []);
+            const registeredPath = parseWorktreeBranchPaths(after.stdout).get(targetBranch);
+            if (registeredPath !== undefined) {
+              yield* options.progress.onWorktreeClaimed(registeredPath);
+            }
+          }).pipe(Effect.ignoreCause({ log: true })),
+        ),
+      );
+    } else if (worktreePath == null) {
       const parentDir = resolveWorktreesDirectory(
         options?.worktreesDirectory ?? "",
         worktreesDir,
@@ -3827,7 +4001,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
-    if (input.newRefName) {
+    if (!useGtr && input.newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
@@ -3840,37 +4014,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    if (!useGtr)
+      yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+          ...(onCheckoutProgress
+            ? {
+                // Git only prints checkout progress when stderr is a tty or the
+                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                env: { GIT_PROGRESS_DELAY: "0" },
+                progress: {
+                  onStderrLine: (line) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
                 },
-              },
-            }
-          : {}),
-      },
-    );
+              }
+            : {}),
+        },
+      );
 
-    if (progress?.onWorktreeClaimed) {
+    if (!useGtr && progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
     }
 
     // worktree add leaves submodules empty, potentially omitting project skills, tools or source.
-    const hasSubmodules = yield* fileSystem
-      .exists(path.join(worktreePath, ".gitmodules"))
-      .pipe(Effect.orElseSucceed(() => false));
+    const hasSubmodules =
+      !useGtr &&
+      (yield* fileSystem
+        .exists(path.join(worktreePath, ".gitmodules"))
+        .pipe(Effect.orElseSucceed(() => false)));
     const submoduleMode = !hasSubmodules
       ? { value: "none" as const, source: "environment" as const }
       : resolveProjectFileBackedSetting(
@@ -3972,6 +4149,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     return {
+      ...(useGtr ? { setupHandled: true } : {}),
       worktree: {
         path: worktreePath,
         refName: targetBranch,

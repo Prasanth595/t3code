@@ -108,6 +108,7 @@ interface HarnessOptions {
   readonly projectReadFails?: boolean;
   readonly existingBranchWorktreePath?: string | null;
   readonly createWorktreeFails?: boolean;
+  readonly setupHandled?: boolean;
   readonly fetchWorktreeBaseFails?: boolean;
   readonly worktreeBaseMissing?: boolean;
   readonly removeWorktreeFails?: boolean;
@@ -224,6 +225,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         : (options.createWorktreeGate ?? Effect.void).pipe(
             Effect.andThen(
               Effect.succeed({
+                setupHandled: options.setupHandled ?? false,
                 worktree: {
                   path: input.path ?? `/worktrees/project/${input.newRefName}`,
                   refName: input.newRefName ?? "detached",
@@ -515,6 +517,7 @@ describe("t3_worktree_handoff", () => {
       });
       expect(harness.createWorktree).toHaveBeenCalledWith(
         expect.objectContaining({ refName: "dev", baseRefName: "dev" }),
+        expect.objectContaining({ skipSetup: false }),
       );
       expect(result.startedFromOrigin).toBe(false);
     });
@@ -613,7 +616,9 @@ describe("t3_worktree_handoff", () => {
         path: "/home/user/.ssh/checkout",
       });
       const result = yield* runHandoff(harness, input);
-      expect(harness.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: null }));
+      expect(harness.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: null }), {
+        skipSetup: false,
+      });
       expect(result.worktreePath).toBe("/worktrees/project/feature/elsewhere");
     });
   });
@@ -687,5 +692,15 @@ describe("t3_worktree_status", () => {
         defaultStartFromOrigin: false,
       });
     });
+  });
+});
+
+it.effect("does not repeat setup already handled by gtr", () => {
+  const harness = makeHarness({ setupHandled: true, setupScript: "started" });
+  return Effect.gen(function* () {
+    const result = yield* runHandoff(harness, { branch: "feature/gtr", runSetupScript: false });
+    expect(harness.runForThread).not.toHaveBeenCalled();
+    expect(result.setupScript).toEqual({ status: "skipped" });
+    expect(harness.createWorktree).toHaveBeenCalledWith(expect.anything(), { skipSetup: true });
   });
 });

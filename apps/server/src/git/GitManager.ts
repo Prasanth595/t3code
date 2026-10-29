@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
+  linkOriginIsFenced,
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
@@ -2959,6 +2960,26 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
+          skipSetup:
+            input.threadId === undefined
+              ? false
+              : threads.getThreadShell(input.threadId).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new GitCommandError({
+                        operation: "preparePullRequestThread.getThreadShell",
+                        command: "read thread setup permissions",
+                        cwd: input.cwd,
+                        detail: "Unable to read thread setup permissions.",
+                        cause,
+                      }),
+                  ),
+                  Effect.map(
+                    (thread) =>
+                      thread === null ||
+                      (thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin)),
+                  ),
+                ),
           worktreesDirectory: yield* readWorktreesDirectory,
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),
@@ -2967,7 +2988,7 @@ export const make = Effect.gen(function* () {
         },
       );
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
-      yield* maybeRunSetupScript(worktree.worktree.path);
+      if (!worktree.setupHandled) yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
         pullRequest,

@@ -119,6 +119,7 @@ export interface ExecuteGitProgress {
 }
 
 export interface CreateWorktreeProgress {
+  readonly onSetupLine?: (line: string) => Effect.Effect<void, never>;
   /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
@@ -138,6 +139,7 @@ export interface CreateWorktreeProgress {
 }
 
 export interface CreateWorktreeOptions {
+  readonly skipSetup?: boolean | Effect.Effect<boolean, GitCommandError>;
   readonly progress?: CreateWorktreeProgress;
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;

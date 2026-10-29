@@ -4,6 +4,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  linkOriginIsFenced,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -378,6 +379,7 @@ const make = Effect.gen(function* () {
       } else {
         branch = requestedBranch ?? null;
       }
+      let setupHandled = false;
       let worktreePath =
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
@@ -431,6 +433,12 @@ const make = Effect.gen(function* () {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        const thread = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (thread === null) {
+          return yield* mapError(input, "provision-worktree", threadId)("Thread not found.");
+        }
         const worktree = yield* git
           .createWorktree(
             {
@@ -441,7 +449,9 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              skipSetup: thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin),
               progress: {
+                onSetupLine: (line) => setupTracker.appendTail(threadId, "checkout", line),
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {
                     createdWorktreePath = path;
@@ -452,6 +462,7 @@ const make = Effect.gen(function* () {
             },
           )
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        setupHandled = worktree.setupHandled ?? false;
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
@@ -570,7 +581,7 @@ const make = Effect.gen(function* () {
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
       const setup =
-        worktreePath === null
+        worktreePath === null || setupHandled
           ? ({ status: "no-script" } as const)
           : yield* setupScripts
               .runForThread({
