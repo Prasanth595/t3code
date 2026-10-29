@@ -2620,16 +2620,13 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
           const error = new ProviderEventIngestor.ProviderEventPublishError({
             providerSessionId: ProviderSessionId.make(`session:${failureMode}`),
             eventCount: 1,
-            cause: new EventSink.EventSinkWriteError({
-              eventCount: 1,
-              cause: toPersistenceSqlError("OrchestrationEventStore.appendAgentEvents:insert")(
-                new SqlError({
-                  reason: classifySqliteError(
-                    Object.assign(new Error("unable to open database file"), { errcode: 14 }),
-                  ),
-                }),
-              ),
-            }),
+            cause: toPersistenceSqlError("OrchestrationEventStore.appendAgentEvents:insert")(
+              new SqlError({
+                reason: classifySqliteError(
+                  Object.assign(new Error("unable to open database file"), { errcode: 14 }),
+                ),
+              }),
+            ),
           });
           return failureMode === "defect" ? Effect.die(error) : Effect.fail(error);
         },
