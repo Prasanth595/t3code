@@ -8,6 +8,7 @@ import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchRea
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 import { FactoryLayer } from "./factory/index.ts";
 import { FactoryRoutes } from "./factory/t3/http.ts";
+import * as FactoryGhCredentialProcess from "./factory/t3/ghCredentialProcess.ts";
 import { withStallAttribution } from "./factory/t3/stallAttribution.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
@@ -1078,7 +1079,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provide(VcsProcess.layer),
+      Layer.provide(FactoryGhCredentialProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
     );
