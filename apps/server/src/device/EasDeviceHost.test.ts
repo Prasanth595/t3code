@@ -138,7 +138,6 @@ const fakeExpo = (
       const data =
         operation === "T3EasSimulatorAvailability"
           ? {
-              meActor: { __typename: "User", isExpoAdmin: false },
               app: {
                 byId: {
                   ownerAccount: {
