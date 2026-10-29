@@ -717,11 +717,13 @@ wait_for_pid_exit() {
 }
 # kill -0 also succeeds for a server that exited but was not reaped yet, so
 # a zombie does not count as running. Without ps to tell, trust kill -0.
+# A reaper can remove it between the two probes, so ask kill -0 again.
 server_running() {
   [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
   case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
     *Z*) return 1 ;;
   esac
+  kill -0 "$1" 2>/dev/null
 }
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then

@@ -743,6 +743,76 @@ server.on("listening", () => process.stdout.end("ready\\n"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("treats a server reaped between liveness probes as stopped", () =>
+    Effect.gen(function* () {
+      const { fs, fakeServer, run, stateDir, writeVariant, lockPath } = yield* prepareLaunch;
+      let launchedPid: number | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (launchedPid !== undefined && isAlive(launchedPid))
+            process.kill(launchedPid, "SIGKILL");
+        }),
+      );
+      yield* fs.writeFileString(
+        fakeServer,
+        `${FAKE_SERVER}
+process.on("SIGTERM", () => {});
+server.on("listening", () => process.stdout.end("ready\\n"));
+`,
+      );
+      const ready = yield* Deferred.make<void>();
+      // The final probe's kill -0 still finds the server, which is then killed
+      // and reaped before ps reads its state, as an asynchronous reaper can.
+      const script = yield* writeVariant("reaped-between-probes", [
+        ['>>"$LOG_FILE" 2>&1 < /dev/null &', '2>"$LOG_FILE" < /dev/null &'],
+        [
+          '  REMOTE_PID="$!"',
+          `  REMOTE_PID="$!"
+  printf 'launched:%s\\n' "$REMOTE_PID"
+  read -r release
+  wait_ready() { return 1; }
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "\${REAP_ON_PROBE:-}" ]; then
+      REAP_ON_PROBE=""
+      command kill -0 "$2" || return
+      command kill -KILL "$2"
+      wait "$2" || true
+      return 0
+    fi
+    command kill "$@"
+  }`,
+        ],
+        ["    WAIT_COUNT=$((WAIT_COUNT + 1))\n    sleep 0.1", "    WAIT_COUNT=20"],
+        [
+          `  if server_running "$PID_TO_WAIT"; then\n    printf 'Remote T3 server with PID %s did not stop.`,
+          `  REAP_ON_PROBE="$PID_TO_WAIT"\n  if server_running "$PID_TO_WAIT"; then\n    printf 'Remote T3 server with PID %s did not stop.`,
+        ],
+      ]);
+      const result = yield* run(
+        "alias",
+        {
+          onLine: (line) =>
+            Effect.gen(function* () {
+              if (line.startsWith("launched:"))
+                launchedPid = Number(line.slice("launched:".length));
+              if (line === "ready") yield* Deferred.succeed(ready, undefined);
+            }),
+          release: Deferred.await(ready),
+        },
+        script,
+      );
+      assert.equal(result.exitCode, 1, result.stderr);
+      assert.include(result.stderr, "did not become ready");
+      assert.notInclude(result.stderr, "did not stop");
+      if (launchedPid === undefined) assert.fail("the launch did not report its spawned PID");
+      assert.isFalse(isAlive(launchedPid));
+      for (const file of ["pid", "port", "managed", "process-start"]) {
+        assert.isFalse(yield* fs.exists(`${stateDir("alias")}/${file}`), file);
+      }
+      assert.isFalse(yield* fs.exists(lockPath));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("does not take over a server whose recorded process identity differs", () =>
     Effect.gen(function* () {
       const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
