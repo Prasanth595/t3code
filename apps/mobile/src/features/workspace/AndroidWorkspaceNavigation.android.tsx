@@ -95,12 +95,16 @@ export function AndroidWorkspaceNavigation(props: {
     hidden,
     rail ? 5 : 4,
   );
+  // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
+  const barWidth =
+    props.paneWidth ??
+    window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   // Only the Chats list draws the compose button beside the bar.
   const metrics = floatingTabsMetrics(
     tabs.length,
     scale,
     fabSize,
-    props.paneWidth ?? window.width,
+    barWidth,
     props.fillWidth,
     selectedTab === "threads" && connectionState.hasConnections,
   );
