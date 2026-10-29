@@ -242,6 +242,10 @@ const make = Effect.gen(function* () {
     if (mcpSession === undefined) {
       return yield* new WorkflowApprovalRequiredError({ threadId, reason: "unverified" });
     }
+    // Without workflows every message reads as ignored; not remembering that lets a later session
+    // with workflows read the thread again.
+    const workflows = mcpSession.capabilities?.has("workflows") === true;
+    if (!workflows) return undefined;
     const delegatedThread = records.thread.lineage.relationshipToParent === "subagent";
     const runs = new Map(records.runs.map((run) => [run.id, run]));
     const runOf = (runId: RunId | null) => (runId === null ? undefined : runs.get(runId));
@@ -254,7 +258,7 @@ const make = Effect.gen(function* () {
       );
     for (const item of messages) {
       const request = workflowRequestOf({
-        workflows: mcpSession?.capabilities?.has("workflows") === true,
+        workflows,
         workflowTriggers: settings.workflowTriggers,
         typedText: item.text,
         createdBy: item.createdBy,

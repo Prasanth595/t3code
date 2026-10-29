@@ -76,7 +76,7 @@ const NOTHING_STORED: Stored = { runs: [], items: [] };
 const makeLayer = (
   read: (id: ThreadId) => Effect.Effect<Stored, ProjectionStore.ProjectionStoreReadError>,
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
-  sessionWorkflows = true,
+  sessionWorkflows: boolean | (() => boolean) = true,
   sessionAvailable = () => true,
 ) =>
   WorkflowApprovalGate.layer.pipe(
@@ -102,7 +102,17 @@ const makeLayer = (
           read: () =>
             Effect.sync(() =>
               sessionAvailable()
-                ? ({ capabilities: new Set(sessionWorkflows ? ["workflows"] : []) } as never)
+                ? ({
+                    capabilities: new Set(
+                      (
+                        typeof sessionWorkflows === "function"
+                          ? sessionWorkflows()
+                          : sessionWorkflows
+                      )
+                        ? ["workflows"]
+                        : [],
+                    ),
+                  } as never)
                 : undefined,
             ),
         }),
@@ -757,6 +767,26 @@ describe("after a restart", () => {
           {},
           true,
           () => sessionAvailable,
+        ),
+      ),
+    );
+  });
+
+  it.effect("rescans for a session with workflows after one without them read the thread", () => {
+    let sessionWorkflows = false;
+    return Effect.gen(function* () {
+      const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
+      // Without workflows the request reads as ignored; that must not be remembered.
+      yield* gate.requireNoRequest(threadId);
+      sessionWorkflows = true;
+      assert.equal(yield* reasonOf(gate.requireNoRequest(threadId)), "script-not-allowed");
+      assert.equal(yield* reasonOf(guarded(gate, digestA)), "needs-approval");
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          () => Effect.succeed({ runs: runs(1), items: [start(1, "Plan this as a workflow")] }),
+          {},
+          () => sessionWorkflows,
         ),
       ),
     );
