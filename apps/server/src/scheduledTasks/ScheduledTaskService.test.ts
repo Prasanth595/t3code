@@ -407,7 +407,9 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");
     const promoted = ProjectId.make("project:promoted");
-    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    const sends = yield* Ref.make<
+      Array<{ projectId: ProjectId; commandId: string; quiet: boolean | undefined }>
+    >([]);
     // Rebind lands first, then the promotion commits between the shell read and the retry.
     const shellProjects = yield* Ref.make([scratch, promoted]);
     const layer = ScheduledTaskService.layer.pipe(
@@ -418,7 +420,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
             sendToThread: (input) =>
               Ref.updateAndGet(sends, (all) => [
                 ...all,
-                { projectId: input.projectId, commandId: input.commandId },
+                { projectId: input.projectId, commandId: input.commandId, quiet: input.quiet },
               ]).pipe(
                 Effect.flatMap((all) =>
                   all.length < 3
@@ -450,7 +452,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const threadId = ThreadId.make("thread:promoted-during-run");
-      const { task } = yield* service.upsert({
+      const input = {
         id: ScheduledTaskId.make("task:promoted-during-run"),
         title: "Check in",
         prompt: "Check progress",
@@ -462,7 +464,11 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      } as const;
+      yield* service.upsert({ ...input, quiet: true });
+      // An edit that omits quiet, as agents and older clients send, keeps it.
+      const { task } = yield* service.upsert(input);
+      assert.isTrue(task.quiet);
 
       const result = yield* service.runNow({ id: task.id });
 
@@ -471,6 +477,10 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
       assert.deepEqual(
         attempts.map((attempt) => attempt.projectId),
         [promoted, scratch, promoted],
+      );
+      assert.deepEqual(
+        attempts.map((attempt) => attempt.quiet),
+        [true, true, true],
       );
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
     }).pipe(Effect.provide(layer));

@@ -3097,6 +3097,8 @@ export const OrchestrationV2Command = Schema.Union([
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
+    /** Leaves a settled or snoozed thread where it is. */
+    quiet: Schema.optional(Schema.Boolean),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     commandId: CommandId,

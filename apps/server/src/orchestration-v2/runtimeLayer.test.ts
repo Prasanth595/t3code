@@ -5749,12 +5749,18 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
-    "a %s message on a snoozed thread keeps the snooze only when automatic",
-    (kind) =>
+  it.effect.each([
+    { kind: "notification", placement: "snoozed" },
+    { kind: "quiet", placement: "snoozed" },
+    { kind: "quiet", placement: "settled" },
+    { kind: "user", placement: "snoozed" },
+    { kind: "user", placement: "settled" },
+  ] as const)(
+    "a $kind message on a $placement thread keeps it in place only when automatic",
+    ({ kind, placement }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make(`snooze-wake:${kind}`);
+        const threadId = ThreadId.make(`snooze-wake:${kind}:${placement}`);
         const snoozedUntil = "2099-07-25T09:00:00.000Z";
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -5770,12 +5776,16 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           createdBy: "user",
           creationSource: "web",
         });
-        yield* orchestrator.dispatch({
-          type: "thread.snooze",
-          commandId: CommandId.make(`snooze:${threadId}`),
-          threadId,
-          snoozedUntil,
-        });
+        yield* orchestrator.dispatch(
+          placement === "snoozed"
+            ? {
+                type: "thread.snooze",
+                commandId: CommandId.make(`snooze:${threadId}`),
+                threadId,
+                snoozedUntil,
+              }
+            : { type: "thread.settle", commandId: CommandId.make(`settle:${threadId}`), threadId },
+        );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(`wake:${threadId}`),
@@ -5785,8 +5795,11 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
+          ...(kind === "quiet"
+            ? { scheduledTaskId: ScheduledTaskId.make("quiet-task"), quiet: true }
+            : {}),
           ...(kind === "notification"
             ? {
                 notification: {
@@ -5798,7 +5811,9 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
-        if (kind === "user") {
+        if (placement === "settled") {
+          assert.equal(thread.settledOverride, kind === "user" ? null : "settled");
+        } else if (kind === "user") {
           assert.isNull(thread.snoozedUntil);
         } else {
           assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);

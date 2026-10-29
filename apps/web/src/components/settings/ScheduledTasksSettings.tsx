@@ -136,6 +136,7 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
+  quiet: false,
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -1265,6 +1266,7 @@ function ScheduledTaskEditorForm({
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+      quiet: draft.quiet,
       workspaceStrategy,
       modelSelection,
       runtimeMode: draft.runtimeMode,
@@ -1772,6 +1774,23 @@ function ScheduledTaskEditorForm({
               onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
             />
           </div>
+
+          {draft.threadId ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="scheduled-task-quiet">Keep thread in place</Label>
+                <p id="scheduled-task-quiet-description" className="text-sm text-muted-foreground">
+                  Runs leave a settled or snoozed thread where it is, unless a run needs you.
+                </p>
+              </div>
+              <Switch
+                id="scheduled-task-quiet"
+                aria-describedby="scheduled-task-quiet-description"
+                checked={draft.quiet}
+                onCheckedChange={(quiet) => setDraft((current) => ({ ...current, quiet }))}
+              />
+            </div>
+          ) : null}
         </fieldset>
       </DialogPanel>
 

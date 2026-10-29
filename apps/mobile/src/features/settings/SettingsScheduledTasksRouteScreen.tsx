@@ -757,6 +757,7 @@ function TaskForm({
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
+      quiet: draft.quiet,
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -1150,6 +1151,23 @@ function TaskForm({
               onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />
           </View>
+          {draft.task?.threadId ? (
+            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+              <View className="min-w-0 flex-1">
+                <Text textRole="body" className="text-foreground">
+                  Keep thread in place
+                </Text>
+                <Text className="text-sm text-foreground-muted">
+                  Runs leave a settled or snoozed thread where it is, unless a run needs you.
+                </Text>
+              </View>
+              <ThemedSwitch
+                accessibilityLabel="Keep thread in place"
+                value={draft.quiet}
+                onValueChange={(quiet) => setDraft({ ...draft, quiet })}
+              />
+            </View>
+          ) : null}
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">

@@ -195,6 +195,7 @@ export type ScheduledTaskDraft = {
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
+  readonly quiet: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
 };
@@ -222,6 +223,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.baseRef,
     draft.checkoutPath,
     draft.enabled,
+    draft.quiet,
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
@@ -250,6 +252,7 @@ export function createDraft(
     baseRef: "main",
     checkoutPath: "",
     enabled: true,
+    quiet: false,
     startFromOrigin: true,
     runtimeMode: "full-access",
   };
@@ -271,6 +274,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? task.workspaceStrategy.worktreePath
         : "",
     enabled: task.enabled,
+    quiet: task.quiet,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)

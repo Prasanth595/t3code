@@ -25,6 +25,7 @@ const task: ScheduledTask = {
   schedule: { type: "interval", everyMs: 60_000 },
   projectId,
   threadId: null,
+  quiet: false,
   workspaceStrategy: { type: "root" },
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",

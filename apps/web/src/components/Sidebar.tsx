@@ -26,6 +26,7 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
+  effectiveSettled,
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -643,7 +644,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     } else {
       const section = resolveSidebarThreadSection({
         snoozed: configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: configLoaded && thread.settledOverride === "settled",
+        settled: configLoaded && effectiveSettled(thread),
         pinned: thread.pinnedAt != null,
       });
       (section === "snoozed"
@@ -731,7 +732,7 @@ function isOptimisticDropReleased(input: {
   }
   const canonicalSection = effectiveSnoozed(thread, { now })
     ? "snoozed"
-    : thread.settledOverride === "settled"
+    : effectiveSettled(thread)
       ? "settled"
       : thread.pinnedAt != null
         ? "pinned"
