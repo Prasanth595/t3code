@@ -8377,6 +8377,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: _type,
         commandId: _commandId,
         turnItemId: _turnItemId,
+        answeringTurnItemIds,
         wake,
         ...fields
       } = command;
@@ -8426,12 +8427,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       // The link answers the older cards that asked for the same machine and
       // access. They end without waking anyone: the agent hears this link.
+      // A card still being answered stays open for its own answer to end.
       if (!unchanged && command.linkStatus === "linked") {
         for (const item of projection.turnItems) {
           if (
             item.type !== "link_request" ||
             item.linkStatus !== "pending" ||
             item.ordinal >= turnItem.ordinal ||
+            answeringTurnItemIds?.includes(item.id) === true ||
             !askedForLinkedMachine(item, command)
           ) {
             continue;
