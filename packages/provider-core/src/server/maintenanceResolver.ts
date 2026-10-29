@@ -88,6 +88,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     /** The updater cannot detect installs outside `isCommandPath`, so leave those manual-only. */
     readonly requiresCommandPath?: boolean;
     readonly env?: NodeJS.ProcessEnv;
+    /** For updaters on their own release channel; `null` from it means the latest is unknown. */
+    readonly lookupLatestVersion?: Effect.Effect<string | null>;
   } | null;
 }
 
@@ -455,6 +457,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeUpdate.lookupLatestVersion
+          ? { latestVersion: null, lookupLatestVersion: nativeUpdate.lookupLatestVersion }
+          : {}),
       })
     : manual;
   // A native-looking launcher can still delegate to a mise-owned install.
@@ -817,10 +822,13 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+export const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (
+  packageName: string,
+  distTag = "latest",
+) {
   const client = yield* HttpClient.HttpClient;
   const request = HttpClientRequest.get(
-    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(distTag)}`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
   const response = yield* client.execute(request).pipe(
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),

@@ -1,4 +1,5 @@
 import type { ClaudeSettings } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -41,6 +42,21 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
+
+/** Where administrators install Claude Code's managed settings, which override user settings. */
+export const ClaudeManagedConfigDirectory = Context.Reference<string>(
+  "server/provider/Drivers/ClaudeManagedConfigDirectory",
+  {
+    defaultValue: () => {
+      const platform = HostProcess.Platform.defaultValue();
+      return platform === "darwin"
+        ? "/Library/Application Support/ClaudeCode"
+        : platform === "win32"
+          ? "C:\\Program Files\\ClaudeCode"
+          : "/etc/claude-code";
+    },
+  },
+);
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
