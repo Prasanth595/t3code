@@ -656,6 +656,19 @@ function startAnnotation(sendEnabled: boolean): void {
   };
   comment.addEventListener("input", resizeComment);
 
+  // An agent's focus emulation can leave a navigated guest focused with no focused frame in
+  // the browser, which then routes typing to T3's window. Chromium records frame focus only
+  // when it changes, so pass it through a throwaway frame before taking it back.
+  const focusComment = (): void => {
+    const relay = document.createElement("iframe");
+    relay.tabIndex = -1;
+    relay.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none";
+    root.appendChild(relay);
+    relay.contentWindow?.focus();
+    comment.focus({ preventScroll: true });
+    relay.remove();
+  };
+
   const updateStatus = (): void => {
     const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
     editor.style.display = hasTargets ? "flex" : "none";
@@ -666,7 +679,7 @@ function startAnnotation(sendEnabled: boolean): void {
     queueEditorLayout();
     if (hasTargets && !editorWasShown) {
       editorWasShown = true;
-      window.setTimeout(() => comment.focus({ preventScroll: true }), 0);
+      window.setTimeout(focusComment, 0);
     }
   };
 
