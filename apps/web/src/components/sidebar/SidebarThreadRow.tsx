@@ -36,9 +36,9 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
+  HourglassIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -517,7 +517,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
-  waiting: CircleDotDashedIcon,
+  waiting: HourglassIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,
   approval: ShieldQuestionIcon,
@@ -731,7 +731,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         ? {
             label: "Waiting",
             icon: "waiting" as const,
-            className: "text-muted-foreground",
+            className: "font-normal text-muted-foreground",
           }
         : status === "approval"
           ? {
@@ -956,7 +956,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
-      status === "working" &&
+      (status === "working" || status === "waiting") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
