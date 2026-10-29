@@ -1,4 +1,3 @@
-import { THREAD_HISTORY_SNAPSHOT_ROW_LIMIT } from "./threadHistoryPaging.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
@@ -554,11 +553,6 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         assert.isUndefined(legacy.decoded.turnItemsOmitLocalVisible);
         assert.isUndefined(full.decoded.turnItemsOmitLocalVisible);
         assert.isUndefined(full.decoded.historyCursor);
-        // Clients that predate paging still get a window, never the whole transcript.
-        assert.isAtMost(
-          full.decoded.projection.turnItems.length,
-          THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-        );
         assert.isTrue(compact.decoded.turnItemsOmitLocalVisible);
         assert.isBelow(
           compact.decoded.projection.turnItems.length,

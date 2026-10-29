@@ -101,6 +101,29 @@ export const layer = HttpApiBuilder.group(
       },
     );
 
+    const loadThreadSnapshot = Effect.fn("http.orchestration.loadThreadSnapshot")(function* (
+      threadId: Parameters<typeof threadManagement.getThreadSnapshot>[0],
+      failureReason:
+        | "orchestration_thread_snapshot_failed"
+        | "orchestration_thread_bounded_snapshot_failed"
+        | "orchestration_thread_history_failed",
+    ) {
+      return yield* threadManagement.getThreadSnapshot(threadId).pipe(
+        Effect.map((snapshot) => ({
+          ...snapshot,
+          projection: projectThreadProjectionForWire(snapshot.projection),
+        })),
+        Effect.catch(
+          Effect.fnUntraced(function* (error) {
+            if (isThreadNotFound(error)) {
+              return yield* failEnvironmentNotFound("thread_not_found");
+            }
+            return yield* failEnvironmentInternal(failureReason, error);
+          }),
+        ),
+      );
+    });
+
     const loadThreadSnapshotWindow = Effect.fn("http.orchestration.loadThreadSnapshotWindow")(
       function* (
         threadId: Parameters<typeof threadManagement.getThreadSnapshot>[0],
@@ -162,31 +185,13 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          // Unbounded snapshots materialized whole transcripts; pre-pagination clients get the window.
-          const snapshot = yield* threadManagement
-            .getThreadSnapshotWindow(args.params.threadId, {
-              rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-            })
-            .pipe(
-              Effect.catch(
-                Effect.fnUntraced(function* (error) {
-                  if (isThreadNotFound(error)) {
-                    return yield* failEnvironmentNotFound("thread_not_found");
-                  }
-                  return yield* failEnvironmentInternal(
-                    "orchestration_thread_snapshot_failed",
-                    error,
-                  );
-                }),
-              ),
-              traceLocalHandlerWork,
-            );
+          const snapshot = yield* loadThreadSnapshot(
+            args.params.threadId,
+            "orchestration_thread_snapshot_failed",
+          ).pipe(traceLocalHandlerWork);
           return {
             snapshotSequence: snapshot.snapshotSequence,
-            projection: buildBoundedThreadProjection({
-              projection: projectThreadProjectionForWire(snapshot.projection),
-              snapshotSequence: snapshot.snapshotSequence,
-            }).projection,
+            projection: snapshot.projection,
           };
         }),
       )
