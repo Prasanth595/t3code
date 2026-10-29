@@ -593,6 +593,47 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+// Called within the traced command resolvers.
+const findOnPath = Effect.fnUntraced(function* (
+  pathValue: string,
+  commandCandidates: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  windowsPathExtensions: ReadonlyArray<string>,
+  limit: number,
+): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  // Keep case variants: Windows can make PATH directories case-sensitive.
+  const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
+  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    const pathEntry = stripWrappingQuotes(entry.trim());
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
+  }
+
+  const listings = yield* PathDirectoryListings;
+  const matches: string[] = [];
+  for (const pathEntry of pathEntries) {
+    let listing = listings && (yield* Cache.get(listings, pathEntry));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
+      yield* Cache.invalidate(listings, pathEntry);
+      listing = yield* Cache.get(listings, pathEntry);
+    }
+    for (const candidate of commandCandidates) {
+      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
+      const candidatePath = path.join(pathEntry, candidate);
+      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        matches.push(candidatePath);
+        if (matches.length === limit) return matches;
+        break;
+      }
+    }
+  }
+  return matches;
+});
+
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
@@ -632,35 +673,15 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
-  // Keep case variants: Windows can make PATH directories case-sensitive.
-  const pathEntries: string[] = [];
-  const seenPathEntries = new Set<string>();
-  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
-
-    seenPathEntries.add(pathEntry);
-    pathEntries.push(pathEntry);
-  }
-
-  const listings = yield* PathDirectoryListings;
-  for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
-    }
-    for (const candidate of commandCandidates) {
-      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
-      const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
-        return candidatePath;
-      }
-    }
-  }
-  cacheCommandResolution(cache, cacheKey, null, nowNanos);
-  return null;
+  const [resolvedPath = null] = yield* findOnPath(
+    pathValue,
+    commandCandidates,
+    platform,
+    windowsPathExtensions,
+    1,
+  );
+  cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
+  return resolvedPath;
 });
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
@@ -671,6 +692,24 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
     env: options.env ?? (yield* HostProcess.Environment),
     platform: yield* HostProcess.Platform,
   });
+});
+
+// All matches for a bare command, in PATH order, without the single-match cache.
+export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
+  command: string,
+  options: CommandAvailabilityOptions = {},
+) {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const env = options.env ?? (yield* HostProcess.Environment);
+  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  return yield* findOnPath(
+    resolvePathEnvironmentVariable(env),
+    resolveCommandCandidates(command, platform, windowsPathExtensions, path.extname),
+    platform,
+    windowsPathExtensions,
+    Infinity,
+  );
 });
 
 // Git 2.56 x64 uses ucrt64; ARM64 uses clangarm64; older x64/32-bit builds use mingw64/mingw32.

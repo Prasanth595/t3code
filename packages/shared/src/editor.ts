@@ -5,9 +5,19 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPaths } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
+
+// The nearest Zed folder identifies the channel, even below a user named zedpreview.
+const isPrereleaseZedPath = (filePath: string) => {
+  const install = filePath
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .findLast((folder) => folder.toLowerCase().includes("zed"))
+    ?.toLowerCase();
+  return install !== undefined && (install.includes("nightly") || install.includes("preview"));
+};
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
@@ -34,7 +44,21 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const platform = yield* HostProcess.Platform;
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
-  if (!preferBundle) {
+  if (platform === "win32" && editor.id === "zed") {
+    const installs: Array<{ readonly command: string; readonly resolved: string }> = [];
+    for (const command of editor.commands) {
+      for (const resolved of yield* resolveCommandPaths(command, { env })) {
+        installs.push({ command, resolved });
+      }
+    }
+    const [first] = installs;
+    const preferred = installs.find((install) => !isPrereleaseZedPath(install.resolved)) ?? first;
+    // Bypass PATH only when stable is behind a prerelease install.
+    if (preferred) {
+      const command = preferred === first ? preferred.command : preferred.resolved;
+      return Option.some({ command, baseArgs });
+    }
+  } else if (!preferBundle) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
