@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import "../../index.css";
@@ -38,12 +38,17 @@ it.each(["plain", "formatted"] as const)(
 
     const longUrl = url(16_000);
     await screen.rerender(link(longUrl));
-    const anchor = screen.container.querySelector("a")!;
-    const table = screen.container.querySelector("table")!;
-    expect(anchor.getAttribute("href")).toBe(longUrl);
-    expect(anchor.textContent).toBe(longUrl + (kind === "formatted" ? " details" : ""));
-    expect(anchor.querySelectorAll("*")).toHaveLength(initialElementCount);
-    if (kind === "formatted") expect(anchor.querySelector("strong")?.textContent).toBe(" details");
-    expect(table.scrollWidth).toBeLessThanOrEqual(screen.container.firstElementChild!.clientWidth);
+    await vi.waitFor(() => {
+      const anchor = screen.container.querySelector("a")!;
+      const table = screen.container.querySelector("table")!;
+      expect(anchor.getAttribute("href")).toBe(longUrl);
+      expect(anchor.textContent).toBe(longUrl + (kind === "formatted" ? " details" : ""));
+      expect(anchor.querySelectorAll("*")).toHaveLength(initialElementCount);
+      if (kind === "formatted")
+        expect(anchor.querySelector("strong")?.textContent).toBe(" details");
+      expect(table.scrollWidth).toBeLessThanOrEqual(
+        screen.container.firstElementChild!.clientWidth,
+      );
+    });
   },
 );
