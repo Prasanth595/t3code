@@ -59,6 +59,7 @@ export function WorkflowOpeningBlock(props: {
   };
 }) {
   const { opening } = props;
+  const heading = props.heading ?? "Workflow started";
   const find = props.findable === true ? "true" : undefined;
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(props.environmentId));
   const headline = workflowOpeningHeadline(opening);
@@ -85,7 +86,7 @@ export function WorkflowOpeningBlock(props: {
   };
   return (
     <section
-      aria-label={`Workflow started: ${headline.title}`}
+      aria-label={`${heading}: ${headline.title}`}
       className="flex min-w-0 flex-col gap-3 px-1 py-0.5"
       data-workflow-opening
     >
@@ -98,7 +99,7 @@ export function WorkflowOpeningBlock(props: {
               tone === null ? "text-muted-foreground" : WORKFLOW_TONE_TEXT[tone],
             )}
           >
-            {props.heading ?? "Workflow started"}
+            {heading}
           </p>
           <h3 className="truncate text-sm font-medium text-foreground" data-thread-find-text={find}>
             {headline.title}

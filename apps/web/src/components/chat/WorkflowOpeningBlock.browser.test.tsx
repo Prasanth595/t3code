@@ -784,6 +784,7 @@ it("lets the keyboard reach a workflow block's graph, its cards and its Stop", a
   );
   const block = screen.container.querySelector("[data-workflow-opening]")!;
   expect(block).not.toBeNull();
+  expect(block).toHaveAttribute("aria-label", "Workflow running: Retry");
   screen.getByRole("button", { name: "Before the block" }).element().focus();
   const stops: Array<string> = [];
   for (let press = 0; press < 6; press += 1) {
