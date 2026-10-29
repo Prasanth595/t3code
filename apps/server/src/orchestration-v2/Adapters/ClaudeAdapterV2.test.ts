@@ -5849,8 +5849,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       if (source.startsWith("reused")) {
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
         if (source === "reused endpoint")
           yield* fs.writeFileString(
             path.join(configDir, "settings.json"),
