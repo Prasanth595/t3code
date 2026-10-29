@@ -312,7 +312,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
         : [];
     });
   }
-  if (isDictationLocale(parsed.dictationLocale)) {
+  if (parsed.dictationLocale === null || isDictationLocale(parsed.dictationLocale)) {
     preferences.dictationLocale = parsed.dictationLocale;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
