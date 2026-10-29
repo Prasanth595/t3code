@@ -729,6 +729,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       const denied = path.join(outside, "secret.txt");
       yield* fileSystem.writeFileString(denied, "secret");
       const unseen = path.join(workspace, "unseen.ts");
+      const retried = path.join(workspace, "retried.ts");
       const stepError = 'Model produced invalid output. ("model output error")';
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
@@ -768,32 +769,41 @@ describe("AntigravityAdapterV2 subagent reads", () => {
                     return yield* Effect.die("the adapter must handle updates and reads");
                   }
                   const send = sessionUpdate;
+                  const handleRead = readTextFile;
                   const update = (update: EffectAcpSchema.SessionUpdate) =>
                     send(
                       normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
                     );
+                  // The agent's own view_file never reaches T3, so it must not take a served read.
                   const reads = [
-                    ["call_served", served],
-                    ["call_denied", denied],
-                    ["call_unseen", unseen],
+                    ["call_native", served, "Running view_file"],
+                    ["call_served", served, "Running client_view_file"],
+                    ["call_missing", retried, "Running client_view_file"],
+                    ["call_retried", retried, "Running client_view_file"],
+                    ["call_denied", denied, "Running client_view_file"],
+                    ["call_unseen", unseen, "Running client_view_file"],
                   ] as const;
-                  for (const [toolCallId, target] of reads) {
+                  for (const [toolCallId, target, title] of reads) {
                     yield* update({
                       sessionUpdate: "tool_call",
                       toolCallId,
-                      title: "client_view_file",
+                      title,
                       kind: "read",
                       status: "in_progress",
                       rawInput: { absolute_path: target },
                       locations: [{ path: target }],
                     });
                   }
-                  for (const target of [served, denied]) {
-                    yield* readTextFile(
+                  const serve = (target: string) =>
+                    handleRead(
                       { sessionId: "subagent-conversation", path: target },
                       { requestId: `read-${target}`, method: "fs/read_text_file" },
                     ).pipe(Effect.exit);
-                  }
+                  yield* serve(served);
+                  yield* serve(retried);
+                  yield* fileSystem.writeFileString(retried, "export {};").pipe(Effect.orDie);
+                  yield* serve(retried);
+                  yield* serve(denied);
                   for (const [toolCallId] of reads) {
                     yield* update({
                       sessionUpdate: "tool_call_update",
@@ -886,10 +896,13 @@ describe("AntigravityAdapterV2 subagent reads", () => {
           : undefined;
       };
 
-      assert.equal(read("call_served")?.status, "completed");
-      assert.notEqual(read("call_served")?.output, stepError);
-      assert.deepEqual(read("call_denied"), { status: "failed", output: stepError });
-      assert.deepEqual(read("call_unseen"), { status: "failed", output: stepError });
+      const failed = { status: "failed" as const, output: stepError };
+      assert.deepEqual(read("call_served"), { status: "completed", output: undefined });
+      assert.deepEqual(read("call_retried"), { status: "completed", output: undefined });
+      assert.deepEqual(read("call_native"), failed);
+      assert.deepEqual(read("call_missing"), failed);
+      assert.deepEqual(read("call_denied"), failed);
+      assert.deepEqual(read("call_unseen"), failed);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

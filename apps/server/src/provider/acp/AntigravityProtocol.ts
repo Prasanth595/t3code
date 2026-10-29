@@ -216,15 +216,20 @@ export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
-function antigravityReadPath(update: {
+const ANTIGRAVITY_CLIENT_READ_TITLES = new Set([
+  "Running client_view_file",
+  "Run client_view_file?",
+]);
+
+function antigravityClientReadPath(update: {
+  readonly title?: string | null;
   readonly locations?: ReadonlyArray<{ readonly path: string }> | null;
   readonly rawInput?: unknown;
 }): string | undefined {
-  const location = update.locations?.[0]?.path;
-  if (location) return location;
-  const input = update.rawInput;
-  if (!Predicate.isObject(input)) return undefined;
-  const target = input.absolute_path ?? input.AbsolutePath ?? input.path;
+  if (!update.title || !ANTIGRAVITY_CLIENT_READ_TITLES.has(update.title)) return undefined;
+  const target =
+    update.locations?.[0]?.path ??
+    (Predicate.isObject(update.rawInput) ? update.rawInput.absolute_path : undefined);
   return typeof target === "string" && target ? target : undefined;
 }
 
@@ -233,11 +238,15 @@ function antigravityReadPath(update: {
  * with the next unrelated step error. Report reads T3 served as completed instead.
  */
 export function makeAntigravityReadRepair() {
-  const openReads = new Map<string, { readonly path: string; served: boolean }>();
+  const openReads = new Map<string, { readonly path: string; outcome?: "served" | "refused" }>();
   return {
-    served: (path: string) => {
-      const read = [...openReads.values()].find((entry) => entry.path === path && !entry.served);
-      if (read) read.served = true;
+    /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
+    attempted: (path: string, served: boolean) => {
+      for (const read of openReads.values()) {
+        if (read.path !== path || read.outcome !== undefined) continue;
+        read.outcome = served ? "served" : "refused";
+        return;
+      }
     },
     repair: (
       notification: EffectAcpSchema.SessionNotification,
@@ -246,14 +255,14 @@ export function makeAntigravityReadRepair() {
       if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
         return notification;
       }
-      const path = update.kind === "read" ? antigravityReadPath(update) : undefined;
+      const path = antigravityClientReadPath(update);
       if (path !== undefined && !openReads.has(update.toolCallId)) {
-        openReads.set(update.toolCallId, { path, served: false });
+        openReads.set(update.toolCallId, { path });
       }
       if (update.status !== "completed" && update.status !== "failed") return notification;
       const read = openReads.get(update.toolCallId);
       openReads.delete(update.toolCallId);
-      if (update.status === "completed" || read?.served !== true) return notification;
+      if (update.status === "completed" || read?.outcome !== "served") return notification;
       const { rawOutput: _stepError, ...rest } = update;
       return { ...notification, update: { ...rest, status: "completed" } };
     },

@@ -129,13 +129,16 @@ export function makeAntigravityAcpAdapterFlavor(
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
+      // Repair keeps state across updates, so each runtime must have one session-update handler.
       const reads = makeAntigravityReadRepair();
       return {
         ...runtime,
         handleReadTextFile: (handler) =>
           runtime.handleReadTextFile((request, context) =>
             handler(request, context).pipe(
-              Effect.tap(() => Effect.sync(() => reads.served(request.path))),
+              Effect.onExit((exit) =>
+                Effect.sync(() => reads.attempted(request.path, Exit.isSuccess(exit))),
+              ),
             ),
           ),
         handleSessionUpdate: (handler) =>
