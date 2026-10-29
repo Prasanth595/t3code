@@ -565,7 +565,7 @@ it.effect("names an untrusted certificate instead of calling the peer something 
         .link({ url: untrusted, pairingCode: "unused", access: "auto" })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
-      expect(failed.message).toContain("certificate");
+      expect(failed.message).toContain("certificate this machine rejected");
       expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(yield* a.links.list).toEqual([]);
 
@@ -583,3 +583,22 @@ it.effect("names an untrusted certificate instead of calling the peer something 
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it("reads Node's TLS verification code from anywhere in a cause chain", () => {
+  for (const code of [
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "HOSTNAME_MISMATCH",
+    "INVALID_CA",
+    "INVALID_PURPOSE",
+    "PATH_LENGTH_EXCEEDED",
+  ]) {
+    expect(PeerLinks.certificateErrorCode({ code })).toBe(code);
+  }
+  const wrapped = { message: "fetch failed", cause: { cause: { code: "INVALID_CA" } } };
+  expect(PeerLinks.certificateErrorCode(wrapped)).toBe("INVALID_CA");
+  expect(PeerLinks.certificateErrorCode({ cause: { code: "ECONNREFUSED" } })).toBeUndefined();
+  expect(PeerLinks.certificateErrorCode(new Error("timed out"))).toBeUndefined();
+});

@@ -45,7 +45,7 @@ const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
 
 /** Node's TLS verification code in a failed request's cause chain, if any. */
-const certificateErrorCode = (error: unknown) => {
+export const certificateErrorCode = (error: unknown) => {
   let current = error;
   for (let depth = 0; depth < 6 && Predicate.isObject(current); depth++) {
     if (
@@ -209,7 +209,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The environment answering at `origin`, or nothing when it does not answer
-   * as T3 Code. A certificate this machine does not trust fails instead, since
+   * as T3 Code. A certificate this machine rejects fails instead, since
    * the peer may well be there.
    */
   const describe = (origin: string) =>
@@ -224,7 +224,7 @@ const make = Effect.gen(function* () {
           : Effect.fail(
               new PeerLinkError({
                 reason: "unreachable",
-                message: `${origin} presented a certificate this machine does not trust (${code}).`,
+                message: `${origin} presented a certificate this machine rejected (${code}).`,
               }),
             );
       }),
