@@ -429,29 +429,36 @@ export const layerExecutor: Layer.Layer<
                   : { restoreFiles: effect.request.restoreFiles }),
               })
               .pipe(
-                Effect.tapCause((cause) =>
-                  willRetry || Cause.hasInterruptsOnly(cause)
-                    ? Effect.void
-                    : threads
-                        .dispatch({
-                          type: "checkpoint.rollback.fail",
-                          commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
-                          threadId: effect.threadId,
-                          requestId: effect.commandId,
-                          message: Option.match(Cause.findErrorOption(cause), {
-                            onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
-                            onSome: CheckpointRollbackService.rollbackFailureClientMessage,
-                          }),
-                        })
-                        .pipe(
-                          Effect.catchCause((recordCause) =>
-                            Effect.logWarning("Failed to record rollback failure", {
-                              effectId: effect.id,
-                              cause: recordCause,
-                            }),
-                          ),
-                        ),
-                ),
+                // Retrying a completed restore could overwrite subsequent edits.
+                Effect.tapCause((cause) => {
+                  if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+                  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  const postRestoreFailure =
+                    CheckpointRollbackService.isCheckpointRollbackPostRestoreError(failure)
+                      ? failure
+                      : undefined;
+                  if (willRetry && postRestoreFailure === undefined) return Effect.void;
+                  return threads
+                    .dispatch({
+                      type: "checkpoint.rollback.fail",
+                      commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
+                      threadId: effect.threadId,
+                      requestId: effect.commandId,
+                      message:
+                        postRestoreFailure?.message ??
+                        (failure === undefined
+                          ? CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE
+                          : CheckpointRollbackService.rollbackFailureClientMessage(failure)),
+                    })
+                    .pipe(
+                      Effect.catchCause((recordCause) =>
+                        Effect.logWarning("Failed to record rollback failure", {
+                          effectId: effect.id,
+                          cause: recordCause,
+                        }),
+                      ),
+                    );
+                }),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -792,6 +799,11 @@ export const layerWithOptions = (
 
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
+          const failure = Cause.findErrorOption(exit.cause);
+          const postRestoreFailure =
+            effect.request.type === "provider-thread.rollback" &&
+            Option.isSome(failure) &&
+            CheckpointRollbackService.isCheckpointRollbackPostRestoreError(failure.value.cause);
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
             effectType: effect.request.type,
@@ -803,7 +815,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : postRestoreFailure || effect.attemptCount >= maxAttempts
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

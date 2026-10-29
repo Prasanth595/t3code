@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
@@ -71,16 +72,60 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
   }
 }
 
-const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
+export class CheckpointRollbackPartialRestoreError extends Schema.TaggedError<CheckpointRollbackPartialRestoreError>()(
+  "CheckpointRollbackPartialRestoreError",
+  {
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    checkpointId: CheckpointId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Files were restored to the selected checkpoint, but the conversation rollback failed. Conversation history may not match your files. Check the provider and server logs before retrying.";
+  }
+}
+
+export class CheckpointRollbackIndexRefreshError extends Schema.TaggedError<CheckpointRollbackIndexRefreshError>()(
+  "CheckpointRollbackIndexRefreshError",
+  {
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    checkpointId: CheckpointId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Files were restored to the selected checkpoint, but the workspace index could not be refreshed. The conversation rollback was not attempted. Conversation history may not match your files. Check the server logs before retrying.";
+  }
+}
+
+export const isCheckpointRollbackPostRestoreError = Schema.is(
+  Schema.Union([CheckpointRollbackPartialRestoreError, CheckpointRollbackIndexRefreshError]),
+);
+
+const isCheckpointRollbackError = Schema.is(
+  Schema.Union([
+    CheckpointRollbackExecutionError,
+    CheckpointRollbackPartialRestoreError,
+    CheckpointRollbackIndexRefreshError,
+  ]),
+);
+
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 
 /**
- * The message clients see when a rollback fails. Only a held Git index lock
- * gets its own explanation; other reasons carry internal ids or raw Git
- * output, so they fall back to the generic message.
+ * Post-restore failures and a held Git index lock have safe, specific messages.
+ * Other failures may carry internal IDs or raw Git output.
  */
-export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+export function rollbackFailureClientMessage(
+  error:
+    | CheckpointRollbackExecutionError
+    | CheckpointRollbackPartialRestoreError
+    | CheckpointRollbackIndexRefreshError,
+): string {
+  if (isCheckpointRollbackPostRestoreError(error)) return error.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
   return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
     ? GIT_INDEX_LOCKED_DETAIL
@@ -94,7 +139,12 @@ export interface CheckpointRollbackServiceV2Shape {
     readonly checkpointId: CheckpointId;
     readonly scopeId: CheckpointScopeId;
     readonly restoreFiles?: boolean;
-  }) => Effect.Effect<void, CheckpointRollbackExecutionError>;
+  }) => Effect.Effect<
+    void,
+    | CheckpointRollbackExecutionError
+    | CheckpointRollbackPartialRestoreError
+    | CheckpointRollbackIndexRefreshError
+  >;
 }
 
 export class CheckpointRollbackServiceV2 extends Context.Service<
@@ -106,6 +156,7 @@ export const layer: Layer.Layer<
   CheckpointRollbackServiceV2,
   never,
   | CheckpointServiceV2
+  | WorkspaceEntries.WorkspaceEntries
   | GitWorkflowService.GitWorkflowService
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
@@ -122,6 +173,7 @@ export const layer: Layer.Layer<
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
     const checkpoints = yield* CheckpointServiceV2;
+    const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const eventSink = yield* EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -199,6 +251,26 @@ export const layer: Layer.Layer<
               };
             });
 
+      const validateRestoreIsolation = Effect.gen(function* () {
+        if (
+          input.restoreFiles !== false &&
+          !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
+            fileSystem,
+            projections,
+            projects,
+            path,
+          }))
+        ) {
+          return yield* new CheckpointRollbackExecutionError({
+            reason: "shared-workspace",
+            threadId: input.threadId,
+            providerThreadId: input.providerThreadId,
+            checkpointId: input.checkpointId,
+          });
+        }
+      });
+      yield* validateRestoreIsolation;
+
       const { worktreePath, branch } = context.thread;
       // Recreated only where the server would have made it, as turn start does.
       if (
@@ -215,24 +287,8 @@ export const layer: Layer.Layer<
             refName: branch,
             path: worktreePath,
           });
+          yield* validateRestoreIsolation;
         }
-      }
-
-      if (
-        input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          fileSystem,
-          projections,
-          projects,
-          path,
-        }))
-      ) {
-        return yield* new CheckpointRollbackExecutionError({
-          reason: "shared-workspace",
-          threadId: input.threadId,
-          providerThreadId: input.providerThreadId,
-          checkpointId: input.checkpointId,
-        });
       }
 
       const modelSelection = context.thread.modelSelection;
@@ -265,15 +321,38 @@ export const layer: Layer.Layer<
           (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
       );
 
+      if (input.restoreFiles !== false) {
+        yield* checkpoints.restore({ scope, checkpoint });
+        yield* workspaceEntries.refresh(scope.cwd).pipe(
+          Effect.catchDefect((cause) =>
+            Effect.fail(
+              new CheckpointRollbackIndexRefreshError({
+                threadId: input.threadId,
+                providerThreadId: input.providerThreadId,
+                checkpointId: input.checkpointId,
+                cause,
+              }),
+            ),
+          ),
+        );
+      }
       const snapshot =
         runsToRollback.length === 0
           ? { providerThread }
-          : yield* session.rollbackThread({
-              providerThread,
-              target: rollbackTarget,
-              providerThreadTurns,
-            });
-      if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
+          : yield* session
+              .rollbackThread({ providerThread, target: rollbackTarget, providerThreadTurns })
+              .pipe(
+                Effect.mapError((cause) =>
+                  input.restoreFiles === false
+                    ? cause
+                    : new CheckpointRollbackPartialRestoreError({
+                        threadId: input.threadId,
+                        providerThreadId: input.providerThreadId,
+                        checkpointId: input.checkpointId,
+                        cause,
+                      }),
+                ),
+              );
       if (staleCheckpoints.length > 0) {
         yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
       }
@@ -365,7 +444,7 @@ export const layer: Layer.Layer<
         (effect, input) =>
           effect.pipe(
             Effect.mapError((cause) =>
-              isCheckpointRollbackExecutionError(cause)
+              isCheckpointRollbackError(cause)
                 ? cause
                 : new CheckpointRollbackExecutionError({
                     reason: "unexpected-failure",

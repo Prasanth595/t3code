@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadProjection,
   ProviderDriverKind,
   ProviderTurnId,
   RunAttemptId,
@@ -29,6 +30,8 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -53,6 +56,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
@@ -157,6 +161,7 @@ it.effect.each(["initial", "waiting"])(
           },
         ],
       ]);
+      assert(error._tag === "CheckpointRollbackExecutionError");
       assert.equal(error.reason, "rollback-target-invalid");
       assert.equal(
         error.message,
@@ -224,6 +229,7 @@ it.effect.each([
         Layer.mergeAll(
           ThreadCommandExecutor.layer,
           NodeServices.layer,
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
           ServerSettings.layerTest(),
           Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -730,4 +736,195 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         }),
     );
   },
+);
+
+it.effect.each(["success", "restore-fails"] as const)(
+  "restores files and refreshes the workspace index before the provider: %s",
+  (outcome) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-rollback-index-" });
+      const currentFile = path.join(cwd, "rollback-current.txt");
+      const restoredFile = path.join(cwd, "rollback-restored.txt");
+      yield* fs.writeFileString(currentFile, "current turn");
+      const search = () => workspaceEntries.search({ cwd, query: "rollback", limit: 10 });
+      assert.deepEqual((yield* search()).entries, [{ path: "rollback-current.txt", kind: "file" }]);
+
+      const threadId = ThreadId.make("rollback-restore-state");
+      const providerThreadId = ProviderThreadId.make("rollback-restore-provider");
+      const providerSessionId = ProviderSessionId.make("rollback-restore-session");
+      const instanceId = ProviderInstanceId.make("rollback-restore-instance");
+      const checkpointId = CheckpointId.make("rollback-restore-checkpoint");
+      const scopeId = CheckpointScopeId.make("rollback-restore-scope");
+      const laterCheckpointId = CheckpointId.make("rollback-later-checkpoint");
+      const providerThread = {
+        id: providerThreadId,
+        providerSessionId,
+        providerInstanceId: instanceId,
+      };
+      const projection = {
+        thread: {
+          worktreePath: cwd,
+          activeProviderThreadId: providerThreadId,
+          modelSelection: { instanceId, model: "test" },
+        },
+        providerThreads: [providerThread],
+        providerSessions: [],
+        providerTurns: [
+          {
+            id: "turn-1",
+            providerThreadId,
+            runAttemptId: "attempt-1",
+            ordinal: 1,
+            status: "completed",
+          },
+        ],
+        nodes: [],
+        attempts: [{ id: "attempt-1", runId: "run-1" }],
+        checkpoints: [
+          { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
+          { id: laterCheckpointId, scopeId, status: "ready", appRunOrdinal: 1 },
+        ],
+        checkpointScopes: [{ id: scopeId, cwd }],
+        runs: [{ id: "run-1", ordinal: 1, status: "completed", rootNodeId: null }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const restoreFailure = new CheckpointService.CheckpointRestoreError({
+        scopeId,
+        checkpointId,
+        cause: new Error("git restore failed"),
+      });
+      const providerConversation = ["turn-1"];
+      let providerCalls = 0;
+      const deletedRefs: CheckpointId[] = [];
+      const persistedEvents: string[] = [];
+      const testLayer = CheckpointRollbackService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ServerConfig.ServerConfig)({
+              worktreesDir: "/synthetic-worktrees",
+            } as never),
+            ServerSettings.layerTest(),
+            ThreadCommandExecutor.layer,
+            Layer.succeed(WorkspaceEntries.WorkspaceEntries, workspaceEntries),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              get: () => Effect.succeed(unrelatedProject),
+            }),
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              restore: () =>
+                outcome === "restore-fails"
+                  ? Effect.fail(restoreFailure)
+                  : Effect.gen(function* () {
+                      yield* fs.remove(currentFile);
+                      yield* fs.writeFileString(restoredFile, "checkpoint turn");
+                    }).pipe(Effect.orDie),
+              deleteStaleRefs: ({ checkpoints }) =>
+                Effect.sync(() => {
+                  deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
+                }),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: ({ events }) =>
+                Effect.sync(() => {
+                  persistedEvents.push(...events.map((event) => event.type));
+                  return [];
+                }),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(projection.thread),
+              getCheckpointRollbackContext: () =>
+                Effect.succeed({
+                  thread: projection.thread,
+                  providerThread,
+                  providerSession: undefined,
+                  checkpoint: projection.checkpoints[0],
+                  scope: projection.checkpointScopes[0],
+                  targetAttempt: undefined,
+                  runsToRollback: projection.runs,
+                  staleCheckpoints: [projection.checkpoints[1]],
+                  rootNodes: [],
+                  rolledBackAttemptIds: [],
+                  providerTurns: projection.providerTurns,
+                } as never),
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              open: () =>
+                Effect.succeed({
+                  rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
+                    Effect.gen(function* () {
+                      providerCalls += 1;
+                      const count = yield* resolveCodexRollbackTurnCount(input);
+                      assert.equal(count, 1);
+                      assert.equal(yield* fs.exists(currentFile).pipe(Effect.orDie), false);
+                      assert.equal(
+                        yield* fs.readFileString(restoredFile).pipe(Effect.orDie),
+                        "checkpoint turn",
+                      );
+                      assert.deepEqual((yield* search()).entries, [
+                        { path: "rollback-restored.txt", kind: "file" },
+                      ]);
+                      providerConversation.splice(providerConversation.length - count, count);
+                      return { providerThread };
+                    }),
+                } as never),
+            }),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: () => Effect.succeed({} as never),
+            }),
+          ),
+        ),
+      );
+      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
+        Effect.provide(testLayer),
+      );
+      const rollback = service.execute({
+        threadId,
+        providerThreadId,
+        checkpointId,
+        scopeId,
+      });
+      if (outcome === "restore-fails") {
+        const error = yield* Effect.flip(rollback);
+        assert.equal(error.cause, restoreFailure);
+        assert.equal(providerCalls, 0);
+        assert.deepEqual(providerConversation, ["turn-1"]);
+        assert.deepEqual(persistedEvents, []);
+        assert.deepEqual(deletedRefs, []);
+        assert.equal(yield* fs.readFileString(currentFile), "current turn");
+        assert.equal(yield* fs.exists(restoredFile), false);
+        assert.deepEqual((yield* search()).entries, [
+          { path: "rollback-current.txt", kind: "file" },
+        ]);
+      } else {
+        yield* rollback;
+        assert.equal(providerCalls, 1);
+        assert.deepEqual(providerConversation, []);
+        assert.include(persistedEvents, "run.updated");
+        assert.deepEqual(deletedRefs, [laterCheckpointId]);
+        assert.equal(yield* fs.exists(currentFile), false);
+        assert.equal(yield* fs.readFileString(restoredFile), "checkpoint turn");
+        assert.deepEqual((yield* search()).entries, [
+          { path: "rollback-restored.txt", kind: "file" },
+        ]);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        WorkspaceEntries.layer.pipe(
+          Layer.provide(WorkspacePaths.layer),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-rollback-config-" })),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
 );
