@@ -357,6 +357,8 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       capabilities: AcpProviderCapabilitiesV2,
       supportsCompaction: true,
       registerExtensions: makeCopilotSubagentRouting().registerExtensions,
+      // Routes updates tagged with a Devin subagent context to that child session.
+      normalizeSessionUpdate: normalizeDevinSessionUpdate,
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
@@ -1124,6 +1126,23 @@ describe("AcpAdapterV2", () => {
           yield* runTurn("Continue after Copilot compaction."),
           "Continue after Copilot compaction.",
         );
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          data: { success: true, trigger: "threshold" },
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after legacy Copilot compaction."),
+          "Continue after legacy Copilot compaction.",
+        );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-child",
+          status: "completed",
+          _meta: { "cognition.ai/subagent_context": { parentAgentId: "agent-b" } },
+        });
+        assert.deepEqual(yield* runTurn("Continue after child compaction."), [
+          { type: "text", text: "Continue after child compaction." },
+        ]);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

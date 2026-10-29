@@ -99,8 +99,13 @@ export function makeCopilotSubagentRouting() {
           });
         }
         // Copilot sends no ACP compaction_update; agentId marks a subagent's own compaction.
+        // Older Copilot builds report a successful compaction without `outcome`.
         case "session.compaction_complete": {
-          if (event.agentId !== undefined || data.success !== true || data.outcome !== "applied") {
+          if (
+            event.agentId !== undefined ||
+            data.success !== true ||
+            (data.outcome !== undefined && data.outcome !== "applied")
+          ) {
             return Effect.void;
           }
           return context.markSessionCompacted(event.sessionId);

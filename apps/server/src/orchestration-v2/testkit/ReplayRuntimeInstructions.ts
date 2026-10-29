@@ -18,9 +18,9 @@ export function materializeReplayTranscriptRuntimeInstructions(
             : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
-  // The ACP adapter resends these instructions until a prompt in that session succeeds.
+  // The ACP adapter resends these instructions until a prompt that carried them succeeds.
   const instructedSessionIds = new Set<unknown>();
-  let promptSessionId: unknown;
+  let pendingInstructedPrompt: { readonly sessionId: unknown } | undefined;
 
   return {
     ...transcript,
@@ -34,9 +34,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
           frame.kind === "response" &&
           "method" in frame &&
           frame.method === "session/prompt" &&
-          "result" in frame
+          "result" in frame &&
+          pendingInstructedPrompt !== undefined
         ) {
-          instructedSessionIds.add(promptSessionId);
+          instructedSessionIds.add(pendingInstructedPrompt.sessionId);
+          pendingInstructedPrompt = undefined;
         }
         return entry;
       }
@@ -63,20 +65,14 @@ export function materializeReplayTranscriptRuntimeInstructions(
         "prompt" in frame.params &&
         Array.isArray(frame.params.prompt)
       ) {
-        promptSessionId = "sessionId" in frame.params ? frame.params.sessionId : undefined;
+        const promptSessionId = "sessionId" in frame.params ? frame.params.sessionId : undefined;
+        pendingInstructedPrompt = undefined;
         if (instructedSessionIds.has(promptSessionId)) return entry;
         const prompt: ReadonlyArray<unknown> = frame.params.prompt;
-        const lastPart = prompt.at(-1);
-        if (
-          typeof lastPart === "object" &&
-          lastPart !== null &&
-          "type" in lastPart &&
-          lastPart.type === "text" &&
-          "text" in lastPart &&
-          lastPart.text === instructions
-        ) {
-          return entry;
-        }
+        // Like the adapter, native slash commands go out without instructions.
+        if (promptPartText(prompt[0])?.trimStart().startsWith("/") === true) return entry;
+        pendingInstructedPrompt = { sessionId: promptSessionId };
+        if (promptPartText(prompt.at(-1)) === instructions) return entry;
         return {
           ...entry,
           frame: {
@@ -88,4 +84,15 @@ export function materializeReplayTranscriptRuntimeInstructions(
       return entry;
     }),
   };
+}
+
+function promptPartText(part: unknown): string | undefined {
+  return typeof part === "object" &&
+    part !== null &&
+    "type" in part &&
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string"
+    ? part.text
+    : undefined;
 }

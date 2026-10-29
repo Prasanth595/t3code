@@ -5833,16 +5833,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ) ?? Effect.void
                 );
               }
+              const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
               // Turn projection misses compactions that finish while idle or after settlement.
               if (
-                notification.update.sessionUpdate === "compaction_update" &&
-                notification.update.status === "completed"
+                normalized.update.sessionUpdate === "compaction_update" &&
+                normalized.update.status === "completed"
               ) {
-                yield* markSessionCompacted(notification.sessionId);
+                yield* markSessionCompacted(normalized.sessionId);
               }
-              yield* handleSessionUpdate(
-                flavor.normalizeSessionUpdate?.(notification) ?? notification,
-              );
+              yield* handleSessionUpdate(normalized);
             },
             Effect.mapError(
               (cause) =>
