@@ -419,6 +419,30 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// npm 11 prints a single version as a string; npm 12 wraps it in an array.
+const decodeNpmViewVersion = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
+);
+
+// npm view reads the registry, scope and auth settings the update installs with,
+// so a mirror or private registry answers where registry.npmjs.org is blocked.
+const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
+  packageName: string,
+  npmPrefix: string,
+) {
+  // Match the updater's npm and server environment, rather than the instance's.
+  const npmPath = yield* resolveCommandPath("npm");
+  if (!npmPath) return null;
+  // The prefix selects the global npmrc, as it does for the update.
+  const viewed = yield* runProbe(
+    npmPath,
+    ["view", "--prefix", npmPrefix, "--json", `${packageName}@latest`, "version"],
+    {},
+  );
+  const version = viewed ? Option.getOrNull(decodeNpmViewVersion(viewed.trim())) : null;
+  return nonEmptyString(typeof version === "string" ? version : version?.[0]);
+});
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -539,6 +563,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
     // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -552,6 +577,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         `${packageName}@latest`,
       ],
       updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
+      lookupLatestVersion: resolveNpmGlobalLatestVersion(packageName, npmPrefix).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
 
