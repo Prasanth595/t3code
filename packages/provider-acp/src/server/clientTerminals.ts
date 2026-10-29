@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
@@ -135,12 +136,12 @@ function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
   readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
-  readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly environment: NodeJS.ProcessEnv;
   readonly forceKillAfter: Duration.Input;
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    env: input.environment,
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter,
   });
@@ -151,6 +152,14 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
+  // T3 MCP credentials come from environmentForSession; inherited ones belong to whichever
+  // thread launched this server, so a terminal must never fall back to them. Windows treats
+  // variable names case-insensitively, so match the prefix regardless of case.
+  const inheritedEnvironment = Object.fromEntries(
+    Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
+      ([name]) => !name.toUpperCase().startsWith("T3_ACP_MCP_"),
+    ),
+  );
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -217,12 +226,11 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-          const environment =
-            options.environment === undefined &&
-            sessionEnvironment === undefined &&
-            (request.env?.length ?? 0) === 0
-              ? undefined
-              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+          const environment = {
+            ...inheritedEnvironment,
+            ...sessionEnvironment,
+            ...requestEnvironment,
+          };
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
