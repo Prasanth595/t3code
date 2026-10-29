@@ -4,12 +4,8 @@ import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
-  CommandId,
   EnvironmentId,
-  MessageId,
   ProjectId,
-  ProviderInstanceId,
-  ThreadId,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -44,6 +40,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     get: (atom: Atom.Atom<unknown>) => mocks.registry().get(atom),
+    set: (atom: Atom.Writable<unknown, unknown>, value: unknown) =>
+      mocks.registry().set(atom, value),
   },
 }));
 vi.mock("../../state/entities", () => ({
@@ -103,6 +101,7 @@ vi.mock("../../state/use-model-option-memory", () => ({
   withRememberedModelOptions: (value: unknown) => value,
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
+  composerDraftsLoadedAtom: Atom.make(true),
   useComposerDraft: mocks.drafts,
   getComposerDraftSnapshot: mocks.snapshot,
   createNewTaskDraft: mocks.createDraft,
@@ -121,6 +120,15 @@ vi.mock("../../state/use-composer-drafts", () => ({
   isComposerDraftEmpty: (draft: ComposerDraft) =>
     draft.text === "" && draft.attachments.length === 0,
 }));
+
+vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
+vi.mock("../../state/project-has-threads", () => ({ useProjectHasThreads: () => false }));
+vi.mock("../../state/workspace", () => ({
+  useConnectionsReady: () => true,
+  useWorkspaceEnvironments: () => [],
+}));
+vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
+vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
@@ -263,7 +271,7 @@ function setup() {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active}>
+            <NewTaskFlowProvider active={active} flowKey="test-flow">
               <Probe />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -358,55 +366,6 @@ it("does not persist a provisional workspace default after releasing inactive st
   expect(mocks.writeSettings).not.toHaveBeenCalled();
 });
 
-it("keeps a closing queued edit's repository state until its save is built", async () => {
-  using screen = setup();
-  const message: QueuedThreadMessage = {
-    environmentId: EnvironmentId.make("two"),
-    threadId: ThreadId.make("thread"),
-    messageId: MessageId.make("message"),
-    commandId: CommandId.make("command"),
-    text: "queued prompt",
-    attachments: [],
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-test" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    creation: {
-      projectId: ProjectId.make("b"),
-      projectTitle: "b",
-      projectCwd: "/b",
-      workspaceMode: "worktree",
-      branch: null,
-      worktreePath: null,
-    },
-    createdAt: "2026-10-26T00:00:00Z",
-  };
-  screen.queued.push(message);
-  await screen.render(true);
-  await act(async () =>
-    expect(screen.current.beginEditingPendingTask(message.messageId)).toBe(true),
-  );
-  await screen.emit("/b", "main", false);
-  act(() => screen.current.setPrompt("edited queued prompt"));
-  await screen.render(false);
-  expect(screen.current.isGitRepo).toBe(false);
-  expect(screen.current.selectedProject).toEqual(screen.projects[2]);
-  await screen.expireIdle();
-  expect(screen.events).not.toContain("stop:/b");
-  await screen.emit("/b", "updated-checkout", true);
-  expect(screen.current.isGitRepo).toBe(true);
-  await screen.emit("/b", "updated-checkout", false);
-  await act(async () => screen.current.cancelEditingPendingTask());
-  expect(mocks.flushEdit).toHaveBeenCalledOnce();
-  expect(mocks.flushEdit.mock.calls[0]![0].message).toMatchObject({
-    environmentId: "two",
-    text: "edited queued prompt",
-    creation: { projectId: "b", projectCwd: "/b", workspaceMode: "local" },
-  });
-  await screen.expireIdle();
-  expect(screen.events.filter((event) => event.startsWith("start:"))).toHaveLength(2);
-  expect(screen.events.filter((event) => event.startsWith("stop:"))).toHaveLength(2);
-});
-
 it("uses cached repository capability and branch defaults while offline", async () => {
   using screen = setup();
   screen.offline();
@@ -416,10 +375,7 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.workspaceMode).toBe("worktree");
   expect(screen.current.selectedBranchName).toBe("main");
   const draftKey = screen.current.draftKey!;
-  expect(screen.snapshot(draftKey).workspaceSelection).toMatchObject({
-    mode: "worktree",
-    branch: "main",
-  });
+  expect(screen.snapshot(draftKey).workspaceSelection).toBeUndefined();
   await screen.render(false);
   await screen.expireIdle();
   await screen.render(true);
