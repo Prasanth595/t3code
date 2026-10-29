@@ -21,7 +21,10 @@ export interface BackgroundThreadSnapshot {
 export function resolveBackgroundThreadRequest(
   thread: Pick<
     SidebarThreadSummary,
-    "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "hasPendingAsyncQuestion"
+    | "pendingSubagentRequest"
   > & {
     readonly source: Pick<SidebarThreadSummary["source"], "pendingRuntimeRequest">;
   },
@@ -29,7 +32,9 @@ export function resolveBackgroundThreadRequest(
   const ownRequestId = thread.source.pendingRuntimeRequest?.id ?? null;
   if (thread.hasPendingApprovals) return { request: "approval", requestId: ownRequestId };
   if (thread.pendingSubagentRequest === "approval") return { request: "approval", requestId: null };
-  if (thread.hasPendingUserInput) return { request: "input", requestId: ownRequestId };
+  if (thread.hasPendingUserInput || thread.hasPendingAsyncQuestion) {
+    return { request: "input", requestId: ownRequestId };
+  }
   if (thread.pendingSubagentRequest === "user_input") return { request: "input", requestId: null };
   return { request: null, requestId: null };
 }

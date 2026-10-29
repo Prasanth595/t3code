@@ -186,4 +186,20 @@ describe("resolveBackgroundThreadRequest", () => {
       ]),
     ).toEqual(["Needs approval: Fix login redirect"]);
   });
+
+  it("announces an async question once, while the run works and after it ends", () => {
+    const asyncQuestion = (running: boolean) =>
+      resolveBackgroundThreadRequest({
+        hasPendingApprovals: false,
+        hasPendingUserInput: !running,
+        hasPendingAsyncQuestion: running,
+        pendingSubagentRequest: null,
+        source: { pendingRuntimeRequest: question("question-1") },
+      });
+    const asked = [{ threads: [login()] }, { threads: [login(asyncQuestion(true))] }];
+    expect(speak(asked)).toEqual(["Needs your input: Fix login redirect"]);
+    expect(speak([...asked, { threads: [login(asyncQuestion(false))] }])).toEqual([
+      "Needs your input: Fix login redirect",
+    ]);
+  });
 });
