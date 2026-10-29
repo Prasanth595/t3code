@@ -4,8 +4,6 @@ import * as NodeURL from "node:url";
 import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
 
-const DOM_TEST_ENVIRONMENT_ALLOWLIST: Array<string> = [];
-
 const TEST_EXCLUDE = [
   "**/.repos/**",
   "**/.t3/**",
@@ -216,6 +214,7 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "oxc/no-accumulating-spread": "error",
       "eslint/no-control-regex": "off",
       "typescript/no-this-alias": "off",
       "unicorn/prefer-add-event-listener": "off",
@@ -278,7 +277,7 @@ export default defineConfig({
         { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
       ],
       "t3code/no-global-process-runtime": "error",
-      "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-inline-schema-compile": "error",
       "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
@@ -315,30 +314,7 @@ export default defineConfig({
         rules: { "t3code/no-frame-waits-in-browser-tests": "error" },
       },
       {
-        // Burn-down list: these files still have polling loops, so they stay at "warn".
-        // Remove a file when you convert its loops. New polling loops in all other
-        // test files fail lint. Do not add new files to this list.
-        files: [
-          "apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts",
-          "apps/server/src/background/HostPowerMonitor.test.ts",
-          "apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.test.ts",
-          "apps/server/src/orchestration-v2/FoundationPersistence.test.ts",
-          "apps/server/src/project/ProjectEnrichmentService.test.ts",
-          "apps/server/src/project/ProjectService.test.ts",
-          "apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts",
-          "apps/server/src/usage/UsageService.test.ts",
-          "packages/client-runtime/src/connection/supervisor.test.ts",
-          "packages/client-runtime/src/rpc/client.test.ts",
-          "packages/client-runtime/src/rpc/session.test.ts",
-          "packages/client-runtime/src/state/shell-sync.test.ts",
-          "packages/client-runtime/src/state/threads-sync.test.ts",
-          "packages/shared/src/atomicWrite.test.ts",
-        ],
-        rules: { "t3code/no-polling-loop-in-tests": "warn" },
-      },
-      {
         files: ["apps/**/src/**", "packages/**/src/**"],
-        excludeFiles: DOM_TEST_ENVIRONMENT_ALLOWLIST,
         rules: { "t3code/no-dom-test-environment": "error" },
       },
       {
@@ -360,7 +336,6 @@ export default defineConfig({
       {
         files: [
           "apps/web/src/components/settings/AuthorizedClientsSettings.tsx",
-          "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
@@ -542,9 +517,9 @@ export default defineConfig({
                 "transition",
                 "rounded-[inherit]",
                 "gap-[0.33em]",
-                "px-[0.5em]",
-                "rounded-[0.5em]",
-                "text-[0.86em]",
+                "gap-[0.2em]",
+                "leading-[normal]",
+                "underline-offset-[0.2em]",
                 "rounded-[25%]",
                 "text-[length:80cqh]",
                 "bg-[Highlight]",
@@ -597,11 +572,6 @@ export default defineConfig({
         },
       },
       {
-        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
-        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
-        rules: { "shadcn/no-arbitrary-values": "off" },
-      },
-      {
         // ESNext types allow APIs absent from Hermes; restrict shared client code, exempting Node tests.
         files: [
           "apps/mobile/src/**",
@@ -619,7 +589,7 @@ export default defineConfig({
       },
       {
         files: ["apps/web/src/**", "apps/mobile/src/**", "packages/*/src/**"],
-        rules: { "t3code/react-effect-budget": "error" },
+        rules: { "t3code/no-unreasoned-state-sync": "error" },
       },
       {
         // React Compiler caches use* functions only if they call a hook.
@@ -636,20 +606,14 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
-          "apps/mobile/src/features/home/HomeHeader.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
-          "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
-          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
-          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
-          "apps/mobile/src/features/threads/thread-list-items.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
