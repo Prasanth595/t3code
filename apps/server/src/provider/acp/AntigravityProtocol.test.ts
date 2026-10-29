@@ -13,6 +13,7 @@ import {
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
+  makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -411,5 +412,41 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+  });
+});
+
+describe("Antigravity served reads", () => {
+  it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
+    const reads = makeAntigravityReadRepair();
+    const announce = (toolCallId: string) =>
+      reads.repair({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Running client_view_file",
+          kind: "read",
+          status: "in_progress",
+          locations: [{ path: "/repo/a.ts" }],
+        },
+      });
+    announce("call_abandoned");
+    reads.reset();
+    announce("call_current");
+    reads.attempted("/repo/a.ts", true);
+    const flushed = reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_current",
+        status: "failed",
+        rawOutput: "Tool execution failed",
+      },
+    });
+    expect(flushed.update).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_current",
+      status: "completed",
+    });
   });
 });

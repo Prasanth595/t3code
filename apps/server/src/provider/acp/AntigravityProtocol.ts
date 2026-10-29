@@ -240,6 +240,8 @@ function antigravityClientReadPath(update: {
 export function makeAntigravityReadRepair() {
   const openReads = new Map<string, { readonly path: string; outcome?: "served" | "refused" }>();
   return {
+    /** Earlier turns' rows are already settled, and their unanswered reads must not take credit. */
+    reset: () => openReads.clear(),
     /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
     attempted: (path: string, served: boolean) => {
       for (const read of openReads.values()) {

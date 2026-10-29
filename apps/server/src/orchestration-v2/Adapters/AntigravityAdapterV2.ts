@@ -141,6 +141,8 @@ export function makeAntigravityAcpAdapterFlavor(
               ),
             ),
           ),
+        prompt: (payload, promptOptions) =>
+          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
         handleSessionUpdate: (handler) =>
           runtime.handleSessionUpdate((notification) => handler(reads.repair(notification))),
         start: () =>
