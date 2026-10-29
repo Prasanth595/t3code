@@ -1047,6 +1047,18 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
                 }}
               />
+              <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                  Run once if missed
+                </Text>
+                <ThemedSwitch
+                  accessibilityLabel="Run once if missed"
+                  value={draft.schedule.runMissedOnce}
+                  onValueChange={(runMissedOnce) =>
+                    setDraft({ ...draft, schedule: { ...draft.schedule, runMissedOnce } })
+                  }
+                />
+              </View>
             </>
           ) : draft.schedule.mode === "webhook" ? (
             <>
@@ -1153,7 +1165,8 @@ function TaskForm({
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
-            Time uses the environment's time zone, which may differ from your phone's.
+            Time uses the environment's time zone, which may differ from your phone's. Run once if
+            missed catches up when the environment was off or asleep at that time.
           </Text>
         ) : null}
       </View>
