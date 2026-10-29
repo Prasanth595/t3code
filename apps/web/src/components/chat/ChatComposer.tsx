@@ -276,6 +276,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { ComposerInteractionModeToggle } from "./ComposerInteractionModeToggle";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -3429,7 +3430,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                {composerAttachButton || planModeUiEnabled ? (
+                  <div className="me-2 flex shrink-0 items-center gap-0.5">
+                    {composerAttachButton}
+                    {planModeUiEnabled ? (
+                      <ComposerInteractionModeToggle
+                        interactionMode={interactionMode}
+                        onToggle={toggleInteractionMode}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
