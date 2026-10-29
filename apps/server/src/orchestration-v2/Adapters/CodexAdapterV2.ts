@@ -1,3 +1,5 @@
+import type { AgentInstructionOverrides } from "@t3tools/contracts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -728,6 +730,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
+    readonly instructionOverrides?: AgentInstructionOverrides | null;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
@@ -767,6 +770,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
             },
+            input.instructionOverrides,
           )
         : undefined;
     const additionalContext =
@@ -1615,6 +1619,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1632,6 +1637,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     }),
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
+        const instructionOverrides = Option.isSome(serverSettings)
+          ? (yield* serverSettings.value.getSettings).agentInstructionOverrides
+          : null;
         const scope = yield* Scope.Scope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
@@ -6486,6 +6494,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
+              instructionOverrides,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,

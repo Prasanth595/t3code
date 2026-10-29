@@ -6,7 +6,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, buildPiT3McpExtensionSource } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -66,13 +66,28 @@ describe("Pi orchestration prompt section", () => {
       ],
     },
   ])("appends guidance $name", async ({ events }) => {
-    const bridge = await loadMcpBridge();
-    const hook = bridge.handlers.get("before_agent_start")!;
-    for (const event of events) {
-      const result = await hook(event, { ui: { notify: assert.fail } });
-      assert.isDefined(result);
-      assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
-      assert.include(result!.systemPrompt, "orchestrator_capabilities");
+    for (const custom of [false, true]) {
+      const bridge = await loadMcpBridge({
+        extensionSource: buildPiT3McpExtensionSource(
+          custom
+            ? { orchestration: "Coordinate directly.", visuals: "Return artifact links." }
+            : undefined,
+        ),
+      });
+      const hook = bridge.handlers.get("before_agent_start")!;
+      for (const event of events) {
+        const result = await hook(event, { ui: { notify: assert.fail } });
+        assert.isDefined(result);
+        assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
+        assert.include(
+          result!.systemPrompt,
+          custom ? "Coordinate directly." : "orchestrator_capabilities",
+        );
+        if (custom) {
+          assert.include(result!.systemPrompt, "Return artifact links.");
+          assert.notInclude(result!.systemPrompt, "html_render");
+        }
+      }
     }
   });
 });

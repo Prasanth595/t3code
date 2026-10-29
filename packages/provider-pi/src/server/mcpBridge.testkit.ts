@@ -42,6 +42,7 @@ type AgentStartHook = (
 export async function loadMcpBridge(
   options: {
     readonly modern?: boolean;
+    readonly extensionSource?: string;
     readonly result?: unknown;
     readonly toolSearchAvailable?: boolean;
     readonly toolSearchDisabled?: boolean;
@@ -80,10 +81,9 @@ export async function loadMcpBridge(
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-      "export default async function",
-      "async function",
-    ),
+    (options.extensionSource ?? PI_T3_MCP_EXTENSION_SOURCE)
+      .replace(/^import .*;$/gm, "")
+      .replace("export default async function", "async function"),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {

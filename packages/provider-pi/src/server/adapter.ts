@@ -438,6 +438,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     openSession: Effect.fn("PiAdapterV2.openSession")(function* (
       input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
+      const instructionOverrides = (yield* host.settings.get.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: PI_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+        ),
+      )).agentInstructionOverrides;
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
       const mcpSession = yield* mcpSessions.read(input.threadId);
@@ -455,7 +465,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         );
       // Always inject the permission hook even without MCP credentials; otherwise Supervised becomes unrestricted.
       const extensionPath = yield* provideCacheFs(
-        materializePiT3McpExtension(host.paths.providerStatusCacheDir),
+        materializePiT3McpExtension(host.paths.providerStatusCacheDir, instructionOverrides),
       );
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
       if (!resolvedLaunchArgs.ok) {

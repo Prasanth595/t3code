@@ -8,6 +8,34 @@ Agents can place local images in a page by file path. T3 Code embeds them when t
 
 Before publishing, agents check their work with screenshots from a small headless browser that T3 Code keeps for itself; it never uses a browser you installed. The first preview on a machine downloads it once (about 120 MB) into T3 Code's data folder, so that preview can take a minute. Browser tabs on a remote environment use the same browser, so whichever comes first downloads it. Some Linux hosts need [setup](remote-access.md#browser-host-setup) before it can start. Pages publish without it.
 
+## Override T3's agent guidance
+
+If T3's visual delivery rules conflict with your workflow, set `agentInstructionOverrides` in the
+running environment's `settings.json`, normally `~/.t3/userdata/settings.json`. Merge this into the
+existing file, preserving its other settings:
+
+```json
+{
+  "agentInstructionOverrides": {
+    "visuals": "Use html_render only for HTML intended to appear inside this chat. Publish standalone artifacts using my configured publishing workflow and return a link."
+  }
+}
+```
+
+Start a new thread after saving to use the replacement. Existing agent sessions may retain earlier
+guidance. These settings survive app updates. For SSH environments, change the settings on the remote machine.
+
+The available sections are `orchestration`, `visuals`, `browser`, and `devices`. `visuals` includes
+T3's visual-delivery and preview-usage guidance; `orchestration` covers coordination with other
+threads and agents. A string replaces that section, an empty string omits it, and `null` restores
+its built-in text. Set `agentInstructionOverrides` itself to `null` to restore every section.
+Overrides affect guidance, not tool availability or permissions. Other instructions, including
+provider-native rules and MCP tool descriptions, still apply.
+
+An agent can read or update these values through `t3_environment_read` and
+`t3_environment_preferences_update` with the same settings-write access as other environment
+preferences.
+
 ## MCP apps
 
 Some MCP servers return an interactive app with their tool results, following the [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) standard. When an agent calls one of those tools, the app appears in the thread in place of the tool call, on web, desktop, and mobile. Codex supports this today, for any MCP server you have configured for it; other providers show these calls as ordinary tool calls.

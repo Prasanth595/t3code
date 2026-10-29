@@ -625,7 +625,11 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
 });
 
 describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly deviceInstructions?: string;
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -638,6 +642,9 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.deviceInstructions === undefined
+        ? {}
+        : { instructionOverrides: { devices: input.deviceInstructions } }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -656,10 +663,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
 
   it("gives native subagents the device block only in a session with device access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
-    const subagentContext = (input: {
-      readonly mcp: boolean;
-      readonly deviceToolsAvailable: boolean;
-    }) =>
+    const subagentContext = (input: Parameters<typeof options>[0]) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
           matcher.hooks.map((hook) =>
@@ -686,6 +690,23 @@ describe("ClaudeAdapterV2 device instructions", () => {
         },
       },
     ]);
+    const deviceInstructions = "Use the configured device workflow.";
+    const overridden = options({ mcp: true, deviceToolsAvailable: true, deviceInstructions });
+    assert.include(
+      (overridden.systemPrompt as { readonly append: string }).append,
+      deviceInstructions,
+    );
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: true, deviceInstructions }),
+      [
+        {
+          hookSpecificOutput: {
+            hookEventName: "SubagentStart",
+            additionalContext: deviceInstructions,
+          },
+        },
+      ],
+    );
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
   });

@@ -930,6 +930,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
     }),
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
+        const instructionOverrides = (yield* host.settings.get).agentInstructionOverrides;
         const scope = yield* Effect.scope;
         const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({
@@ -951,6 +952,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(
           hasT3Mcp,
           mcpSession?.capabilities?.has("device") === true,
+          instructionOverrides,
         );
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

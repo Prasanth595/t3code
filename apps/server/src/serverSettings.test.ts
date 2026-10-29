@@ -94,6 +94,31 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists instruction replacements and omissions and can restore defaults", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* service.updateSettings({
+        agentInstructionOverrides: { visuals: "Return an artifact link.", browser: "" },
+      });
+      const saved = yield* fs
+        .readFileString(config.settingsPath)
+        .pipe(Effect.flatMap(decodeServerSettingsJson));
+      assert.deepEqual(saved.agentInstructionOverrides, {
+        visuals: "Return an artifact link.",
+        browser: "",
+      });
+      const next = yield* service.updateSettings({ agentInstructionOverrides: { visuals: null } });
+      assert.deepEqual(next.agentInstructionOverrides, { visuals: null, browser: "" });
+      yield* service.updateSettings({ agentInstructionOverrides: null });
+      const restored = yield* fs
+        .readFileString(config.settingsPath)
+        .pipe(Effect.flatMap(decodeServerSettingsJson));
+      assert.isNull(restored.agentInstructionOverrides);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

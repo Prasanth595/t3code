@@ -1139,7 +1139,18 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const AgentInstructionOverrides = Schema.Struct({
+  orchestration: Schema.optionalKey(Schema.NullOr(TrimmedString)),
+  visuals: Schema.optionalKey(Schema.NullOr(TrimmedString)),
+  browser: Schema.optionalKey(Schema.NullOr(TrimmedString)),
+  devices: Schema.optionalKey(Schema.NullOr(TrimmedString)),
+});
+export type AgentInstructionOverrides = typeof AgentInstructionOverrides.Type;
+
 export const ServerSettings = Schema.Struct({
+  agentInstructionOverrides: Schema.NullOr(AgentInstructionOverrides).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   providerModelPreferences: Schema.NullOr(ProviderModelPreferences).pipe(
@@ -1475,6 +1486,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  agentInstructionOverrides: Schema.optionalKey(Schema.NullOr(AgentInstructionOverrides)),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

@@ -1,3 +1,4 @@
+import type { AgentInstructionOverrides } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -5,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
-  PI_T3_MCP_EXTENSION_SOURCE,
+  buildPiT3McpExtensionSource,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
@@ -226,13 +227,15 @@ function piT3McpExtensionDestPath(cacheDir: string): string {
 
 export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtension")(function* (
   cacheDir: string,
+  overrides?: AgentInstructionOverrides | null,
 ) {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.makeDirectory(cacheDir, { recursive: true });
   const dest = piT3McpExtensionDestPath(cacheDir);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
-  if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_T3_MCP_EXTENSION_SOURCE);
+  const source = buildPiT3McpExtensionSource(overrides);
+  if (existing !== source) {
+    yield* fs.writeFileString(dest, source);
   }
   return dest;
 });

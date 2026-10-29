@@ -18,6 +18,7 @@ export function preferences(settings: ServerSettings) {
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
+    agentInstructionOverrides: settings.agentInstructionOverrides,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,

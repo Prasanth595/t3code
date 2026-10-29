@@ -1,3 +1,4 @@
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
@@ -165,6 +166,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
+      settings: { get: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
       resolveAttachmentPath: () => null,
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
@@ -1598,6 +1600,7 @@ describe("OpenCodeAdapterV2", () => {
         } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
+          settings: { get: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
           resolveAttachmentPath: () => null,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
@@ -1986,6 +1989,7 @@ describe("OpenCodeAdapterV2", () => {
         } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
+          settings: { get: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
           resolveAttachmentPath: () => null,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
