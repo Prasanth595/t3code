@@ -25,23 +25,56 @@ describe("startStallDetector", () => {
     }
   });
 
-  it("reports the gap as the window between two ticks, beyond one interval", () => {
+  it("reports the gap as the window between two ticks, beyond one interval, with the CPU, faults and load in it", () => {
     vi.useFakeTimers();
     let now = 1000;
+    let usage = { cpuMicros: 7_000_000, majorPageFaults: 40 };
     const stalls: Array<Stall> = [];
     const stop = startStallDetector({
       intervalMs: 250,
       thresholdMs: 2000,
       now: () => now,
+      readUsage: () => ({ ...usage, cpuSource: "thread" }),
+      readLoad1: () => 17.5,
       checkUtilization: false,
       onStall: (stall) => stalls.push(stall),
     });
     now += 250;
+    usage = { cpuMicros: 7_100_000, majorPageFaults: 41 };
     vi.advanceTimersByTime(250);
     now += 5250;
+    usage = { cpuMicros: 10_600_400, majorPageFaults: 53 };
     vi.advanceTimersByTime(250);
     stop();
-    expect(stalls).toEqual([{ stallMs: 5000, windowStartMs: 1250, windowEndMs: 6500 }]);
+    expect(stalls).toEqual([
+      {
+        stallMs: 5000,
+        windowStartMs: 1250,
+        windowEndMs: 6500,
+        cpuMs: 3500,
+        cpuSource: "thread",
+        majorPageFaults: 12,
+        load1: 17.5,
+      },
+    ]);
+  });
+
+  it("reads real CPU, page faults and load by default", async () => {
+    let stop = () => {};
+    try {
+      const stall = await new Promise<Stall>((resolve) => {
+        stop = startStallDetector({ intervalMs: 10, thresholdMs: 100, onStall: resolve });
+        // Spin rather than wait, so the stall burns CPU on this thread.
+        const until = performance.now() + 250;
+        while (performance.now() < until) {}
+      });
+      expect(stall.cpuMs).toBeGreaterThanOrEqual(100);
+      expect(["thread", "process"]).toContain(stall.cpuSource);
+      expect(stall.majorPageFaults).toBeGreaterThanOrEqual(0);
+      expect(stall.load1).toBeGreaterThanOrEqual(0);
+    } finally {
+      stop();
+    }
   });
 
   it("stays quiet for a gap at or below the threshold", () => {

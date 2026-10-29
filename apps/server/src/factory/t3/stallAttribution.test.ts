@@ -35,6 +35,11 @@ interface StallRecord {
   readonly profiled: boolean;
   readonly spans: ReadonlyArray<TrackedSpanReport>;
   readonly oldestInFlight: ReadonlyArray<TrackedSpanReport>;
+  readonly cpuMs: number;
+  readonly cpuSource: "thread" | "process";
+  readonly majorPageFaults: number;
+  readonly load1: number;
+  readonly kind: "busy" | "starved";
 }
 
 /** The records in the logs directory's factory-event-loop-stalls.ndjson, in order. */
@@ -333,6 +338,93 @@ describe("withStallAttribution", () => {
         const record = stallRecords(logsDir)[0]!;
         assert.isAtLeast(record.stallMs, 200);
         assert.strictEqual(record.profiled, false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("withStallAttribution busy or starved", () => {
+  it.effect(
+    "calls a stall busy when the loop's CPU is at least half the stall, else starved, in the record and the warning",
+    () =>
+      Effect.gen(function* () {
+        const logsDir = tempDir();
+        const base = yield* Effect.service(Tracer.Tracer);
+        // The detector ticks on its real timer; the test moves its clock and usage readings.
+        let now = 0;
+        let usage = { cpuMicros: 0, majorPageFaults: 0 };
+        const decorated = makeWithStallAttribution({
+          intervalMs: 10,
+          thresholdMs: 100,
+          detector: {
+            now: () => now,
+            readUsage: () => ({ ...usage, cpuSource: "process" }),
+            readLoad1: () => 21.25,
+            checkUtilization: false,
+          },
+        })(Layer.succeed(Tracer.Tracer, base));
+        const warnings = [yield* Deferred.make<string>(), yield* Deferred.make<string>()];
+        let warned = 0;
+        const capture = Logger.make<unknown, void>(({ message }) => {
+          const text = String(Array.isArray(message) ? message[0] : message);
+          if (text.startsWith("factory event loop stalled"))
+            Deferred.doneUnsafe(warnings[warned++]!, Effect.succeed(text));
+        });
+        const [busy, starved] = yield* Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            now += 4010;
+            usage = { cpuMicros: 3_000_000, majorPageFaults: 2 };
+          });
+          const first = yield* Deferred.await(warnings[0]!);
+          yield* Effect.sync(() => {
+            now += 4010;
+            usage = { cpuMicros: 3_200_000, majorPageFaults: 9 };
+          });
+          return [first, yield* Deferred.await(warnings[1]!)] as const;
+        }).pipe(
+          Effect.provide(
+            decorated.pipe(
+              Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+            ),
+          ),
+          Effect.scoped,
+        );
+        assert.include(
+          busy,
+          "factory event loop stalled for 4000 ms; kind: busy (cpu 3000 ms, load 21.25, major faults 2)",
+        );
+        assert.include(
+          starved,
+          "factory event loop stalled for 4000 ms; kind: starved (cpu 200 ms, load 21.25, major faults 7)",
+        );
+        const records = stallRecords(logsDir);
+        assert.deepStrictEqual(
+          records.map(({ stallMs, cpuMs, cpuSource, majorPageFaults, load1, kind }) => ({
+            stallMs,
+            cpuMs,
+            cpuSource,
+            majorPageFaults,
+            load1,
+            kind,
+          })),
+          [
+            {
+              stallMs: 4000,
+              cpuMs: 3000,
+              cpuSource: "process",
+              majorPageFaults: 2,
+              load1: 21.25,
+              kind: "busy",
+            },
+            {
+              stallMs: 4000,
+              cpuMs: 200,
+              cpuSource: "process",
+              majorPageFaults: 7,
+              load1: 21.25,
+              kind: "starved",
+            },
+          ],
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
