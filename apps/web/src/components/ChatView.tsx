@@ -45,6 +45,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -816,7 +817,9 @@ export default function ChatView(props: ChatViewProps) {
       true;
   const resumableRunId = (() => {
     if (!isServerThread || serverProjection === null) return null;
-    const run = latestExecutedRun(serverProjection.runs);
+    const run =
+      usageLimitBlockedRun(serverProjection.runs, serverProjection.turnItems, null) ??
+      latestExecutedRun(serverProjection.runs);
     if (run?.status === "interrupted") return run.id;
     return run?.status === "failed" &&
       serverRuntime?.lastErrorClass === "usage_limit" &&
