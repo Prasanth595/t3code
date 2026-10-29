@@ -60,3 +60,25 @@ it("intersects both fade axes while preserving both scrollbar lanes", async () =
   expect(style.maskComposite).toBe("add, add, intersect, add");
   expect(style.maskSize.split(", ").slice(2)).toEqual(["100% 100%", "100% 100%"]);
 });
+
+it("sizes a horizontal scrollbar to the lane its fade keeps opaque", () => {
+  // Headless Chromium draws overlay scrollbars, so read the rule rather than the lane's size.
+  const selectors = (list: CSSRuleList, parent: string): Array<[string, CSSStyleRule]> =>
+    Array.from(list).flatMap((rule) => {
+      const selector =
+        rule instanceof CSSStyleRule ? rule.selectorText.replace("&", parent) : parent;
+      const own: Array<[string, CSSStyleRule]> =
+        rule instanceof CSSStyleRule ? [[selector, rule]] : [];
+      return "cssRules" in rule
+        ? [...own, ...selectors((rule as CSSGroupingRule).cssRules, selector)]
+        : own;
+    });
+  const lane = Array.from(document.styleSheets)
+    .flatMap((sheet) => selectors(sheet.cssRules, ""))
+    .find(
+      ([selector]) =>
+        selector.includes(".horizontal-virtualized-scroll-fade") &&
+        selector.includes("::-webkit-scrollbar"),
+    );
+  expect(lane?.[1].style.height).toBe("var(--app-scrollbar-width)");
+});

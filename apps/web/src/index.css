@@ -537,6 +537,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     100% calc(100% - var(--app-scrollbar-width)),
     100% var(--app-scrollbar-width);
 
+  /* The global scrollbar rule sets only width; size this lane to match the mask. */
+  &::-webkit-scrollbar {
+    height: var(--app-scrollbar-width);
+  }
+
   /* Preserve both scrollbar lanes when a canvas overflows on both axes. */
   &.virtualized-scroll-fade {
     mask-image:
