@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,6 +19,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 
 import {
   GitCommandError,
@@ -2541,6 +2543,105 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ["bulk/"],
           );
         }),
+    );
+
+    it.effect("reports a new repository without waiting out a stalled Changes-totals diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* git(cwd, ["init", "-b", "main"]);
+        yield* writeTextFile(cwd, "large.txt", "line\n");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const totalsDiffStarted = yield* Deferred.make<void>();
+        const totalsDiffAbandonedAt = yield* Deferred.make<number>();
+        // Stands in for `git diff --numstat` reading gigabytes of untracked text.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          command.args[0] === "diff" &&
+          command.args.includes("--find-renames") &&
+          command.args.includes("--numstat") &&
+          !command.args.includes("HEAD")
+            ? Deferred.succeed(totalsDiffStarted, undefined).pipe(
+                Effect.as(
+                  ChildProcessSpawner.makeHandle({
+                    ...makeSuccessfulHandle(""),
+                    isRunning: Effect.succeed(true),
+                    exitCode: Effect.never.pipe(
+                      Effect.onInterrupt(() =>
+                        Clock.currentTimeMillis.pipe(
+                          Effect.flatMap((now) => Deferred.succeed(totalsDiffAbandonedAt, now)),
+                        ),
+                      ),
+                    ),
+                  }),
+                ),
+              )
+            : delegate.spawn(command),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const startedAt = yield* Clock.currentTimeMillis;
+
+        const status = yield* driver
+          .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
+          .pipe(Effect.forkChild);
+        yield* Effect.raceFirst(Deferred.await(totalsDiffStarted), Fiber.await(status));
+        // The default Git command timeout, which releases the status today.
+        yield* TestClock.adjust("30 seconds");
+        const reported = yield* Fiber.join(status);
+
+        assert.isTrue(yield* Deferred.isDone(totalsDiffStarted));
+        assert.isTrue(yield* Deferred.isDone(totalsDiffAbandonedAt));
+        const statusHeldForMs = (yield* Deferred.await(totalsDiffAbandonedAt)) - startedAt;
+        assert.isAtMost(statusHeldForMs, 2_000, "status waited past the Changes-totals budget");
+        assert.isUndefined(reported.branchChanges);
+        assert.isTrue(reported.isRepo);
+        assert.strictEqual(reported.branch, "main");
+      }).pipe(Effect.provide(layerServerConfig)),
+    );
+
+    it.effect("keeps branch totals when a committed repository takes longer than two seconds", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "# branch.oid (initial)", "rename source\n");
+        yield* git(cwd, ["add", "--", "# branch.oid (initial)"]);
+        yield* git(cwd, ["commit", "-m", "add rename source"]);
+        yield* git(cwd, ["mv", "--", "# branch.oid (initial)", "renamed.txt"]);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const totalsDiffStarted = yield* Deferred.make<void>();
+        const finishTotalsDiff = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          command.args[0] === "diff" &&
+          command.args.includes("--find-renames") &&
+          command.args.includes("--numstat")
+            ? Deferred.succeed(totalsDiffStarted, undefined).pipe(
+                Effect.as(
+                  ChildProcessSpawner.makeHandle({
+                    ...makeSuccessfulHandle("3\t0\tfile.txt\0"),
+                    exitCode: Deferred.await(finishTotalsDiff).pipe(
+                      Effect.as(ChildProcessSpawner.ExitCode(0)),
+                    ),
+                  }),
+                ),
+              )
+            : delegate.spawn(command),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const status = yield* driver
+          .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
+          .pipe(Effect.forkChild);
+        yield* Effect.raceFirst(Deferred.await(totalsDiffStarted), Fiber.await(status));
+        assert.isTrue(yield* Deferred.isDone(totalsDiffStarted));
+        yield* TestClock.adjust("3 seconds");
+        yield* Deferred.succeed(finishTotalsDiff, undefined);
+        const reported = yield* Fiber.join(status);
+        assert.strictEqual(reported.branchChanges?.insertions, 3);
+        assert.strictEqual(reported.branchChanges?.deletions, 0);
+      }).pipe(Effect.provide(layerServerConfig)),
     );
 
     it.effect("reports changes to a file named HEAD", () =>

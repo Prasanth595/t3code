@@ -88,6 +88,8 @@ const REVIEW_DIFF_ARGS = [
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
+// New repositories may contain large untracked data that must not hold the basic status.
+const STATUS_BRANCH_CHANGES_TIMEOUT = Duration.seconds(2);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
@@ -2190,6 +2192,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const statusStdout = statusResult.stdout;
 
+    let isUnbornHead = false;
     let refName: string | null = null;
     let upstreamRef: string | null = null;
     let aheadCount = 0;
@@ -2201,6 +2204,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const statusRecords = statusStdout.split("\0");
     for (let index = 0; index < statusRecords.length; index++) {
       const line = statusRecords[index]!;
+      if (line === "# branch.oid (initial)") {
+        isUnbornHead = true;
+        continue;
+      }
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value.startsWith("(") ? null : value;
@@ -2278,6 +2285,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const branchChanges = options?.includeBranchChanges
       ? yield* readBranchChangeTotals(repositoryPaths?.worktreeRoot ?? cwd, refName).pipe(
+          (totals) =>
+            isUnbornHead
+              ? totals.pipe(
+                  Effect.timeoutOption(STATUS_BRANCH_CHANGES_TIMEOUT),
+                  Effect.map(Option.getOrUndefined),
+                )
+              : totals,
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
