@@ -3194,6 +3194,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
       }),
     );
+    it.effect.each([false, true])(
+      "creates a worktree when checkout prints over 1 MB (progress: %s)",
+      (withProgress) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* writeTextFile(
+            cwd,
+            ".git/hooks/post-checkout",
+            '#!/bin/sh\nhead -c 1100000 /dev/zero | tr "\\0" x\n',
+          );
+          yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+          const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "noisy");
+
+          const created = yield* driver.createWorktree(
+            { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/noisy" },
+            withProgress ? { progress: { onCheckoutProgress: () => Effect.void } } : undefined,
+          );
+
+          assert.equal(created.worktree.path, worktreePath);
+          assert.equal(
+            yield* git(worktreePath, ["rev-parse", "HEAD"]),
+            yield* git(cwd, ["rev-parse", "HEAD"]),
+          );
+        }),
+    );
+
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
       "creates a worktree from a %s without recording it as a PR base",
       (kind) =>
