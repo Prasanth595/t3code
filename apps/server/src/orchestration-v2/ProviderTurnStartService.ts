@@ -97,9 +97,9 @@ const isProviderAdapterOpenSessionError = Schema.is(
 );
 
 /**
- * Claude refuses these before it reads the prompt: replacing a process running background work,
- * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
- * that never answers while the query opens.
+ * Providers refuse these before they read the prompt. Claude: replacing a process running
+ * background work, an appended system prompt or settings it cannot read, or MCP registration
+ * that never answers while the query opens. Copilot: a model switch the context does not fit.
  */
 const PROMPT_REFUSAL_TAGS = [
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
@@ -107,6 +107,7 @@ const PROMPT_REFUSAL_TAGS = [
   "ClaudeAppendSystemPromptMissingValueError",
   "ClaudeSettingsLaunchArgError",
   "ClaudeMcpRegistrationTimeoutError",
+  "CopilotModelSwitchError",
 ] as const;
 
 const refusedBeforePrompt = (error: unknown): boolean =>
