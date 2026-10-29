@@ -306,8 +306,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
-  const silentRoutes = yield* Ref.make<ReadonlyMap<string, SilentRoute>>(new Map());
-  const forgetSilentRoutes = Ref.set(silentRoutes, new Map());
+  // The generation keeps a check that started before a reset from recording
+  // its stale failures after it.
+  const silentRoutes = yield* Ref.make({
+    generation: 0,
+    routes: new Map<string, SilentRoute>() as ReadonlyMap<string, SilentRoute>,
+  });
+  const forgetSilentRoutes = Ref.update(silentRoutes, ({ generation }) => ({
+    generation: generation + 1,
+    routes: new Map(),
+  }));
 
   const attemptEntry = Effect.gen(function* () {
     const latest = yield* Ref.get(currentEntry);
@@ -363,23 +371,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       .slice(0, current)
       .filter((route) => {
         const id = connectionRouteId(route.target);
-        return (cooldowns.get(id) ?? 0n) <= now && (silent.get(id)?.until ?? 0n) <= now;
+        return (cooldowns.get(id) ?? 0n) <= now && (silent.routes.get(id)?.until ?? 0n) <= now;
       });
-    const passed = yield* Effect.forEach(
+    const results = yield* Effect.forEach(
       better,
       (route: ConnectionRoute) => driver.preflight(latest, route),
       { concurrency: "unbounded" },
     );
     yield* Ref.update(silentRoutes, (previous) => {
-      const next = new Map(previous);
+      if (previous.generation !== silent.generation) return previous;
+      const routes = new Map(previous.routes);
       for (const [position, route] of better.entries()) {
         const id = connectionRouteId(route.target);
-        if (passed[position]) next.delete(id);
-        else next.set(id, backOffSilentRoute(previous.get(id), now));
+        if (results[position] !== "silent") routes.delete(id);
+        else routes.set(id, backOffSilentRoute(previous.routes.get(id), now));
       }
-      return next;
+      return { generation: previous.generation, routes };
     });
-    const index = passed.indexOf(true);
+    const index = results.indexOf("ready");
     if (index === -1) return;
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
