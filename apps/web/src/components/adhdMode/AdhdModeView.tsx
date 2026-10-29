@@ -64,6 +64,7 @@ const APPROVAL_OPTIONS = [
   { decision: "accept", label: "Approve" },
   { decision: "acceptForSession", label: "Always allow this session" },
   { decision: "decline", label: "Decline" },
+  { decision: "cancel", label: "Cancel" },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 interface QuestionProgress {
@@ -292,9 +293,7 @@ function AdhdCard(props: {
   const picked = requestProgress?.picked ?? [];
   const question = userInput?.questions[questionIndex] ?? null;
 
-  const approvalOptions = (approval?.options ?? APPROVAL_OPTIONS).filter(
-    (option) => option.decision !== "cancel",
-  );
+  const approvalOptions = approval?.options ?? APPROVAL_OPTIONS;
   const options: ReadonlyArray<CardOption> =
     entry.kind === "approval"
       ? approvalOptions
@@ -406,8 +405,10 @@ function AdhdCard(props: {
   };
 
   const sendReply = () => {
-    const text = reply.trim();
-    if (text.length === 0) return;
+    // A question's own default answer is sent as written, even when cleared on purpose.
+    const keepsRawAnswer = entry.kind === "input" && question?.initialAnswer !== undefined;
+    const text = keepsRawAnswer ? reply : reply.trim();
+    if (text.length === 0 && !keepsRawAnswer) return;
     // The draft stays until the send goes through, so a failed send can be retried.
     const clearOnSuccess = (sent: boolean) => {
       if (!sent) return;
