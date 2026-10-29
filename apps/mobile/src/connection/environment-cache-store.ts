@@ -5,6 +5,7 @@ import {
   encodeStoredThreadSnapshot,
   Persistence,
   makeStoredShellSnapshotEncoder,
+  withVerifiedServerVersion,
 } from "@t3tools/client-runtime/platform";
 import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -96,7 +97,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
   const database = yield* MobileDatabase.MobileDatabase;
   attachProjectFaviconDatabase(database);
   const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder();
-  return Persistence.EnvironmentCacheStore.of({
+  const store = Persistence.EnvironmentCacheStore.of({
     loadShell: Effect.fn("MobileEnvironmentCache.loadShell")((environmentId) =>
       loadDecodedCache({
         database,
@@ -106,7 +107,9 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         operation: "load-shell",
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
-          stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
+          stored.environmentId === environmentId
+            ? Option.some(withVerifiedServerVersion(stored))
+            : Option.none(),
       }).pipe(
         Effect.zipWith(
           Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
@@ -115,16 +118,25 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         ),
       ),
     ),
-    saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
-      const payload = yield* encodeStoredShellSnapshot({
-        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
-        environmentId,
-        snapshot,
-      }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
-      yield* database
-        .saveCache(environmentId, "shell", "snapshot", ORCHESTRATION_CACHE_SCHEMA_VERSION, payload)
-        .pipe(Effect.mapError(mapDatabaseError("save-shell")));
-    }),
+    saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(
+      function* (environmentId, snapshot, verifiedServerVersion) {
+        const payload = yield* encodeStoredShellSnapshot({
+          schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+          environmentId,
+          snapshot,
+          ...(verifiedServerVersion === undefined ? {} : { verifiedServerVersion }),
+        }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+        yield* database
+          .saveCache(
+            environmentId,
+            "shell",
+            "snapshot",
+            ORCHESTRATION_CACHE_SCHEMA_VERSION,
+            payload,
+          )
+          .pipe(Effect.mapError(mapDatabaseError("save-shell")));
+      },
+    ),
     loadThread: Effect.fn("MobileEnvironmentCache.loadThread")((environmentId, threadId) =>
       loadDecodedCache({
         database,
@@ -229,6 +241,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       ),
     ),
   });
+  return Persistence.shareServerConfigReads(store);
 });
 
 export const layer = Layer.effect(Persistence.EnvironmentCacheStore, make());

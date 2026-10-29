@@ -1,6 +1,7 @@
 import {
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerProvider,
   WsSubscribeServerConfigRpc,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import * as Persistence from "../platform/persistence.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -167,6 +169,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
 ) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
+  const cache = yield* Effect.serviceOption(Persistence.EnvironmentCacheStore);
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
@@ -262,13 +265,55 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
     const serverConfigState = yield* Ref.make(Option.none<ServerConfigReplayState>());
     const serverConfigUpdates = yield* PubSub.sliding<BufferedServerConfigEvent>(64);
+    const cachedConfig = Option.isSome(cache)
+      ? yield* cache.value
+          .loadServerConfig(connection.environmentId)
+          .pipe(Effect.orElseSucceed(() => Option.none<ServerConfig>()))
+      : Option.none<ServerConfig>();
+    const catalogs = new Map<string, ServerProvider>(
+      Option.getOrUndefined(cachedConfig)?.providers.map((provider) => [
+        provider.instanceId,
+        provider,
+      ]) ?? [],
+    );
+    const hashes = Object.fromEntries(
+      [...catalogs.values()].flatMap((provider) =>
+        provider.catalogHash === undefined ? [] : [[provider.instanceId, provider.catalogHash]],
+      ),
+    );
+    const restoreCatalogs = (event: ServerConfigStreamEvent): ServerConfigStreamEvent => {
+      if (event.type !== "snapshot" && event.type !== "providerStatuses") return event;
+      const providers =
+        event.type === "snapshot" ? event.config.providers : event.payload.providers;
+      const restored = providers.map((provider) => {
+        const previous = catalogs.get(provider.instanceId);
+        if (
+          provider.catalogOmitted &&
+          (previous === undefined || previous.catalogHash !== provider.catalogHash)
+        ) {
+          throw new Error(`Missing provider catalog for ${provider.instanceId}`);
+        }
+        const { catalogOmitted: _omitted, ...rest } = provider;
+        const next =
+          provider.catalogOmitted && previous !== undefined
+            ? { ...rest, slashCommands: previous.slashCommands, skills: previous.skills }
+            : rest;
+        catalogs.set(provider.instanceId, next);
+        return next;
+      });
+      return event.type === "snapshot"
+        ? { ...event, config: { ...event.config, providers: restored } }
+        : { ...event, payload: { ...event.payload, providers: restored } };
+    };
     const configSubscriptionEndedError = new ConnectionTransientErrorClass({
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
-    const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
-      onDemandSnapshots(serverConfigInput),
-    ).pipe(
+    const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig]({
+      ...onDemandSnapshots(serverConfigInput),
+      providerCatalogHashes: hashes,
+    }).pipe(
+      Stream.map(restoreCatalogs),
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           const buffered = yield* Ref.modify(serverConfigState, (current) => {

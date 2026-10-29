@@ -125,20 +125,28 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     yield* secureStorage.setItem(key, encoded);
   });
 
+  // The id never changes once written, and every connect reads it; a keychain read can take
+  // hundreds of milliseconds while the app starts.
+  let knownDeviceId: string | null = null;
   const loadOrCreateAgentAwarenessDeviceId = Effect.gen(function* () {
+    if (knownDeviceId !== null) return knownDeviceId;
     const existing = yield* secureStorage.getItem(AGENT_AWARENESS_DEVICE_ID_KEY);
-    if (existing?.trim()) return existing;
+    if (existing?.trim()) return (knownDeviceId = existing);
     const deviceId = yield* Effect.tryPromise({
       try: () => import("../lib/uuid").then(({ uuidv4 }) => uuidv4()),
       catch: (cause) => new MobileDeviceIdGenerationError({ cause }),
     });
     yield* secureStorage.setItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
-    return deviceId;
+    return (knownDeviceId = deviceId);
   }).pipe(deviceIdLock.withPermits(1));
 
-  const loadAgentAwarenessDeviceId = secureStorage
-    .getItem(AGENT_AWARENESS_DEVICE_ID_KEY)
-    .pipe(Effect.map((existing) => (existing?.trim() ? existing : null)));
+  const loadAgentAwarenessDeviceId = Effect.suspend(() =>
+    knownDeviceId !== null
+      ? Effect.succeed(knownDeviceId)
+      : secureStorage
+          .getItem(AGENT_AWARENESS_DEVICE_ID_KEY)
+          .pipe(Effect.map((existing) => (existing?.trim() ? (knownDeviceId = existing) : null))),
+  );
 
   const loadAgentAwarenessRegistrationRecord = readJson<AgentAwarenessRegistrationRecord>(
     AGENT_AWARENESS_REGISTRATION_KEY,

@@ -86,6 +86,7 @@ export class EnvironmentCacheStore extends Context.Service<
     readonly saveShell: (
       environmentId: EnvironmentId,
       snapshot: OrchestrationV2ShellSnapshot,
+      verifiedServerVersion?: string,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly loadThread: (
       environmentId: EnvironmentId,
@@ -138,6 +139,39 @@ export class EnvironmentCacheStore extends Context.Service<
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/EnvironmentCacheStore") {}
+
+export function shareServerConfigReads(store: EnvironmentCacheStore["Service"]) {
+  const reads = new Map<
+    EnvironmentId,
+    Effect.Effect<Option.Option<ServerConfig>, ConnectionPersistenceError>
+  >();
+  return EnvironmentCacheStore.of({
+    ...store,
+    loadServerConfig: Effect.fn("EnvironmentCacheStore.sharedServerConfig")(
+      function* (environmentId) {
+        let read = reads.get(environmentId);
+        if (read === undefined) {
+          read = yield* Effect.cached(store.loadServerConfig(environmentId));
+          reads.set(environmentId, read);
+        }
+        return yield* read.pipe(
+          Effect.tapError(() => Effect.sync(() => reads.delete(environmentId))),
+        );
+      },
+    ),
+    saveServerConfig: Effect.fn("EnvironmentCacheStore.sharedSaveServerConfig")(
+      (environmentId, config) =>
+        store
+          .saveServerConfig(environmentId, config)
+          .pipe(Effect.tap(() => Effect.sync(() => reads.delete(environmentId)))),
+    ),
+    clear: Effect.fn("EnvironmentCacheStore.sharedClear")((environmentId) =>
+      store
+        .clear(environmentId)
+        .pipe(Effect.tap(() => Effect.sync(() => reads.delete(environmentId)))),
+    ),
+  });
+}
 
 export class EnvironmentOwnedDataCleanup extends Context.Reference<{
   readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;

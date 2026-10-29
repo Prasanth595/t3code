@@ -33,7 +33,7 @@ const make = MobileSecureStorage.of({
     Effect.tryPromise({
       try: () => SecureStore.getItemAsync(key),
       catch: (cause) => new MobileSecureStorageError({ operation: "read", key, cause }),
-    }),
+    }).pipe(Effect.tap(() => Effect.annotateCurrentSpan("secure_storage.key", key))),
   ),
   setItem: Effect.fn("MobileSecureStorage.setItem")((key, value) =>
     Effect.tryPromise({

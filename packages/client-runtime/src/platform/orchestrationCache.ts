@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellSnapshotJson,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadProjectionJson,
@@ -17,7 +18,18 @@ export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   snapshot: OrchestrationV2ShellSnapshotJson,
+  // The server build whose stream last verified `snapshot`; a cold start on that build resumes.
+  verifiedServerVersion: Schema.optionalKey(Schema.String),
 });
+
+export function withVerifiedServerVersion<S extends OrchestrationV2ShellSnapshot>(stored: {
+  readonly snapshot: S;
+  readonly verifiedServerVersion?: string;
+}): S & { readonly verifiedServerVersion?: string } {
+  return stored.verifiedServerVersion === undefined
+    ? stored.snapshot
+    : { ...stored.snapshot, verifiedServerVersion: stored.verifiedServerVersion };
+}
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION),

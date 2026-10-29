@@ -1,4 +1,6 @@
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Catalog hashes are computed synchronously while mapping stream events.
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -365,6 +367,27 @@ export const withLateEditorConfig = <E, R>(
 
 function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
+}
+
+function compactProviderCatalogs(
+  event: ServerConfigStreamEvent,
+  known: Map<string, string>,
+): ServerConfigStreamEvent {
+  if (event.type !== "snapshot" && event.type !== "providerStatuses") return event;
+  const providers = event.type === "snapshot" ? event.config.providers : event.payload.providers;
+  const compact = providers.map((provider) => {
+    const catalogHash = NodeCrypto.createHash("sha256")
+      .update(JSON.stringify([provider.slashCommands, provider.skills]))
+      .digest("hex");
+    const omitted = known.get(provider.instanceId) === catalogHash;
+    known.set(provider.instanceId, catalogHash);
+    return omitted
+      ? { ...provider, catalogHash, catalogOmitted: true, slashCommands: [], skills: [] }
+      : { ...provider, catalogHash };
+  });
+  return event.type === "snapshot"
+    ? { ...event, config: { ...event.config, providers: compact } }
+    : { ...event, payload: { ...event.payload, providers: compact } };
 }
 
 function unexpectedCompatibilityError(error: never): never {
@@ -3177,9 +3200,14 @@ export const layerWsRpc = (
                 ),
               );
 
-              return Stream.concat(
+              const configEvents = Stream.concat(
                 rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
                 withLateEditorConfig(config, liveUpdates, externalLauncher),
+              );
+              if (input.providerCatalogHashes === undefined) return configEvents;
+              const known = new Map(Object.entries(input.providerCatalogHashes));
+              return configEvents.pipe(
+                Stream.map((event) => compactProviderCatalogs(event, known)),
               );
             }),
           ),

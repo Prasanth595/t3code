@@ -68,15 +68,16 @@ const resolveTargets = (input: {
   readonly hostname: string;
   readonly username?: string | null;
 }) => {
+  // The service warms its cache while the layer builds, so host facts must reach construction.
   const resolve = Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) =>
     service.resolveTargets(),
   ).pipe(
-    Effect.provideService(HostProcess.Hostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
       ),
     ),
+    Effect.provideService(HostProcess.Hostname, input.hostname),
   );
 
   return input.username === undefined

@@ -97,6 +97,29 @@ const LAN_THEN_RELAY_ENTRY: ConnectionCatalogEntry = {
   alternateRoutes: [{ target: RELAY_TARGET, profile: Option.none() }],
   enabled: true,
 };
+const TAILNET_TARGET = new BearerConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  connectionId: "bearer:tailnet",
+});
+const LAN_THEN_TAILNET_ENTRY: ConnectionCatalogEntry = {
+  ...LAN_THEN_RELAY_ENTRY,
+  alternateRoutes: [
+    {
+      target: TAILNET_TARGET,
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: TAILNET_TARGET.connectionId,
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          httpBaseUrl: "http://100.100.1.2:3773/",
+          wsBaseUrl: "ws://100.100.1.2:3773/",
+          network: "tailscale",
+        }),
+      ),
+    },
+  ],
+};
 
 const LAN_ENTRY: ConnectionCatalogEntry = {
   target: LAN_ROUTE.target,
@@ -513,6 +536,29 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(Option.isSome(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("retries a direct host soon after it drops a stable session", () =>
+    Effect.gen(function* () {
+      const reconnectsWithin = Effect.fn("test.reconnectsWithin")(function* (
+        entry: ConnectionCatalogEntry,
+      ) {
+        const harness = yield* makeHarness();
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* TestClock.adjust("31 seconds");
+        yield* harness.closeLatestSession();
+        yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        yield* TestClock.adjust("600 millis");
+        return (yield* SubscriptionRef.get(supervisor.state)).phase !== "backoff";
+      });
+
+      // A restarting host is back within a second or two; a relay keeps the normal ladder.
+      expect(yield* Effect.scoped(reconnectsWithin(TARGET_ENTRY))).toBe(true);
+      expect(yield* Effect.scoped(reconnectsWithin(RELAY_ENTRY))).toBe(false);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1471,6 +1517,62 @@ describe("EnvironmentSupervisor routes", () => {
           Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
         ),
       ).toBe("bearer:tailnet");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("stops waiting for a dead LAN route soon after the tailnet answers", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          connectionRouteId(route.target) === LAN_TARGET.connectionId
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("2500 millis")),
+                Effect.as("silent" as const),
+              )
+            : Effect.sleep("20 millis").pipe(Effect.as("answered" as const)),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_TAILNET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      // Well inside the 500 ms head start: the tailnet answer cut it short.
+      yield* TestClock.adjust("170 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(TAILNET_TARGET.connectionId);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("moves to a LAN route that answers just after connecting elsewhere", () =>
+    Effect.gen(function* () {
+      const lanChecks = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.updateAndGet(lanChecks, (count) => count + 1).pipe(
+                Effect.map((count) => (count === 1 ? "silent" : "answered")),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      // No clock advance: the upgrade must not wait for the periodic check.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

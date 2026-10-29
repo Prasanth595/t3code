@@ -834,12 +834,14 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       _tag: "Request",
       id: configRequest,
       tag: WS_METHODS.subscribeServerConfig,
-      payload: { workspaceSnapshotsOnDemand: true },
+      payload: { workspaceSnapshotsOnDemand: true, providerCatalogHashes: {} },
       headers: Headers.empty,
     });
     const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
+    assert.isDefined(snapshot.config.providers[0]?.catalogHash);
+    assert.deepEqual(snapshot.config.providers[0]?.slashCommands, provider.slashCommands);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
     // A rescan that only touches a snapshot sends nothing; the next real change does.
@@ -855,6 +857,36 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
+    assert.isTrue(update.payload.providers[0]?.catalogOmitted);
+    assert.deepEqual(update.payload.providers[0]?.slashCommands, []);
+
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    yield* Queue.offer(providerChanges, [
+      { ...provider, slashCommands: [{ name: "new-command" }] },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const catalogUpdate = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (catalogUpdate.type !== "providerStatuses")
+      return yield* Effect.die("Expected provider update");
+    assert.deepEqual(catalogUpdate.payload.providers[0]?.slashCommands, [{ name: "new-command" }]);
+    assert.isUndefined(catalogUpdate.payload.providers[0]?.catalogOmitted);
+
+    const reconnectRequest = RpcMessage.RequestId("reconnect");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: reconnectRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: {
+        providerCatalogHashes: { [instanceId]: snapshot.config.providers[0]?.catalogHash },
+      },
+      headers: Headers.empty,
+    });
+    const reconnect = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (reconnect.type !== "snapshot") return yield* Effect.die("Missing reconnect snapshot");
+    assert.isTrue(reconnect.config.providers[0]?.catalogOmitted);
+    assert.deepEqual(reconnect.config.providers[0]?.slashCommands, []);
+    yield* server.write(0, { _tag: "Interrupt", requestId: reconnectRequest, interruptors: [] });
 
     yield* server.write(0, {
       _tag: "Request",

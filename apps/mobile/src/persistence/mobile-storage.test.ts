@@ -62,6 +62,10 @@ describe("mobile device identity", () => {
       const storage = yield* makeStorage;
 
       expect(yield* storage.loadOrCreateAgentAwarenessDeviceId).toBe("existing-device");
+      // Every connect asks again; only the first may pay for a keychain read.
+      expect(yield* storage.loadOrCreateAgentAwarenessDeviceId).toBe("existing-device");
+      expect(yield* storage.loadAgentAwarenessDeviceId).toBe("existing-device");
+      expect(getItemAsync).toHaveBeenCalledTimes(1);
       expect(uuidv4).not.toHaveBeenCalled();
       expect(setItemAsync).not.toHaveBeenCalled();
     }),

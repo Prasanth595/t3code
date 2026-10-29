@@ -24,11 +24,13 @@ import {
   isWildcardHost,
   VIRTUAL_INTERFACE,
 } from "../startupAccess.ts";
+import { makeBackgroundRefreshed } from "./backgroundRefresh.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
 // Stay below the config discovery timeout so slow Tailscale drops only the tailnet name.
 const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
+const SERVED_URL_MAX_AGE = Duration.seconds(30);
 
 export class DirectEndpoints extends Context.Service<
   DirectEndpoints,
@@ -119,6 +121,30 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
+  // Serve setup can fail without stopping startup; advertise only after it answers as this server.
+  const servedUrl = yield* makeBackgroundRefreshed(
+    readTailscaleStatus.pipe(
+      Effect.map((status) => status.magicDnsName),
+      Effect.flatMap((magicDnsName) => {
+        if (magicDnsName === null) return Effect.succeed(null);
+        const httpBaseUrl = buildTailscaleHttpsBaseUrl({
+          magicDnsName,
+          servePort: config.tailscaleServePort,
+        });
+        return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
+          Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
+        );
+      }),
+      Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
+      Effect.map(Option.flatMap(Option.fromNullishOr)),
+      Effect.orElseSucceed(() => Option.none<string>()),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    ),
+    SERVED_URL_MAX_AGE,
+    { warm: config.tailscaleServeEnabled },
+  );
+
   const resolve = Effect.gen(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
@@ -128,28 +154,10 @@ export const make = Effect.gen(function* () {
         onCloudVm: yield* onCloudVm,
       }),
     ];
-    // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
-        Effect.map((status) => status.magicDnsName),
-        Effect.flatMap((magicDnsName) => {
-          if (magicDnsName === null) return Effect.succeed(null);
-          const httpBaseUrl = buildTailscaleHttpsBaseUrl({
-            magicDnsName,
-            servePort: config.tailscaleServePort,
-          });
-          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
-            Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
-          );
-        }),
-        Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
-        Effect.map(Option.flatMap(Option.fromNullishOr)),
-        Effect.orElseSucceed(() => Option.none<string>()),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      );
-      if (Option.isSome(servedUrl)) {
-        endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+      const served = yield* servedUrl;
+      if (Option.isSome(served)) {
+        endpoints.push({ kind: "tailnet", httpBaseUrl: served.value });
       }
     }
     return endpoints;

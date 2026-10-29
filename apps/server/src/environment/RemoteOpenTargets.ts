@@ -3,11 +3,15 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeBackgroundRefreshed } from "./backgroundRefresh.ts";
+
 const SSH_PORT = 22;
+const TARGETS_MAX_AGE = Duration.seconds(30);
 
 export class RemoteOpenTargets extends Context.Service<
   RemoteOpenTargets,
@@ -77,10 +81,13 @@ export const make = Effect.gen(function* () {
 
     return targets;
   });
+  const cachedTargets = yield* makeBackgroundRefreshed(resolveTargets, TARGETS_MAX_AGE, {
+    warm: true,
+  });
 
   return RemoteOpenTargets.of({
     resolveTargets: Effect.fn("RemoteOpenTargets.resolveTargets")(function () {
-      return resolveTargets;
+      return cachedTargets;
     }),
   });
 });

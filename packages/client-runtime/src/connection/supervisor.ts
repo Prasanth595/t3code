@@ -40,6 +40,9 @@ import {
 } from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
+// A direct host that drops a long-lived session is usually restarting, and a refused
+// connection costs it almost nothing. Relays and SSH tunnels keep the normal ladder.
+const RESTART_RETRY_BASE_DELAY_MS = 250;
 const RETRY_MAX_DELAY_MS = 300_000;
 // A cold server with a large database can take longer than 15 seconds to
 // answer, and that is not a reason to drop a working connection.
@@ -134,8 +137,8 @@ export interface EnvironmentSupervisorOptions {
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
-function retryDelayMs(failureCount: number, random: number): number {
-  const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
+function retryDelayMs(failureCount: number, random: number, baseDelayMs: number): number {
+  const ceiling = Math.min(RETRY_MAX_DELAY_MS, baseDelayMs * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
@@ -667,9 +670,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       ),
     );
     // Ticks always run: the check skips the preferred route itself, and the
-    // route list can grow while connected (learned routes).
+    // route list can grow while connected (learned routes). The first tick is
+    // immediate, so a preferred route that answered just after the connect
+    // attempt moved past it is used now rather than a minute later.
     yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
-      Stream.drop(1),
       Stream.runForEach(() => requestBetterRouteCheck(lease)),
       Effect.forkScoped,
     );
@@ -995,17 +999,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     let generation = 0;
     let latestFailure: ConnectionAttemptError | null = null;
     let pendingRetry = Option.none<PendingRetryTrace>();
+    let restartLadder = false;
     const resetRetryLadder = () => {
       failureCount = 0;
       pendingRetry = Option.none();
+      restartLadder = false;
     };
     let replacing = false;
 
     for (;;) {
       if (yield* Ref.getAndSet(resetRetryState, false)) {
-        failureCount = 0;
+        resetRetryLadder();
         latestFailure = null;
-        pendingRetry = Option.none();
       }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
@@ -1042,6 +1047,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         latestFailure = null;
         if (outcome.stable) {
           resetRetryLadder();
+          restartLadder = (yield* currentRoutes).every(
+            (route) =>
+              route.target._tag === "PrimaryConnectionTarget" ||
+              route.target._tag === "BearerConnectionTarget",
+          );
         }
       }
       if (outcome._tag === "Interrupted") {
@@ -1083,7 +1093,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const delayMs = retryDelayMs(failureCount - 1, yield* Random.next);
+      const delayMs = retryDelayMs(
+        failureCount - 1,
+        yield* Random.next,
+        restartLadder ? RESTART_RETRY_BASE_DELAY_MS : RETRY_BASE_DELAY_MS,
+      );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

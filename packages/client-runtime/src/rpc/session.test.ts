@@ -1,6 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  ProviderInstanceId,
+  ProviderDriverKind,
   ServerConfig,
   type ServerConfig as ServerConfigType,
   ServerConfigStreamEvent,
@@ -200,6 +202,7 @@ const SOURCE_EVENT: ServerConfigStreamEventType = {
 
 const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
   options: RpcSession.RpcSessionOptions = {},
+  cachedConfig?: ServerConfigType,
 ) {
   const sentChanges = yield* Queue.unbounded<void>();
   const sockets = Object.assign([] as TestWebSocket[], { changes: yield* Queue.unbounded<void>() });
@@ -209,7 +212,16 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
     Queue.offerUnsafe(sockets.changes, undefined);
     return socket as unknown as globalThis.WebSocket;
   });
-  const layer = RpcSession.layer(options).pipe(Layer.provide(layerConstructor));
+  const layer = RpcSession.layer(options).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerConstructor,
+        Layer.mock(Persistence.EnvironmentCacheStore)({
+          loadServerConfig: () => Effect.succeed(Option.fromNullishOr(cachedConfig)),
+        }),
+      ),
+    ),
+  );
   const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));
   return { factory, sockets };
 });
@@ -275,6 +287,89 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("shares cached config reads and reloads after a save", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      let stored = SERVER_CONFIG;
+      const raw = yield* Persistence.EnvironmentCacheStore.pipe(
+        Effect.provide(
+          Layer.mock(Persistence.EnvironmentCacheStore)({
+            loadServerConfig: () =>
+              Effect.sync(() => {
+                reads++;
+                return Option.some(stored);
+              }),
+            saveServerConfig: (_environmentId, config) =>
+              Effect.sync(() => {
+                stored = config;
+              }),
+          }),
+        ),
+      );
+      const cache = Persistence.shareServerConfigReads(raw);
+      yield* Effect.all(
+        [
+          cache.loadServerConfig(TARGET.environmentId),
+          cache.loadServerConfig(TARGET.environmentId),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(reads).toBe(1);
+      const updated = { ...SERVER_CONFIG, cwd: "/updated" };
+      yield* cache.saveServerConfig(TARGET.environmentId, updated);
+      expect(Option.getOrNull(yield* cache.loadServerConfig(TARGET.environmentId))).toEqual(
+        updated,
+      );
+      expect(reads).toBe(2);
+    }),
+  );
+  it.effect("restores a cached provider catalog omitted by the server", () =>
+    Effect.gen(function* () {
+      const provider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready" as const,
+        auth: { status: "authenticated" as const },
+        checkedAt: "2026-10-25T00:00:00.000Z",
+        models: [],
+        slashCommands: [{ name: "command", description: "Description" }],
+        skills: [],
+        catalogHash: "hash",
+      };
+      const cached = { ...SERVER_CONFIG, providers: [provider] };
+      const { factory, sockets } = yield* makeFactory({}, cached);
+      const session = yield* factory.connect(PREPARED);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(
+        socket,
+        encodeServerConfig({
+          ...SERVER_CONFIG,
+          providers: [{ ...provider, slashCommands: [], catalogOmitted: true }],
+        }),
+        { providerCatalogHashes: { claudeAgent: "hash" } },
+      );
+      const config = yield* session.initialConfig;
+      expect(config.providers).toEqual([provider]);
+
+      const replacement = yield* factory.connect(PREPARED);
+      const replacementSocket = yield* awaitSocket(sockets, 1);
+      replacementSocket.open();
+      yield* completeInitialConfig(
+        replacementSocket,
+        encodeServerConfig({
+          ...SERVER_CONFIG,
+          providers: [
+            { ...provider, catalogHash: "different", slashCommands: [], catalogOmitted: true },
+          ],
+        }),
+      );
+      expect(Exit.isFailure(yield* Effect.exit(replacement.initialConfig))).toBe(true);
+    }).pipe(Effect.scoped),
+  );
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

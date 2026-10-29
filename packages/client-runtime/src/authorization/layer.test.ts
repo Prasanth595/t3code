@@ -24,6 +24,10 @@ import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
+import * as ConnectionDriver from "../connection/driver.ts";
+import * as RpcSession from "../rpc/session.ts";
+import { ConnectionTransientError } from "../connection/model.ts";
+import { CheckedEnvironmentDescriptors } from "../environment/descriptor.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const ENDPOINT = {
@@ -383,6 +387,153 @@ describe("RemoteEnvironmentAuthorization", () => {
         ),
       ).toHaveLength(2);
     }),
+  );
+
+  it.effect("trusts the descriptor its route check just fetched, but not another machine's", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ responses: [websocketTicket("checked-ticket")] });
+      const authorize = (environmentId: EnvironmentId) =>
+        Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          return yield* remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "bearer-token",
+            connectionMethod: "direct",
+          });
+        }).pipe(
+          Effect.provideService(
+            CheckedEnvironmentDescriptors,
+            new Map([
+              [
+                ENDPOINT.httpBaseUrl,
+                {
+                  ...DESCRIPTOR,
+                  platform: { os: "linux" as const, arch: "x64" as const },
+                  environmentId,
+                },
+              ],
+            ]),
+          ),
+          Effect.provide(harness.layer),
+          Effect.result,
+        );
+
+      expect(yield* authorize(ENVIRONMENT_ID)).toMatchObject({
+        _tag: "Success",
+        success: { socketUrl: expect.stringContaining("wsTicket=checked-ticket") },
+      });
+      expect(yield* authorize(EnvironmentId.make("someone-else"))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+      });
+      expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/auth/websocket-ticket/rpc",
+      ]);
+    }),
+  );
+
+  it.effect(
+    "rechecks a LAN descriptor after another route attempt before sending credentials",
+    () =>
+      Effect.gen(function* () {
+        const lanUrl = "http://192.168.1.2:3773";
+        const route = (connectionId: string, httpBaseUrl: string) => ({
+          target: new BearerConnectionTarget({
+            environmentId: ENVIRONMENT_ID,
+            label: DESCRIPTOR.label,
+            connectionId,
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId,
+              environmentId: ENVIRONMENT_ID,
+              label: DESCRIPTOR.label,
+              httpBaseUrl,
+              wsBaseUrl: httpBaseUrl.replace("http", "ws"),
+            }),
+          ),
+        });
+        const harness = yield* makeHarness({
+          responses: [
+            Response.json(DESCRIPTOR),
+            Response.json(DESCRIPTOR),
+            websocketTicket("first-ticket"),
+            Response.json({ ...DESCRIPTOR, environmentId: "another-machine" }),
+          ],
+        });
+        const result = yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          const driver = yield* ConnectionDriver.ConnectionDriver.pipe(
+            Effect.provide(
+              ConnectionDriver.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(ConnectionResolver.ConnectionResolver, {
+                      prepare: (entry) =>
+                        Effect.gen(function* () {
+                          const profile = Option.getOrThrow(entry.profile);
+                          if (profile._tag !== "BearerConnectionProfile")
+                            return yield* Effect.die("Unexpected profile");
+                          return {
+                            ...(yield* remote.authorizeBearer({
+                              expectedEnvironmentId: ENVIRONMENT_ID,
+                              httpBaseUrl: profile.httpBaseUrl,
+                              wsBaseUrl: profile.wsBaseUrl,
+                              bearerToken: "bearer-token",
+                              connectionMethod: "direct",
+                            })),
+                            target: entry.target,
+                          };
+                        }),
+                      prepareForUpdate: () => Effect.die("Unexpected update"),
+                    }),
+                    Layer.succeed(RpcSession.RpcSessionFactory, {
+                      connect: () =>
+                        Effect.fail(
+                          new ConnectionTransientError({
+                            reason: "endpoint-unavailable",
+                            detail: "First route disconnected",
+                          }),
+                        ),
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+          return yield* driver
+            .connect(
+              {
+                ...route("first", "http://127.0.0.1:3773"),
+                alternateRoutes: [route("lan", lanUrl)],
+                enabled: true,
+              },
+              () => Effect.void,
+            )
+            .pipe(Effect.result);
+        }).pipe(Effect.provide(harness.layer));
+
+        expect(result._tag).toBe("Failure");
+        for (const [url, init] of harness.fetch.calls.filter(([url]) =>
+          String(url).startsWith(lanUrl),
+        )) {
+          expect(new URL(String(url)).pathname).toBe("/.well-known/t3/environment");
+          expect(new Headers(init.headers).has("authorization")).toBe(false);
+          expect(init.cache).toBe("no-store");
+        }
+        expect(
+          harness.fetch.calls
+            .filter(([url]) => String(url).startsWith(lanUrl))
+            .map(([url]) => new URL(String(url)).pathname),
+        ).toEqual(["/.well-known/t3/environment", "/.well-known/t3/environment"]);
+        expect(
+          harness.fetch.calls.filter(([url]) =>
+            String(url).endsWith("/api/auth/websocket-ticket/rpc"),
+          ),
+        ).toHaveLength(1);
+      }),
   );
 
   it.effect("reuses a same-account persisted environment token without contacting the relay", () =>

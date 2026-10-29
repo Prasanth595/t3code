@@ -11,6 +11,7 @@ export interface DeferredShellSnapshot extends OrchestrationV2ShellSnapshot {
   readonly loadPullRequests?: Effect.Effect<
     ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>
   >;
+  readonly verifiedServerVersion?: string;
 }
 
 // A zero sleep is a microtask yield, which on React Native runs before the next frame.

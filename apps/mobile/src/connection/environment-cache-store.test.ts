@@ -498,10 +498,11 @@ describe("mobile SQLite environment cache store", () => {
         Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
       );
 
-      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT);
+      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT, "1.0.0");
       yield* store.saveThread(ENVIRONMENT_ID, THREAD_SNAPSHOT);
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
+      expect(shell.verifiedServerVersion).toBe("1.0.0");
       const thread = Option.getOrThrow(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID));
 
       expect(DateTime.formatIso(shell.threads[0]!.updatedAt)).toBe("2026-07-29T12:00:00.000Z");
