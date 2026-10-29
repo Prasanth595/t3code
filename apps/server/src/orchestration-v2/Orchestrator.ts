@@ -7863,22 +7863,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emit(events, command)(event);
       return;
     }
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "subagent.updated",
+    const event = {
+      type: "subagent.updated" as const,
       threadId: command.threadId,
       ...(task.runId === null ? {} : { runId: task.runId }),
       nodeId: task.id,
       occurredAt: now,
       payload: {
         ...task,
-        workflow: command.workflow,
+        workflow: { ...command.workflow, revision: (task.workflow?.revision ?? 0) + 1 },
         ...(command.progress === undefined ? {} : { progress: command.progress }),
         updatedAt: now,
       },
-    });
+    };
+    if (
+      workflowJsonBytes(command) > WORKFLOW_UPDATE_BYTES ||
+      workflowJsonBytes(event) > WORKFLOW_UPDATE_BYTES - 2048
+    ) {
+      return yield* workflowDispatchError(
+        command,
+        "Workflow update exceeds 64 KiB; split changed agents and outcomes.",
+      );
+    }
+    yield* emit(events, command)(event);
   });
 
   const dispatchWorkflowStop = Effect.fn("Orchestrator.dispatchWorkflowStop")(function* (

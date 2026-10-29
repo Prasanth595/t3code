@@ -716,6 +716,61 @@ const awaitWorkflowEnd = (workflowId: string) =>
     );
   });
 
+it.effect("bounds full workflow replacements and sequences their revisions", () =>
+  Effect.gen(function* () {
+    yield* startParent;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const initial = yield* orchestrator.getThreadProjection(parentThreadId);
+    for (const largeScript of [false, true]) {
+      const workflowId = NodeId.make(`workflow:replacement:${largeScript}`);
+      yield* orchestrator.dispatch({
+        type: "workflow.start",
+        commandId: CommandId.make(`${workflowId}:start`),
+        createdBy: "agent",
+        creationSource: "mcp",
+        threadId: parentThreadId,
+        runId: initial.runs.at(-1)!.id,
+        workflowId,
+        title: "Replacement",
+        script: largeScript ? "x".repeat(64 * 1024) : "return 0",
+      });
+      const replace = (name: string, workflow: OrchestrationV2SubagentWorkflow) =>
+        orchestrator.dispatch({
+          type: "workflow.update",
+          commandId: CommandId.make(`${workflowId}:${name}`),
+          threadId: parentThreadId,
+          workflowId,
+          workflow,
+        });
+      if (largeScript) {
+        const error = yield* Effect.flip(replace("large-event", { phases: [], agents: [] }));
+        expect(error).toMatchObject({
+          _tag: "OrchestratorDispatchError",
+          cause: expect.stringContaining("64 KiB"),
+        });
+      } else {
+        for (const revision of [999, 0]) {
+          yield* replace(`revision:${revision}`, { phases: [], agents: [], revision });
+          const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === workflowId,
+          )!;
+          expect(task.workflow!.revision).toBe(revision === 999 ? 1 : 2);
+        }
+        const error = yield* Effect.flip(
+          replace("large-command", {
+            phases: [{ index: 0, title: "x".repeat(64 * 1024) }],
+            agents: [],
+          }),
+        );
+        expect(error).toMatchObject({
+          _tag: "OrchestratorDispatchError",
+          cause: expect.stringContaining("64 KiB"),
+        });
+      }
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "C7 reconstructs bounded 150-node commands, persisted events, wire replay and reconnect",
   () =>
