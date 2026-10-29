@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
@@ -789,5 +790,64 @@ describe("downloadContentDisposition", () => {
     expect(downloadContentDisposition("bad\ud800name.pdf")).toBe(
       `attachment; filename="bad_name.pdf"; filename*=UTF-8''bad%EF%BF%BDname.pdf`,
     );
+  });
+});
+
+describe("request tracing", () => {
+  // Spans record url.full, url.path and url.query, so a capability carried in the URL would
+  // outlive its TTL in the trace file and in any configured OTLP collector.
+  it.effect("keeps URL capabilities out of server spans", () => {
+    const spans: Array<{ kind: string; attributes: string }> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          spans.push({
+            kind: span.kind,
+            attributes: JSON.stringify(Object.fromEntries(span.attributes)),
+          });
+        };
+        return span;
+      },
+    });
+    // The test's own HTTP client is traced too, so only server spans prove what the server records.
+    const serverSpans = () =>
+      spans
+        .filter((span) => span.kind === "server")
+        .map((span) => span.attributes)
+        .join("\n");
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const layerApp = HttpRouter.add("GET", "*", HttpServerResponse.empty({ status: 200 }));
+        const services = yield* Layer.build(
+          HttpRouter.serve(layerApp, { disableListenLog: true, disableLogger: true }).pipe(
+            ServerHttp.withUntracedRequests,
+            Layer.provideMerge(NodeHttpServer.layerTest),
+          ),
+        );
+        const client = Context.get(services, HttpClient.HttpClient);
+        const get = (url: string) => client.execute(HttpClientRequest.get(url));
+
+        yield* get("/api/threads");
+        yield* get("/api/assets/asset-secret/image.png");
+        yield* get("/api/attachments/upload/upload-secret");
+        yield* get("/api/hooks/hook-1/hook-secret");
+        yield* get("/ws?wsTicket=ticket-secret&dpop=proof-secret");
+
+        expect(serverSpans()).toContain("/api/threads");
+        for (const secret of [
+          "asset-secret",
+          "upload-secret",
+          "hook-secret",
+          "ticket-secret",
+          "proof-secret",
+        ]) {
+          expect(serverSpans()).not.toContain(secret);
+        }
+      }),
+    ).pipe(Effect.withTracer(tracer));
   });
 });
