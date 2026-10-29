@@ -51,6 +51,8 @@ export class WorkflowApprovalRequiredError extends Schema.TaggedError<WorkflowAp
   }
 }
 
+const isWorkflowApprovalRequiredError = Schema.is(WorkflowApprovalRequiredError);
+
 type ApprovalRefusal = OrchestrationV2WorkflowApprovalError["reason"];
 
 interface Review {
@@ -281,7 +283,7 @@ const make = Effect.gen(function* () {
       // A thread that does not exist has no request, and is not worth remembering.
       Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.undefined }),
       Effect.mapError((cause) =>
-        Schema.is(WorkflowApprovalRequiredError)(cause)
+        isWorkflowApprovalRequiredError(cause)
           ? cause
           : new WorkflowApprovalRequiredError({ threadId, reason: "unverified", cause }),
       ),
