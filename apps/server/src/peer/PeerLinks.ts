@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
+  type ExecutionEnvironmentDescriptor,
   MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
@@ -21,6 +22,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -41,6 +43,21 @@ const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
  */
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+
+/** Node's TLS verification code in a failed request's cause chain, if any. */
+const certificateErrorCode = (error: unknown) => {
+  let current = error;
+  for (let depth = 0; depth < 6 && Predicate.isObject(current); depth++) {
+    if (
+      Predicate.hasProperty(current, "code") &&
+      typeof current.code === "string" &&
+      /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/.test(current.code)
+    )
+      return current.code;
+    current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+  }
+  return undefined;
+};
 
 /** A usable link: where to reach the peer and the token to send there. */
 export interface ResolvedPeerLink {
@@ -188,12 +205,34 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, peerHttpClient),
     );
 
-  /** The environment answering at `origin`, or nothing when it does not answer as T3 Code. */
+  /**
+   * The environment answering at `origin`, or nothing when it does not answer
+   * as T3 Code. A certificate this machine does not trust fails instead, since
+   * the peer may well be there.
+   */
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
-      Effect.option,
+      Effect.asSome,
+      Effect.catch((error) => {
+        const code = certificateErrorCode(error);
+        return code === undefined
+          ? Effect.succeed(Option.none<ExecutionEnvironmentDescriptor>())
+          : Effect.fail(
+              new PeerLinkError({
+                reason: "unreachable",
+                message: `${origin} presented a certificate this machine does not trust (${code}).`,
+              }),
+            );
+      }),
+    );
+
+  /** Whether `url` answers as `environmentId`, counting an untrusted certificate as no. */
+  const answersAs = (url: string, environmentId: EnvironmentId) =>
+    describe(url).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+      Effect.map((found) => Option.filter(found, (peer) => peer.environmentId === environmentId)),
     );
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
@@ -489,11 +528,7 @@ const make = Effect.gen(function* () {
     DateTime.isLessThanOrEqualTo(link.expiresAt, now)
       ? Effect.succeed<PeerLinkStatus>("expired")
       : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
-            Effect.map(
-              (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
-            ),
-          ),
+          answersAs(url, link.environmentId).pipe(Effect.map(Option.isSome)),
         ).pipe(
           Effect.map((answered): PeerLinkStatus =>
             Option.isSome(answered) ? "reachable" : "unreachable",
@@ -560,9 +595,9 @@ const make = Effect.gen(function* () {
       // reused LAN address or a moved hostname never receives it.
       let fenced = true;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        describe(candidate).pipe(
+        answersAs(candidate, environmentId).pipe(
           Effect.map((found) => {
-            if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
+            if (Option.isNone(found)) return false;
             fenced = linkLimitsHold(found.value);
             return true;
           }),

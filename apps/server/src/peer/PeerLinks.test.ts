@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs certificate bytes.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
+import * as NodeHttps from "node:https";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -525,4 +529,41 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
       expect(refused.message).toContain("plain http");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("names an untrusted certificate instead of calling the peer something else", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* Layer.build(
+        Layer.fresh(
+          NodeHttpServer.layer(
+            () =>
+              NodeHttps.createServer({
+                key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+                cert: NodeFS.readFileSync(
+                  new URL("./fixtures/localhost-cert.pem", import.meta.url),
+                ),
+              }),
+            { port: 0, host: "127.0.0.1" },
+          ),
+        ),
+      );
+      const url = yield* Effect.gen(function* () {
+        yield* HttpServer.serve(Effect.succeed(HttpServerResponse.empty({ status: 404 }))).pipe(
+          Layer.build,
+        );
+        const address = (yield* HttpServer.HttpServer).address;
+        if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
+        return `https://127.0.0.1:${address.port}`;
+      }).pipe(Effect.provideContext(server));
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({ url, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(failed.reason).toBe("unreachable");
+      expect(failed.message).toContain("certificate");
+      expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(yield* a.links.list).toEqual([]);
+    }),
+  ),
 );
