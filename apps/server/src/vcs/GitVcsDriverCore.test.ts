@@ -3398,29 +3398,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           true,
         );
 
-        // Sparse patterns that leave out .gitmodules still check out the submodules.
-        yield* writeTextFile(cwd, "sparse-patterns.txt", "/shared/\n/t3.json\n");
-        yield* writeTextFile(
-          cwd,
-          "t3.json",
-          `{ "worktreeSparsePatternsPath": "sparse-patterns.txt" }`,
-        );
-        yield* git(cwd, ["add", "."]);
-        yield* git(cwd, ["commit", "-m", "sparse patterns"]);
-        const sparsePath = pathService.join(
-          pathService.dirname(worktreePath),
-          "sparse-submodule-worktree",
-        );
-        yield* driver.createWorktree({
-          cwd,
-          path: sparsePath,
-          refName: initialBranch,
-          newRefName: "feature/sparse-submodules",
+        // Sparse patterns that leave out .gitmodules and t3.json still honor both.
+        yield* writeTextFile(cwd, "sparse-patterns.txt", "/shared/\n");
+        const createSparse = Effect.fn(function* (projectFile: string, branch: string) {
+          yield* writeTextFile(cwd, "t3.json", projectFile);
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", branch]);
+          const sparsePath = pathService.join(pathService.dirname(worktreePath), branch);
+          yield* driver.createWorktree({
+            cwd,
+            path: sparsePath,
+            refName: initialBranch,
+            newRefName: branch,
+          });
+          assert.isFalse(yield* fileSystem.exists(pathService.join(sparsePath, ".gitmodules")));
+          assert.isFalse(yield* fileSystem.exists(pathService.join(sparsePath, "t3.json")));
+          return yield* fileSystem.exists(pathService.join(sparsePath, "shared", "SHARED.md"));
         });
 
-        assert.isFalse(yield* fileSystem.exists(pathService.join(sparsePath, ".gitmodules")));
         assert.isTrue(
-          yield* fileSystem.exists(pathService.join(sparsePath, "shared", "SHARED.md")),
+          yield* createSparse(`{ "worktreeSparsePatternsPath": "sparse-patterns.txt" }`, "sparse"),
+        );
+        assert.isFalse(
+          yield* createSparse(
+            `{ "worktreeSparsePatternsPath": "sparse-patterns.txt", "worktreeSubmodules": "none" }`,
+            "sparse-none",
+          ),
         );
       }),
     );
