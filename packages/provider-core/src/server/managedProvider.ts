@@ -229,17 +229,25 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
     const claim = Symbol();
     const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
-    if (yield* Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]))
-      return;
-    yield* refreshSemaphore
-      .withPermits(1)(
-        release.pipe(
-          Effect.andThen(input.invalidateUsageCache ?? Effect.void),
-          Effect.andThen(input.getSettings),
-          Effect.flatMap((settings) => applySnapshotBase(settings, { forceRefresh: true })),
+    yield* Effect.uninterruptibleMask((restore) =>
+      Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]).pipe(
+        Effect.flatMap((held) =>
+          held
+            ? Effect.void
+            : restore(
+                refreshSemaphore.withPermits(1)(
+                  release.pipe(
+                    Effect.andThen(input.invalidateUsageCache ?? Effect.void),
+                    Effect.andThen(input.getSettings),
+                    Effect.flatMap((settings) =>
+                      applySnapshotBase(settings, { forceRefresh: true }),
+                    ),
+                  ),
+                ),
+              ).pipe(Effect.onInterrupt(() => release)),
         ),
-      )
-      .pipe(Effect.onInterrupt(() => release));
+      ),
+    );
   });
 
   const shouldRefreshOnInterval = Effect.gen(function* () {
