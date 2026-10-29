@@ -194,6 +194,7 @@ function makeRegistry(
       refreshInstance: () => Ref.get(providersRef),
       refreshAfterUpdate: () => Ref.get(providersRef),
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+      invalidateModelCaches: () => Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
