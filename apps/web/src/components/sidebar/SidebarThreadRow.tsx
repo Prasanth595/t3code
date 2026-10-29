@@ -77,6 +77,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
+  preventMiddleButtonDefault,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
@@ -897,6 +898,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
+  const rowActionSupported =
+    canOperateThread &&
+    (variantAction === "unsnooze" ? props.snoozeSupported : props.settlementSupported);
+  const handleAuxClick = (event: ReactMouseEvent) => {
+    if (event.button !== 1 || isRenaming || !rowActionSupported) return;
+    if ((event.target as HTMLElement).closest("button, a, input")) return;
+    event.preventDefault();
+    if (variantAction === "settle") onSettle(threadRef);
+    else if (variantAction === "unsettle") onUnsettle(threadRef);
+    else onUnsnooze(threadRef);
+  };
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
   };
@@ -1226,6 +1238,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
+                onMouseDown={preventMiddleButtonDefault}
+                onMouseUp={preventMiddleButtonDefault}
+                onAuxClick={handleAuxClick}
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
               />
@@ -1407,6 +1422,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className={rowSurfaceClassName}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
+              onMouseDown={preventMiddleButtonDefault}
+              onMouseUp={preventMiddleButtonDefault}
+              onAuxClick={handleAuxClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
             />

@@ -728,6 +728,21 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   return nodeClosest(parent, "a[href]") !== null;
 }
 
+// Blocks Windows autoscroll and Linux primary-selection paste for middle-click actions.
+export function preventMiddleButtonDefault(event: Pick<MouseEvent, "button" | "preventDefault">) {
+  if (event.button === 1) event.preventDefault();
+}
+
+export function isSidebarEmptyAreaTarget(target: EventTarget | null): boolean {
+  if (target == null || typeof target !== "object") return false;
+  return (
+    nodeClosest(
+      target,
+      "a, button, input, textarea, [role='treeitem'], [role='option'], [data-thread-item]",
+    ) === null
+  );
+}
+
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,
   projectGroupCount: number,

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
-import { useSnoozeWakeClock, useThreadJumpHintsVisible } from "./Sidebar.logic";
+import {
+  isSidebarEmptyAreaTarget,
+  useSnoozeWakeClock,
+  useThreadJumpHintsVisible,
+} from "./Sidebar.logic";
 
 const MOUNTED_AT_MS = Date.parse("2026-10-24T08:00:00.000Z");
 
@@ -55,5 +59,33 @@ describe("useThreadJumpHintsVisible", () => {
     await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
     await act(() => vi.advanceTimersByTime(1_000));
     await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+  });
+});
+
+describe("isSidebarEmptyAreaTarget", () => {
+  it("treats only space outside rows and controls as empty", async () => {
+    await using screen = await render(
+      <div data-testid="content">
+        <ul data-testid="list">
+          <li data-thread-item="t1" data-testid="row-gap">
+            <div role="treeitem" aria-selected={false}>
+              <span data-testid="row-title">Thread</span>
+            </div>
+          </li>
+        </ul>
+        <button type="button">
+          <span data-testid="button-icon" />
+        </button>
+      </div>,
+      // Plain markup; nothing here links or navigates.
+      { router: false },
+    );
+    const target = (testId: string) => screen.getByTestId(testId).element();
+
+    expect(isSidebarEmptyAreaTarget(target("content"))).toBe(true);
+    expect(isSidebarEmptyAreaTarget(target("list"))).toBe(true);
+    expect(isSidebarEmptyAreaTarget(target("row-gap"))).toBe(false);
+    expect(isSidebarEmptyAreaTarget(target("row-title"))).toBe(false);
+    expect(isSidebarEmptyAreaTarget(target("button-icon"))).toBe(false);
   });
 });

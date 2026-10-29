@@ -177,6 +177,9 @@ settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
+On web and desktop, middle-click a thread to settle it, or to un-settle or wake it
+in those sections. Middle-click empty space in the sidebar to start a new thread.
+
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.

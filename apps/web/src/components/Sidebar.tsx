@@ -179,6 +179,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
+  isSidebarEmptyAreaTarget,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -2884,6 +2885,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   };
+  const handleEmptyAreaMiddleButton = (event: ReactMouseEvent) => {
+    if (event.button !== 1 || !isSidebarEmptyAreaTarget(event.target)) return;
+    event.preventDefault();
+    if (event.type === "auxclick" && projects.length > 0) handleNewThreadClick(event);
+  };
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
@@ -2895,6 +2901,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="min-h-full"
+        onMouseDown={handleEmptyAreaMiddleButton}
+        onMouseUp={handleEmptyAreaMiddleButton}
+        onAuxClick={handleEmptyAreaMiddleButton}
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
