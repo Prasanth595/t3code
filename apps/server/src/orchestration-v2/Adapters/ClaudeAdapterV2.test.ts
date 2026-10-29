@@ -5759,6 +5759,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "process cwd",
     "launch inline",
     "launch file",
+    "stalled settings",
   ])("uses the matching proxy reset from %s when Claude omits a reset time", (source) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -5796,6 +5797,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const launchSettings = JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } });
       if (source === "launch file")
         yield* fs.writeFileString(path.join(cwd, "launch.json"), launchSettings);
+      const readStarted = yield* Deferred.make<void>();
+      let stallSettingsRead = false;
+      const stalledFileSystem = {
+        ...fs,
+        readFileString: (filePath: string) =>
+          stallSettingsRead && filePath === path.join(configDir, "settings.json")
+            ? Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : fs.readFileString(filePath),
+      };
       const harness = yield* makeWakeHarnessWithOptions({
         settings: {
           ...DEFAULT_CLAUDE_SETTINGS,
@@ -5811,7 +5821,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ANTHROPIC_BASE_URL:
             source === "environment" ? "https://hub.test/v1" : "https://wrong.test",
         },
-      }).pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd));
+      }).pipe(
+        Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        Effect.provideService(FileSystem.FileSystem, stalledFileSystem),
+      );
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -5823,10 +5836,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
           runtimePolicy: {
             ...CLAUDE_TEST_RUNTIME_POLICY,
-            cwd: source === "process cwd" ? null : cwd,
+            cwd: source === "process cwd" || source === "stalled settings" ? null : cwd,
           },
         }),
       );
+      stallSettingsRead = source === "stalled settings";
       yield* Queue.offerAll(harness.sdkMessages, [
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
@@ -5840,11 +5854,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           apiErrorStatus: 429,
         }),
       ]);
+      if (source === "stalled settings") {
+        yield* Deferred.await(readStarted);
+        yield* TestClock.adjust("15 seconds");
+      }
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, "usage_limit");
-      assert.equal(terminal.failure.resetAt, "2099-01-01T02:00:00.000Z");
+      assert.equal(
+        terminal.failure.resetAt,
+        source === "stalled settings" ? null : "2099-01-01T02:00:00.000Z",
+      );
     }).pipe(
       Effect.provide([
         IdAllocator.layer,

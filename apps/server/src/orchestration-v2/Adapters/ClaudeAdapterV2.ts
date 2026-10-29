@@ -4379,41 +4379,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
-  const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(function* (
-    context: ActiveClaudeTurnContext,
-  ) {
-    if (Option.isNone(usageLimitSources)) return null;
-    const cwd = context.input.runtimePolicy.cwd ?? workingDirectory;
-    const localDirectory = yield* localSettingsDirectory(cwd);
-    let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
-    const settingsPaths = [
-      path.join(homePath, "settings.json"),
-      path.join(cwd, ".claude", "settings.json"),
-      path.join(cwd, ".claude", "settings.local.json"),
-      ...(localDirectory === cwd
-        ? []
-        : [path.join(localDirectory, ".claude", "settings.local.json")]),
-    ];
-    for (const settingsPath of settingsPaths) {
-      const settings = yield* fileSystem.readFileString(settingsPath).pipe(
-        Effect.flatMap(decodeClaudeEndpointSettings),
-        Effect.orElseSucceed(() => undefined),
-      );
-      endpoint = settings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
-    }
-    const launchSettings = yield* readClaudeLaunchArgSettings({
-      settings: adapterOptions.settings,
-      cwd,
-      fileSystem,
-      path,
-    }).pipe(Effect.orElseSucceed(() => undefined));
-    endpoint = launchSettings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
-    if (!endpoint) return null;
-    return yield* usageLimitSources.value.resolveResetAt({
-      endpoint,
-      model: compileClaudeModelSelection(context.input.modelSelection).apiModelId,
-    });
-  });
+  const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(
+    function* (context: ActiveClaudeTurnContext) {
+      if (Option.isNone(usageLimitSources)) return null;
+      const cwd = context.input.runtimePolicy.cwd ?? workingDirectory;
+      const localDirectory = yield* localSettingsDirectory(cwd);
+      let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
+      const settingsPaths = [
+        path.join(homePath, "settings.json"),
+        path.join(cwd, ".claude", "settings.json"),
+        path.join(cwd, ".claude", "settings.local.json"),
+        ...(localDirectory === cwd
+          ? []
+          : [path.join(localDirectory, ".claude", "settings.local.json")]),
+      ];
+      for (const settingsPath of settingsPaths) {
+        const settings = yield* fileSystem.readFileString(settingsPath).pipe(
+          Effect.flatMap(decodeClaudeEndpointSettings),
+          Effect.orElseSucceed(() => undefined),
+        );
+        endpoint = settings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
+      }
+      const launchSettings = yield* readClaudeLaunchArgSettings({
+        settings: adapterOptions.settings,
+        cwd,
+        fileSystem,
+        path,
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      endpoint = launchSettings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
+      if (!endpoint) return null;
+      return yield* usageLimitSources.value.resolveResetAt({
+        endpoint,
+        model: compileClaudeModelSelection(context.input.modelSelection).apiModelId,
+      });
+    },
+    Effect.timeout("15 seconds"),
+    Effect.orElseSucceed(() => null),
+  );
 
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
