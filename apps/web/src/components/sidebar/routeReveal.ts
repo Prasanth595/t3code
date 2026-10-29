@@ -32,6 +32,7 @@ export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
 // The row can mount after the route, once its shells arrive, so its ref scrolls.
 export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string | null) {
   const mountRevealOwed = useRef(true);
+  const glideRef = useRef<{ animation: Animation; offset: number } | null>(null);
   pendingSidebarRouteReveal(reveal, routeKey);
   return (row: HTMLElement | null, rowKey: string) => {
     if (row === null) return;
@@ -41,17 +42,25 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
       !mountRevealOwed.current &&
       !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
+    const previous = glideRef.current;
+    const carried = previous
+      ? previous.offset * (1 - (previous.animation.effect?.getComputedTiming().progress ?? 1))
+      : 0;
+    previous?.animation.cancel();
+    glideRef.current = null;
     const scroller = glide ? row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') : null;
     const from = scroller?.scrollTop ?? 0;
     row.scrollIntoView({ block: "nearest", behavior: "instant" });
     const list = row.closest("li")?.parentElement;
     if (!scroller || !list) return;
     const moved = scroller.scrollTop - from;
-    if (moved === 0 || Math.abs(moved) > scroller.clientHeight / 4) return;
-    list.animate([{ transform: `translateY(${moved}px)` }, { transform: "translateY(0px)" }], {
-      duration: 200,
-      easing: "ease-out",
-    });
+    const offset = moved + carried;
+    if (offset === 0 || Math.abs(moved) > scroller.clientHeight / 4) return;
+    const animation = list.animate(
+      [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],
+      { duration: 200, easing: "ease-out" },
+    );
+    glideRef.current = { animation, offset };
   };
 }
 
