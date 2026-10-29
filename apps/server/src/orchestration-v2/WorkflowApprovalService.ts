@@ -41,11 +41,9 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
 
   /**
-   * Ids come from the request and the gate's decision id, so a repeated click or retry is the
-   * same command and is answered from its receipt. A decision made after a restart has a new
-   * decision id, so an earlier receipt never answers it. A stored rejection moves the send to
-   * the next id in a fixed sequence, so a later click finds the accepted one instead of
-   * delivering the message again.
+   * Ids come from the request and the gate's decision id, so a repeated click is the same command
+   * and is answered from its receipt. After a stored rejection a click moves along a fixed id
+   * sequence, where it finds the accepted send instead of delivering the message again.
    */
   const tellAgent = (
     input: OrchestrationV2ApproveWorkflowReviewInput | OrchestrationV2DismissWorkflowReviewInput,

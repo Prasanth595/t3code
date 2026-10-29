@@ -7386,85 +7386,83 @@ it.layer(layerWorkflowTurnTest)("workflow approval in the runtime composition", 
     }),
   );
 
-  for (const decision of ["approve", "dismiss"] as const) {
-    it.effect(
-      `retries a rejected workflow ${decision} notification without duplicating its message`,
-      () =>
-        Effect.gen(function* () {
-          const threadId = ThreadId.make(`runtime-layer-workflow-retry-${decision}`);
-          yield* createThread(threadId);
-          yield* typeMessage(threadId, "ask", "Plan this as a workflow");
-          const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
-          const ticket = yield* gate.beginReview(threadId);
-          yield* gate.completeReview(ticket, {
-            environmentId,
-            reviewId: "review:retry",
-            digest,
-            ready: true,
-          });
-          const threads = yield* ThreadManagementService.ThreadManagementService;
-          const sink = yield* EventSink.EventSinkV2;
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          let refuse = true;
-          const commandIds: CommandId[] = [];
-          const approvals = yield* WorkflowApprovalService.WorkflowApprovalService.pipe(
-            Effect.provide(
-              Layer.fresh(WorkflowApprovalService.layer).pipe(
-                Layer.provide(Layer.succeed(WorkflowApprovalGate.WorkflowApprovalGate, gate)),
-                Layer.provide(
-                  Layer.succeed(ThreadManagementService.ThreadManagementService, {
-                    ...threads,
-                    dispatch: (command) =>
-                      Effect.gen(function* () {
-                        commandIds.push(command.commandId);
-                        if (refuse) {
-                          refuse = false;
-                          yield* sink
-                            .commitRejectedCommand({
-                              commandId: command.commandId,
-                              threadId,
-                              commandType: command.type,
-                              rejectedAt: yield* DateTime.now,
-                              error: "temporary refusal",
-                            })
-                            .pipe(Effect.orDie);
-                          return yield* new Orchestrator.OrchestratorDispatchError({
+  it.effect.each(["approve", "dismiss"] as const)(
+    "retries a rejected workflow %s notification without duplicating its message",
+    (decision) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`runtime-layer-workflow-retry-${decision}`);
+        yield* createThread(threadId);
+        yield* typeMessage(threadId, "ask", "Plan this as a workflow");
+        const gate = yield* WorkflowApprovalGate.WorkflowApprovalGate;
+        const ticket = yield* gate.beginReview(threadId);
+        yield* gate.completeReview(ticket, {
+          environmentId,
+          reviewId: "review:retry",
+          digest,
+          ready: true,
+        });
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        let refuse = true;
+        const commandIds: CommandId[] = [];
+        const approvals = yield* WorkflowApprovalService.WorkflowApprovalService.pipe(
+          Effect.provide(
+            Layer.fresh(WorkflowApprovalService.layer).pipe(
+              Layer.provide(Layer.succeed(WorkflowApprovalGate.WorkflowApprovalGate, gate)),
+              Layer.provide(
+                Layer.succeed(ThreadManagementService.ThreadManagementService, {
+                  ...threads,
+                  dispatch: (command) =>
+                    Effect.gen(function* () {
+                      commandIds.push(command.commandId);
+                      if (refuse) {
+                        refuse = false;
+                        yield* sink
+                          .commitRejectedCommand({
                             commandId: command.commandId,
+                            threadId,
                             commandType: command.type,
-                            cause: "temporary refusal",
-                          });
-                        }
-                        return yield* threads.dispatch(command);
-                      }),
-                  }),
-                ),
+                            rejectedAt: yield* DateTime.now,
+                            error: "temporary refusal",
+                          })
+                          .pipe(Effect.orDie);
+                        return yield* new Orchestrator.OrchestratorDispatchError({
+                          commandId: command.commandId,
+                          commandType: command.type,
+                          cause: "temporary refusal",
+                        });
+                      }
+                      return yield* threads.dispatch(command);
+                    }),
+                }),
               ),
             ),
-          );
-          const input = { environmentId, threadId, reviewId: "review:retry", digest };
-          const click = () =>
-            decision === "approve" ? approvals.approve(input) : approvals.dismiss(input);
-          const first = yield* click().pipe(Effect.result);
-          assert.equal(first._tag, "Failure", `dispatches: ${commandIds.length}`);
-          if (first._tag !== "Failure") return;
-          assert.equal(first.failure.reason, "unavailable");
-          yield* click();
-          const delivered = yield* orchestrator.getThreadProjection(threadId);
-          const sent = delivered.messages.filter((message) => message.creationSource === "server");
-          assert.lengthOf(sent, 1);
-          assert.equal(commandIds[0], commandIds[1]);
-          assert.equal(commandIds[2], CommandId.make(`${commandIds[0]}:retry:1`));
-          // Later clicks walk the same ids and are answered by the accepted receipt.
-          yield* Effect.all([click(), click()], { concurrency: "unbounded" });
-          const repeated = yield* orchestrator.getThreadProjection(threadId);
-          const resent = repeated.messages.filter((message) => message.creationSource === "server");
-          assert.lengthOf(resent, 1);
-          assert.equal(resent[0]!.id, sent[0]!.id);
-          assert.lengthOf(repeated.runs, delivered.runs.length);
-          assert.deepEqual(new Set(commandIds), new Set(commandIds.slice(0, 3)));
-        }),
-    );
-  }
+          ),
+        );
+        const input = { environmentId, threadId, reviewId: "review:retry", digest };
+        const click = () =>
+          decision === "approve" ? approvals.approve(input) : approvals.dismiss(input);
+        const first = yield* click().pipe(Effect.result);
+        assert.equal(first._tag, "Failure", `dispatches: ${commandIds.length}`);
+        if (first._tag !== "Failure") return;
+        assert.equal(first.failure.reason, "unavailable");
+        yield* click();
+        const delivered = yield* orchestrator.getThreadProjection(threadId);
+        const sent = delivered.messages.filter((message) => message.creationSource === "server");
+        assert.lengthOf(sent, 1);
+        assert.equal(commandIds[0], commandIds[1]);
+        assert.equal(commandIds[2], CommandId.make(`${commandIds[0]}:retry:1`));
+        // Later clicks walk the same ids and are answered by the accepted receipt.
+        yield* Effect.all([click(), click()], { concurrency: "unbounded" });
+        const repeated = yield* orchestrator.getThreadProjection(threadId);
+        const resent = repeated.messages.filter((message) => message.creationSource === "server");
+        assert.lengthOf(resent, 1);
+        assert.equal(resent[0]!.id, sent[0]!.id);
+        assert.lengthOf(repeated.runs, delivered.runs.length);
+        assert.deepEqual(new Set(commandIds), new Set(commandIds.slice(0, 3)));
+      }),
+  );
 
   it.effect("a plain message through turn start lifts the gate for the same consumers", () =>
     Effect.gen(function* () {
