@@ -69,6 +69,10 @@ class FakeElement {
     this.attributes.set(name, value);
   }
 
+  matches(selector: string) {
+    return selector === ":focus-visible" && this.focused;
+  }
+
   getAttribute(name: string) {
     return this.attributes.get(name) ?? null;
   }
@@ -218,6 +222,8 @@ beforeEach(() => {
   vi.stubGlobal("window", {
     innerWidth: 1280,
     innerHeight: 800,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   });
   vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
     callback(0);
@@ -386,6 +392,7 @@ describe("showContextMenuFallback keyboard", () => {
   it("keeps keyboard navigation usable when control passes to the pointer or outside the menu", async () => {
     const fakeDocument = document as unknown as FakeDocument;
     const outside = fakeDocument.body.appendChild(fakeDocument.createElement("button"));
+    outside.focus();
     const selectionPromise = showContextMenuFallback([
       { id: "copy", label: "Copy", children: [{ id: "copy:path", label: "Path" }] },
       { id: "archive", label: "Archive" },
