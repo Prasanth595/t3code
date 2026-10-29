@@ -574,6 +574,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      quietProvided: boolean,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -640,7 +641,11 @@ export const layer = Layer.effect(
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           thread_id = excluded.thread_id,
-          quiet = excluded.quiet,
+          -- An omitted quiet keeps the stored one, read in this write so a racing edit stands.
+          quiet = CASE
+            WHEN ${quietProvided ? 1 : 0} = 1 THEN excluded.quiet
+            ELSE scheduled_tasks.quiet
+          END,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -1257,7 +1262,7 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, webhook);
+      yield* saveTask(task, input.requireExisting === true, input.quiet !== undefined, webhook);
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
