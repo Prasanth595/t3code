@@ -23,6 +23,7 @@ import type {
   TaskUpdateInput,
   TaskUpdateOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
@@ -5748,6 +5749,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+
+  it.effect.each(["environment", "settings"])(
+    "uses the matching proxy reset from %s when Claude omits a reset time",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-proxy-reset-" });
+        if (source === "settings")
+          yield* fs.writeFileString(
+            path.join(configDir, "settings.json"),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } }),
+          );
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: {
+            CLAUDE_CONFIG_DIR: configDir,
+            ...(source === "environment" ? { ANTHROPIC_BASE_URL: "https://hub.test/v1" } : {}),
+          },
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-proxy-reset"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000652",
+            error: "rate_limit",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000653",
+            result: "Usage limit reached.",
+            terminalReason: "blocking_limit",
+            isError: true,
+            apiErrorStatus: 429,
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.resetAt, "2099-01-01T02:00:00.000Z");
+      }).pipe(
+        Effect.provide([
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            resolveResetAt: (input) => {
+              assert.equal(input.endpoint, "https://hub.test/v1");
+              assert.isNotEmpty(input.model);
+              return Effect.succeed("2099-01-01T02:00:00.000Z");
+            },
+          }),
+        ]),
+      ),
   );
 
   it.effect.each([

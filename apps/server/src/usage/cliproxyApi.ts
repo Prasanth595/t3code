@@ -83,6 +83,11 @@ const CreditList = Schema.Struct({
   ),
 });
 
+const decodeAccountModels = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    models: Schema.Array(Schema.Struct({ id: Schema.String })),
+  }),
+);
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
@@ -423,5 +428,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  const accountModels = Effect.fn("CliproxyApi.accountModels")(function* (
+    config: UsageLimitSourceConfig,
+    accountId: string,
+  ) {
+    const response = yield* management(
+      config,
+      `auth-files/models?name=${encodeURIComponent(accountId)}`,
+    );
+    return (yield* decodeAccountModels(response)).models.map((model) => model.id);
+  });
+  return { readAccounts, consume, accountModels };
 });

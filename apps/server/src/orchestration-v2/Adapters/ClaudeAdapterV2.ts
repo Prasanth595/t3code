@@ -140,6 +140,7 @@ import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
+import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -2596,6 +2597,14 @@ const ClaudeBypassSettings = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Unknown)],
 );
+const decodeClaudeEndpointSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      env: Schema.optional(Schema.Struct({ ANTHROPIC_BASE_URL: Schema.optional(Schema.String) })),
+    }),
+  ),
+);
+
 const decodeClaudeBypassSettings = Schema.decodeUnknownEffect(
   fromLenientJson(ClaudeBypassSettings),
 );
@@ -4367,7 +4376,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(function* (
+    context: ActiveClaudeTurnContext,
+    cwd: string,
+  ) {
+    if (Option.isNone(usageLimitSources)) return null;
+
+    let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
+    const settingsPaths = [
+      path.join(homePath, "settings.json"),
+      ...(cwd
+        ? [
+            path.join(cwd, ".claude", "settings.json"),
+            path.join(cwd, ".claude", "settings.local.json"),
+          ]
+        : []),
+    ];
+    for (const settingsPath of settingsPaths) {
+      const settings = yield* fileSystem.readFileString(settingsPath).pipe(
+        Effect.flatMap(decodeClaudeEndpointSettings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      endpoint = settings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
+    }
+    if (!endpoint) return null;
+    return yield* usageLimitSources.value.resolveResetAt({
+      endpoint,
+      model: compileClaudeModelSelection(context.input.modelSelection).apiModelId,
+    });
+  });
+
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -9217,9 +9257,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     code: "compaction_failed",
                   })
                 : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
+            const fallbackResetAt =
+              resultFailure?.class === "usage_limit" &&
+              resetAt === null &&
+              resultFailure.resetAt == null
+                ? yield* proxyResetAt(context, session.cwd)
+                : null;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
+                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? fallbackResetAt }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,

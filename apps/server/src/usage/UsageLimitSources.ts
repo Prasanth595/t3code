@@ -30,6 +30,10 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    readonly resolveResetAt: (input: {
+      readonly endpoint: string;
+      readonly model: string;
+    }) => Effect.Effect<string | null>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -149,8 +153,57 @@ export const make = Effect.gen(function* () {
 
   yield* refresh.pipe(Effect.forkScoped);
 
+  const resolveResetAt = Effect.fn("UsageLimitSources.resolveResetAt")(
+    function* (input: { readonly endpoint: string; readonly model: string }) {
+      const endpoint = URL.parse(input.endpoint);
+      if (!endpoint || !["http:", "https:"].includes(endpoint.protocol)) return null;
+      const settings = yield* settingsService.getSettings;
+      const entries = Object.entries(settings.usageLimitSources).filter(([, config]) => {
+        const hub = URL.parse(config.url);
+        if (!config.enabled || !config.managementKey || !hub || hub.origin !== endpoint.origin)
+          return false;
+        const basePath = hub.pathname.replace(/\/$/, "");
+        return endpoint.pathname === basePath || endpoint.pathname.startsWith(`${basePath}/`);
+      });
+      if (entries.length !== 1) return null;
+      const [id, config] = entries[0]!;
+      const snapshot = yield* readSource(id as UsageLimitSourceId, config);
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const resets = yield* Effect.forEach(
+        snapshot.accounts.filter((account) => account.driver === "claudeAgent"),
+        (account) =>
+          Effect.gen(function* () {
+            const models = yield* api.accountModels(config, account.id);
+            if (!models.includes(input.model) || account.usageLimits.unavailable) return null;
+            const model = input.model.replace(/^claude-/, "").replace(/[^a-z0-9]+/g, "_");
+            const blocked = account.usageLimits.windows.filter((window) => {
+              if (window.usedPercent < 100) return false;
+              if (window.id === "five_hour" || window.id === "seven_day") return true;
+              const scope = window.id.replace(/^seven_day_/, "").replace(/^claude_/, "");
+              if (!/^(opus|sonnet|haiku)(_|$)/.test(scope)) return true;
+              return model === scope || model.startsWith(`${scope}_`);
+            });
+            if (
+              blocked.length === 0 ||
+              blocked.some((window) => !window.resetsAt || Date.parse(window.resetsAt) <= now)
+            )
+              return null;
+            return Math.max(...blocked.map((window) => Date.parse(window.resetsAt!)));
+          }).pipe(Effect.orElseSucceed(() => null)),
+        { concurrency: 4 },
+      );
+      const known = resets.filter((reset) => reset !== null);
+      return known.length === 0
+        ? null
+        : DateTime.formatIso(DateTime.makeUnsafe(Math.min(...known)));
+    },
+    Effect.timeout("15 seconds"),
+    Effect.orElseSucceed(() => null),
+  );
+
   return {
     current: Ref.get(stateRef),
+    resolveResetAt,
     consumeResetCredit,
     refresh,
     get streamChanges() {
