@@ -112,8 +112,15 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The rows were already read, so even a rate limit only leaves their decision unknown.
   const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
-    recoverRead(cli.getReviewDecisions(input), new Map<number, PullRequestReviewDecision | null>());
+    cli
+      .getReviewDecisions(input)
+      .pipe(
+        Effect.orElseSucceed(
+          (): ReadonlyMap<number, PullRequestReviewDecision | null> => new Map(),
+        ),
+      );
 
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),

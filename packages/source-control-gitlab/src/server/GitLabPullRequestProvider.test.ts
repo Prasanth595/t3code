@@ -299,24 +299,37 @@ describe("review decisions", () => {
     }),
   );
 
-  it.effect("lists merge requests with an unknown decision when GitLab will not say", () =>
+  it.effect.each([
+    {
+      failure: "a failed read",
+      error: new GitLabPullRequestCli.GitLabMergeRequestReadError({
+        command: "glab",
+        cwd: "/w",
+        operation: "getReviewDecisions",
+        cause: null,
+      }),
+    },
+    {
+      failure: "a rate limit",
+      error: new GitLabCli.GitLabCliRateLimitError({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      }),
+    },
+  ])("keeps rows and summaries with an unknown decision after $failure", ({ error }) =>
     Effect.gen(function* () {
-      const provider = yield* providerWith(() =>
-        Effect.fail(
-          new GitLabPullRequestCli.GitLabMergeRequestReadError({
-            command: "glab",
-            cwd: "/w",
-            operation: "getReviewDecisions",
-            cause: null,
-          }),
-        ),
-      );
+      const provider = yield* providerWith(() => Effect.fail(error));
       const listed = yield* provider.listChangeRequests(listing);
+      assert.isDefined(provider.getChangeRequestSummary);
+      const summary = yield* provider.getChangeRequestSummary(reference);
 
       expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
         undefined,
         undefined,
       ]);
+      expect(summary.reviewDecision).toBeUndefined();
     }),
   );
 });
