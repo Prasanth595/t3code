@@ -11,10 +11,15 @@ const launches = vi.hoisted(() => ({
   persistent: vi.fn<BrowserType["launchPersistentContext"]>(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
-vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
+vi.mock("node:fs/promises", () => ({
+  mkdir: launches.mkdir,
+  rm: launches.rm,
+  writeFile: launches.writeFile,
+}));
 
 const makeContext = () => {
   const events = new NodeEvents.EventEmitter();
@@ -51,6 +56,7 @@ const makeBrowser = () => {
 
 const options = () => ({
   profilesDir: "/test/profiles",
+  recorderDir: "/test/recorder",
   executable: vi.fn(async () => "/test/chromium"),
   env: {},
 });
@@ -60,6 +66,7 @@ beforeEach(() => {
   launches.persistent.mockReset();
   launches.mkdir.mockClear();
   launches.rm.mockClear();
+  launches.writeFile.mockClear();
 });
 
 describe("ServerBrowserContexts", () => {
@@ -105,6 +112,43 @@ describe("ServerBrowserContexts", () => {
     expect(launches.mkdir).toHaveBeenCalledWith("/test/profiles/work%2Fteam", { recursive: true });
     await pool.close();
     expect(human.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the recorder extension only into persistent profiles, which can record their tabs", async () => {
+    const human = makeContext();
+    const recorder = { goto: vi.fn(async () => null), close: vi.fn(async () => {}) };
+    const withPages = Object.assign(human, { newPage: vi.fn(async () => recorder) });
+    const browser = makeBrowser();
+    launches.persistent.mockResolvedValue(withPages as unknown as BrowserContext);
+    launches.launch.mockResolvedValue(browser as unknown as Browser);
+    const pool = new ServerBrowserContexts(options());
+    const persistent = await pool.contextFor("default");
+    const agent = await pool.contextFor("default", "agent");
+    const extensionArgs = [
+      "--disable-extensions-except=/test/recorder",
+      "--load-extension=/test/recorder",
+      expect.stringMatching(/^--allowlisted-extension-id=[a-p]{32}$/),
+    ];
+    expect(launches.persistent.mock.calls[0]?.[1]).toMatchObject({
+      args: expect.arrayContaining(extensionArgs),
+      ignoreDefaultArgs: expect.arrayContaining(["--disable-extensions"]),
+    });
+    expect(launches.launch.mock.calls[0]?.[0]?.args).not.toContain(
+      "--load-extension=/test/recorder",
+    );
+    expect(launches.writeFile).toHaveBeenCalledWith(
+      "/test/recorder/manifest.json",
+      expect.stringContaining('"tabCapture"'),
+    );
+    expect(await pool.recorderPage(agent)).toBeNull();
+    expect(await pool.recorderPage(persistent)).toBe(recorder);
+    expect(recorder.goto).toHaveBeenCalledWith(
+      expect.stringMatching(/^chrome-extension:\/\/[a-p]{32}\//),
+    );
+    recorder.goto.mockRejectedValueOnce(new Error("extension missing"));
+    await expect(pool.recorderPage(persistent)).rejects.toThrow("extension missing");
+    expect(recorder.close).toHaveBeenCalledTimes(1);
+    await pool.close();
   });
 
   it("clears a profile by closing its open context before deleting its storage", async () => {

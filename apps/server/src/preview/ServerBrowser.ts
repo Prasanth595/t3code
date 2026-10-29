@@ -36,6 +36,7 @@ import {
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
   type PreviewEvent,
+  PREVIEW_VIEWPORT_MAX_DIMENSION,
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
@@ -262,6 +263,8 @@ interface EncoderWindow {
   __t3Recorder: {
     cursor(x: number, y: number, click: boolean): void;
     frame(data: string, width: number): Promise<boolean>;
+    capture(targetId: string, cssWidth: number, maxSide: number): Promise<void>;
+    viewport(cssWidth: number): void;
     stop(): Promise<{ mimeType: string | null; count: number; bytes: number }>;
     chunk(index: number): Promise<string>;
   };
@@ -269,9 +272,12 @@ interface EncoderWindow {
 
 interface Recording {
   readonly encoder: Page;
-  readonly session: CDPSession;
+  /** Null when the browser captures the tab itself; desktop and off-the-record tabs use the screencast. */
+  readonly screencast: {
+    readonly session: CDPSession;
+    readonly framesInFlight: Set<Promise<void>>;
+  } | null;
   readonly startedAt: string;
-  readonly framesInFlight: Set<Promise<void>>;
 }
 
 interface ServerTab {
@@ -472,6 +478,7 @@ const make = Effect.gen(function* () {
 
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
+    recorderDir: NodePath.join(config.stateDir, "server-browser", "recorder"),
     executable: () => runPromise(previewBrowser.executable),
     // Playwright's launch error drops Chrome's own output; its sandbox note survives.
     diagnose: (executable, cause) =>
@@ -637,6 +644,7 @@ const make = Effect.gen(function* () {
     await tab.page.setViewportSize({ width: size.width, height: size.height });
     await applyZoom(tab);
     broadcastViewport(tab);
+    await followViewport(tab);
   };
 
   const applyRendering = async (tab: ServerTab, snapshot: PreviewSessionSnapshot) => {
@@ -1467,9 +1475,66 @@ const make = Effect.gen(function* () {
     return run;
   };
 
+  // Tab capture records the window, which scales a viewport emulated at another size into it.
+  const fitWindow = async (tab: ServerTab) => {
+    const viewport = tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT;
+    const { windowId } = await tab.cdp.send("Browser.getWindowForTarget");
+    await tab.cdp.send("Browser.setContentsSize", { windowId, ...viewport });
+    return viewport;
+  };
+
+  /** Keeps a tab capture's window and cursor scale on the tab's current viewport. */
+  const followViewport = async (tab: ServerTab) => {
+    const recording = tab.recording;
+    if (!recording || recording.screencast) return;
+    try {
+      const { width } = await fitWindow(tab);
+      await recording.encoder.evaluate(
+        (cssWidth) => (globalThis as unknown as EncoderWindow).__t3Recorder.viewport(cssWidth),
+        width,
+      );
+    } catch (cause) {
+      if (tab.recording === recording && !recording.encoder.isClosed()) throw cause;
+    }
+  };
+
+  const captureTab = async (tab: ServerTab, encoder: Page): Promise<Recording> => {
+    try {
+      await encoder.evaluate(ServerBrowserPage.recordingEncoderScript(recordingFrameRate));
+      const viewport = await fitWindow(tab);
+      const { targetInfo } = await tab.cdp.send("Target.getTargetInfo");
+      await encoder.evaluate(
+        ([targetId, cssWidth, maxSide]) =>
+          (globalThis as unknown as EncoderWindow).__t3Recorder.capture(
+            targetId,
+            cssWidth,
+            maxSide,
+          ),
+        [
+          targetInfo.targetId,
+          viewport.width,
+          PREVIEW_VIEWPORT_MAX_DIMENSION * RENDER_SCALE,
+        ] as const,
+      );
+      if (tab.closing) throw new Error("The tab closed while the recording started.");
+      return { encoder, screencast: null, startedAt: new Date().toISOString() };
+    } catch (cause) {
+      await encoder.close().catch(constVoid);
+      throw cause;
+    }
+  };
+
   const startRecording = (tab: ServerTab): Promise<Recording> => {
     const started = withCaptureLock(tab, async () => {
       if (tab.recording) return tab.recording;
+      const recorder = tab.desktop ? null : await contexts.recorderPage(tab.page.context());
+      if (recorder) {
+        const recording = await captureTab(tab, recorder);
+        tab.recording = recording;
+        // A viewer may have resized the tab while the capture started.
+        await followViewport(tab);
+        return recording;
+      }
       const encoder = await contexts.scratchPage();
       let session: CDPSession | null = null;
       try {
@@ -1511,9 +1576,8 @@ const make = Effect.gen(function* () {
         if (tab.closing) throw new Error("The tab closed while the recording started.");
         const recording: Recording = {
           encoder,
-          session: opened,
+          screencast: { session: opened, framesInFlight },
           startedAt: new Date().toISOString(),
-          framesInFlight,
         };
         tab.recording = recording;
         return recording;
@@ -1532,11 +1596,11 @@ const make = Effect.gen(function* () {
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
-      const recording = tab.recording;
+      const screencast = tab.recording?.screencast;
       try {
         await Promise.all([
           ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
+          screencast?.session.send("Page.stopScreencast").catch(constVoid),
         ]);
         return await capture();
       } finally {
@@ -1544,8 +1608,8 @@ const make = Effect.gen(function* () {
 
         await Promise.all([
           ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
+          screencast && tab.recording?.screencast === screencast
+            ? screencast.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
             : undefined,
         ]);
       }
@@ -1563,9 +1627,11 @@ const make = Effect.gen(function* () {
       let mimeType: string | null;
       const chunks: Array<Buffer> = [];
       try {
-        await recording.session.send("Page.stopScreencast").catch(constVoid);
-        await Promise.all(recording.framesInFlight);
-        await recording.session.detach().catch(constVoid);
+        if (recording.screencast) {
+          await recording.screencast.session.send("Page.stopScreencast").catch(constVoid);
+          await Promise.all(recording.screencast.framesInFlight);
+          await recording.screencast.session.detach().catch(constVoid);
+        }
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
@@ -2200,6 +2266,7 @@ const make = Effect.gen(function* () {
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
         broadcastViewport(tab);
+        await followViewport(tab);
         return;
       }
       case "viewport": {

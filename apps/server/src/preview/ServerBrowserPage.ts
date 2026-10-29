@@ -908,6 +908,8 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
   let sizeBytes = 0;
   let tooLarge = false;
   let frame = null;
+  let capture = null;
+  let captureCssWidth = 1;
   let cursor = null;
   let ring = null;
   const AGENT_CURSOR_PATH = new Path2D("M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z");
@@ -926,7 +928,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
       context.fillStyle = "#000";
       context.fillRect(0, 0, canvas.width, canvas.height);
     }
-    context.drawImage(frame, offsetX, offsetY, width, height);
+    context.drawImage(frame.image, offsetX, offsetY, width, height);
     scale = (width / frame.width) * frame.cssScale;
     if (ring) {
       const age = (performance.now() - ring.at) / 400;
@@ -957,47 +959,83 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
       context.restore();
     }
   };
+  // Draws an image (an ImageBitmap or a VideoFrame) and the cursor; the first one starts the recorder.
+  const show = async (image, width, height, cssWidth) => {
+    if (!recorder) {
+      canvas.width = width;
+      canvas.height = height;
+      const mimeType = ["video/mp4;codecs=avc1.640033", "video/webm;codecs=vp9", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
+      const bitsPerSecond = Math.min(50e6, Math.max(2.5e6, width * height * ${frameRate} * 0.05));
+      recorder = new MediaRecorder(canvas.captureStream(${frameRate}), { mimeType, videoBitsPerSecond: bitsPerSecond });
+      started = new Promise((resolve, reject) => {
+        recorder.onstart = resolve;
+        recorder.onerror = (event) => reject(event.error);
+      });
+      stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+      recorder.ondataavailable = (event) => {
+        if (tooLarge || event.data.size === 0) return;
+        sizeBytes += event.data.size;
+        if (sizeBytes > ${PROVIDER_SEND_TURN_MAX_FILE_BYTES}) {
+          tooLarge = true;
+          chunks.length = 0;
+          clearInterval(ringTimer);
+          frame?.image.close();
+          frame = null;
+          capture?.stop();
+          if (recorder.state !== "inactive") recorder.stop();
+          for (const track of recorder.stream.getTracks()) track.stop();
+          return;
+        }
+        chunks.push(event.data);
+      };
+      recorder.start(1000);
+    }
+    // cssScale: frame px per page CSS px, before fitting into the canvas.
+    frame?.image.close();
+    frame = { image, width, height, cssScale: width / cssWidth };
+    paint();
+    await started;
+  };
   window.__t3Recorder = {
     async frame(base64, cssWidth) {
       if (tooLarge) return false;
       const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
       if (tooLarge) { bitmap.close(); return false; }
-      if (!recorder) {
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const mimeType = ["video/mp4;codecs=avc1.640033", "video/webm;codecs=vp9", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
-        const bitsPerSecond = Math.min(50e6, Math.max(2.5e6, bitmap.width * bitmap.height * ${frameRate} * 0.05));
-        recorder = new MediaRecorder(canvas.captureStream(${frameRate}), { mimeType, videoBitsPerSecond: bitsPerSecond });
-        started = new Promise((resolve, reject) => {
-          recorder.onstart = resolve;
-          recorder.onerror = (event) => reject(event.error);
-        });
-        stopped = new Promise((resolve) => { recorder.onstop = resolve; });
-        recorder.ondataavailable = (event) => {
-          if (tooLarge || event.data.size === 0) return;
-          sizeBytes += event.data.size;
-          if (sizeBytes > ${PROVIDER_SEND_TURN_MAX_FILE_BYTES}) {
-            tooLarge = true;
-            chunks.length = 0;
-            clearInterval(ringTimer);
-            frame?.close();
-            frame = null;
-            if (recorder.state !== "inactive") recorder.stop();
-            for (const track of recorder.stream.getTracks()) track.stop();
-            return;
-          }
-          chunks.push(event.data);
-        };
-        recorder.start(1000);
-      }
-      // Frame px per page CSS px, before fitting into the canvas.
-      bitmap.cssScale = bitmap.width / cssWidth;
-      frame?.close();
-      frame = bitmap;
-      paint();
-      await started;
+      await show(bitmap, bitmap.width, bitmap.height, cssWidth);
       return true;
+    },
+    // In the recorder extension's page: records the tab the browser renders, frame by frame as composited.
+    async capture(targetId, cssWidth, maxSide) {
+      const target = (await chrome.debugger.getTargets()).find((candidate) => candidate.id === targetId);
+      if (target?.tabId === undefined) throw new Error("The recorder cannot see this tab.");
+      const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: target.tabId });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        // Tab capture keeps one frame size and letterboxes into it, unless the bounds exceed 1 px
+        // and differ in aspect ratio (Chromium's SelectResolutionPolicyFromCandidates): then frames
+        // follow the window, as screencast frames follow the viewport.
+        video: { mandatory: {
+          chromeMediaSource: "tab", chromeMediaSourceId: streamId, maxFrameRate: ${frameRate},
+          minWidth: 3, minHeight: 2, maxWidth: maxSide, maxHeight: maxSide,
+        } },
+      });
+      capture = stream.getVideoTracks()[0];
+      captureCssWidth = cssWidth;
+      const reader = new MediaStreamTrackProcessor({ track: capture }).readable.getReader();
+      const next = async () => {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        if (tooLarge) { value.close(); return false; }
+        await show(value, value.displayWidth, value.displayHeight, captureCssWidth);
+        return true;
+      };
+      // The first frame starts the recorder, so a stop right after this returns has a frame to encode.
+      if (!(await next())) throw new Error("The tab capture ended before its first frame.");
+      void (async () => { while (await next()); })();
+    },
+    viewport(cssWidth) {
+      captureCssWidth = cssWidth;
     },
     cursor(x, y, click) {
       if (tooLarge) return;
@@ -1013,6 +1051,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
       paint();
     },
     async stop() {
+      capture?.stop();
       if (!recorder) return { mimeType: null, count: 0, bytes: 0 };
       if (recorder.state !== "inactive") {
         // Consume the cached frame, then wait for the final paint to reach the

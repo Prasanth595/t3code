@@ -19,7 +19,7 @@ const LDD_IN_BARE_DEBIAN = `\tlinux-vdso.so.1 (0x00007ffd2d1f8000)
 // Chrome's own abort on Ubuntu 26.04 with unprivileged user namespaces restricted.
 
 const LOADER_ERROR =
-  "chrome-headless-shell: error while loading shared libraries: libglib-2.0.so.0: cannot open shared object file: No such file or directory";
+  "chrome: error while loading shared libraries: libglib-2.0.so.0: cannot open shared object file: No such file or directory";
 
 const hostReporting = (output: { readonly version: string; readonly ldd: string }) => {
   const commands: Array<string> = [];
@@ -60,7 +60,7 @@ const diagnose = (input: {
     version: input.version ?? LOADER_ERROR,
   });
   return PreviewBrowserHost.diagnoseLaunchFailure({
-    executable: "/home/me/.t3/tools/chrome-headless-shell/linux64/154/chrome-headless-shell",
+    executable: "/home/me/.t3/tools/chrome-for-testing/linux64/154/chrome",
     output: input.output,
     setupCommand: "sudo t3 browser setup",
   }).pipe(
