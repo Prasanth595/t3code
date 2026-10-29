@@ -14,14 +14,9 @@ const hostOf = (args: ReadonlyArray<string>) => {
 };
 
 /**
- * Makes `gh auth token` survive an event-loop stall. Its 10 s timeout is wall-clock, so a
- * stalled loop can use it up while gh has already answered. A timed-out lookup runs once more
- * at 30 s; if that also times out, the output of the last success for the same command and
- * args is reused when it is at most 30 minutes old; upstream then caches it for its usual
- * 5-minute token TTL. Any other failure forgets that output. Every other operation passes
- * through untouched.
- *
- * The remembered output carries the token: it stays in memory and is never logged.
+ * For `GitHubCredentials.get` only: retry a timeout once at 30 s, then reuse the last success
+ * for the same command and args if it is at most 30 minutes old. Other failures forget it.
+ * The remembered output carries the token: memory only, never logged.
  */
 export const decorate = (
   inner: VcsProcess.VcsProcess["Service"],
@@ -35,9 +30,9 @@ export const decorate = (
     if (input.operation !== CREDENTIAL_OPERATION) return inner.run(input);
     const key = JSON.stringify([input.command, ...input.args]);
     return inner.run(input).pipe(
-      Effect.catchTag("VcsProcessTimeoutError", () =>
-        inner.run({ ...input, timeoutMs: RETRY_TIMEOUT_MS }),
-      ),
+      Effect.catchTags({
+        VcsProcessTimeoutError: () => inner.run({ ...input, timeoutMs: RETRY_TIMEOUT_MS }),
+      }),
       Effect.tap((output) =>
         Clock.currentTimeMillis.pipe(Effect.map((atMs) => lastGood.set(key, { output, atMs }))),
       ),

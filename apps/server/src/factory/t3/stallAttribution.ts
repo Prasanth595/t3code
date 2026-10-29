@@ -54,7 +54,7 @@ export interface StallAttributionOptions {
   /** Tests shorten these; the profiler's defaults are 5 s and 30 s. */
   readonly profileThresholdMs?: number;
   readonly profileDurationMs?: number;
-  /** Tests drive the detector's clock and usage readings. */
+  /** Tests drive the detector's clock, which the span registry shares, and its usage readings. */
   readonly detector?: Pick<
     StallDetectorOptions,
     "now" | "readUsage" | "readLoad1" | "checkUtilization"
@@ -92,7 +92,9 @@ const attributionLayer = (options: StallAttributionOptions) =>
       const logsDir = path.dirname(serverTracePath);
       const filePath = path.join(logsDir, "factory-event-loop-stalls.ndjson");
 
-      const registry = makeSpanRegistry();
+      const registry = makeSpanRegistry(
+        options.detector?.now === undefined ? {} : { now: options.detector.now },
+      );
       const sink = yield* Effect.try(
         () =>
           new RotatingFileSink({

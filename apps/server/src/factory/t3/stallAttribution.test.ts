@@ -350,9 +350,8 @@ describe("withStallAttribution busy or starved", () => {
       Effect.gen(function* () {
         const logsDir = tempDir();
         const base = yield* Effect.service(Tracer.Tracer);
-        // The detector ticks on its real timer; the test moves its clock and usage readings. The
-        // clock starts at the real one so the span registry can place spans in the stall window.
-        let now = performance.now();
+        // The detector ticks on its real timer; the test moves its clock and usage readings.
+        let now = 1000;
         let usage = { cpuMicros: 0, majorPageFaults: 0 };
         const decorated = makeWithStallAttribution({
           intervalMs: 10,
