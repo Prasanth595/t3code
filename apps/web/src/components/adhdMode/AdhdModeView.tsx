@@ -326,17 +326,11 @@ function AdhdCard(props: {
         : (suggestions ?? []).map((label) => ({ label }));
   const recommended =
     entry.kind === "approval"
-      ? Math.max(
-          0,
-          approvalOptions.findIndex((option) => option.decision === "accept"),
-        )
+      ? approvalOptions.findIndex((option) => option.decision === "accept")
       : entry.kind === "input"
-        ? Math.max(
-            0,
-            options.findIndex((option) => RECOMMENDED_LABEL.test(option.label)),
-          )
+        ? options.findIndex((option) => RECOMMENDED_LABEL.test(option.label))
         : 0;
-  const selected = Math.min(highlight ?? recommended, Math.max(0, options.length - 1));
+  const selected = Math.min(highlight ?? Math.max(0, recommended), Math.max(0, options.length - 1));
 
   const lastAssistantText =
     turnItems.findLast(

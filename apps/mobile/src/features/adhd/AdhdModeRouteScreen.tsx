@@ -196,6 +196,8 @@ function AdhdCard(props: { entry: AdhdQueueEntry; projectName: string | undefine
   const [suggestionsFailed, setSuggestionsFailed] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The outbox resolves on enqueue, before the thread turns working and leaves the queue.
+  const [promptQueued, setPromptQueued] = useState(false);
   const [progress, setProgress] = useState<QuestionProgress | null>(null);
 
   const requestSuggestions = useEffectEvent(() =>
@@ -246,7 +248,7 @@ function AdhdCard(props: { entry: AdhdQueueEntry; projectName: string | undefine
   const summary = lastAssistant?.type === "assistant_message" ? lastAssistant.text : null;
 
   const run = async (action: () => Promise<{ readonly _tag: string }>) => {
-    if (busy || !canOperate) return false;
+    if (busy || promptQueued || !canOperate) return false;
     setBusy(true);
     const result = await action();
     setBusy(false);
@@ -269,7 +271,8 @@ function AdhdCard(props: { entry: AdhdQueueEntry; projectName: string | undefine
         () => true,
         () => false,
       );
-      if (!queued) Dialog.alert("Could not send the message", "Try again from the thread.");
+      if (queued) setPromptQueued(true);
+      else Dialog.alert("Could not send the message", "Try again from the thread.");
       return { _tag: queued ? "Success" : "Failure" };
     });
 
@@ -454,10 +457,10 @@ function AdhdCard(props: { entry: AdhdQueueEntry; projectName: string | undefine
                 key={option.label}
                 accessibilityRole={question?.multiSelect ? "checkbox" : "button"}
                 accessibilityState={{
-                  disabled: busy || !canOperate,
+                  disabled: busy || promptQueued || !canOperate,
                   ...(question?.multiSelect ? { checked: isPicked } : {}),
                 }}
-                disabled={busy || !canOperate}
+                disabled={busy || promptQueued || !canOperate}
                 onPress={() => choose(index)}
                 className={cn(
                   "flex-row gap-3 rounded-2xl border border-border px-3 py-3 active:opacity-70",
@@ -519,7 +522,12 @@ function AdhdCard(props: { entry: AdhdQueueEntry; projectName: string | undefine
           />
           {reply.trim().length > 0 ||
           (entry.kind === "input" && question?.initialAnswer !== undefined) ? (
-            <Button tone="primary" label="Send" disabled={busy} onPress={sendReply} />
+            <Button
+              tone="primary"
+              label="Send"
+              disabled={busy || promptQueued}
+              onPress={sendReply}
+            />
           ) : null}
         </View>
       ) : null}
