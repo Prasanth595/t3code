@@ -5,14 +5,14 @@ import {
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
+  MAX_TERMINAL_CELL_HEIGHT_ADJUST,
   MAX_TERMINAL_FONT_SIZE,
-  MAX_TERMINAL_LINE_HEIGHT,
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
+  MIN_TERMINAL_CELL_HEIGHT_ADJUST,
   MIN_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_LINE_HEIGHT,
-  TERMINAL_LINE_HEIGHT_STEP,
+  TERMINAL_CELL_HEIGHT_ADJUST_STEP,
 } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -197,34 +197,38 @@ function TerminalFontRow() {
             terminal: settings.fontFamilyTerminal,
           })}
           size={settings.fontSizeTerminal}
-          lineHeight={settings.lineHeightTerminal}
+          cellHeightAdjust={settings.terminalCellHeightAdjust}
         />
       }
     />
   );
 }
 
-function TerminalLineHeightRow() {
+function formatCellHeightAdjust(value: number): string {
+  return value > 0 ? `+${value}%` : `${value}%`;
+}
+
+function TerminalCellHeightRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const ratio =
-    (settings.lineHeightTerminal - MIN_TERMINAL_LINE_HEIGHT) /
-    (MAX_TERMINAL_LINE_HEIGHT - MIN_TERMINAL_LINE_HEIGHT);
+    (settings.terminalCellHeightAdjust - MIN_TERMINAL_CELL_HEIGHT_ADJUST) /
+    (MAX_TERMINAL_CELL_HEIGHT_ADJUST - MIN_TERMINAL_CELL_HEIGHT_ADJUST);
   const sliderStyle = {
     "--settings-slider-progress": `${ratio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
   } as CSSProperties;
   return (
     <SettingsRow
-      {...searchableSetting("terminal-line-height")}
-      description="Height of each terminal row as a multiple of the font size. Rows stay tall enough to fit the glyphs."
+      {...searchableSetting("terminal-cell-height")}
+      description="0% matches the font's natural line height, like Ghostty. Rows stay tall enough to fit the glyphs."
       resetAction={
-        settings.lineHeightTerminal !== DEFAULT_UNIFIED_SETTINGS.lineHeightTerminal ? (
+        settings.terminalCellHeightAdjust !== DEFAULT_UNIFIED_SETTINGS.terminalCellHeightAdjust ? (
           <SettingResetButton
-            label="terminal line height"
+            label="terminal cell height"
             onClick={() =>
               updateSettings({
-                lineHeightTerminal: DEFAULT_UNIFIED_SETTINGS.lineHeightTerminal,
+                terminalCellHeightAdjust: DEFAULT_UNIFIED_SETTINGS.terminalCellHeightAdjust,
               })
             }
           />
@@ -234,29 +238,29 @@ function TerminalLineHeightRow() {
         <div className="flex w-full items-center gap-3 sm:w-52">
           <output
             className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-            htmlFor="terminal-line-height-control"
+            htmlFor="terminal-cell-height-control"
           >
-            {settings.lineHeightTerminal.toFixed(2)}
+            {formatCellHeightAdjust(settings.terminalCellHeightAdjust)}
           </output>
           <input
-            aria-label="Terminal line height"
+            aria-label="Terminal cell height adjustment"
             className="settings-slider min-w-0 flex-1"
-            id="terminal-line-height-control"
-            max={MAX_TERMINAL_LINE_HEIGHT}
-            min={MIN_TERMINAL_LINE_HEIGHT}
+            id="terminal-cell-height-control"
+            max={MAX_TERMINAL_CELL_HEIGHT_ADJUST}
+            min={MIN_TERMINAL_CELL_HEIGHT_ADJUST}
             onChange={(event) => {
-              const lineHeightTerminal = Math.round(Number(event.currentTarget.value) * 100) / 100;
+              const terminalCellHeightAdjust = Math.round(Number(event.currentTarget.value));
               if (
-                lineHeightTerminal >= MIN_TERMINAL_LINE_HEIGHT &&
-                lineHeightTerminal <= MAX_TERMINAL_LINE_HEIGHT
+                terminalCellHeightAdjust >= MIN_TERMINAL_CELL_HEIGHT_ADJUST &&
+                terminalCellHeightAdjust <= MAX_TERMINAL_CELL_HEIGHT_ADJUST
               ) {
-                updateSettings({ lineHeightTerminal });
+                updateSettings({ terminalCellHeightAdjust });
               }
             }}
-            step={TERMINAL_LINE_HEIGHT_STEP}
+            step={TERMINAL_CELL_HEIGHT_ADJUST_STEP}
             style={sliderStyle}
             type="range"
-            value={settings.lineHeightTerminal}
+            value={settings.terminalCellHeightAdjust}
           />
         </div>
       }
@@ -326,7 +330,7 @@ function FontSettingsGroup() {
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
-      <TerminalLineHeightRow />
+      <TerminalCellHeightRow />
     </>
   );
 }
@@ -375,12 +379,12 @@ function SimpleFontRows() {
                 code: settings.fontSizeCode,
                 terminal: settings.fontSizeTerminal,
               })}
-              lineHeight={settings.lineHeightTerminal}
+              cellHeightAdjust={settings.terminalCellHeightAdjust}
             />
           </>
         }
       />
-      <TerminalLineHeightRow />
+      <TerminalCellHeightRow />
     </>
   );
 }

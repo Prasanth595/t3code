@@ -82,7 +82,7 @@ type TypographySettings = Pick<
   | "fontSizePrompt"
   | "fontSizeCode"
   | "fontSizeTerminal"
-  | "lineHeightTerminal"
+  | "terminalCellHeightAdjust"
 >;
 
 export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
@@ -103,8 +103,8 @@ export function getChangedTypographySettingLabels(settings: TypographySettings):
     settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
       ? ["Terminal font"]
       : []),
-    ...(settings.lineHeightTerminal !== DEFAULT_UNIFIED_SETTINGS.lineHeightTerminal
-      ? ["Terminal line height"]
+    ...(settings.terminalCellHeightAdjust !== DEFAULT_UNIFIED_SETTINGS.terminalCellHeightAdjust
+      ? ["Terminal cell height"]
       : []),
   ];
 }

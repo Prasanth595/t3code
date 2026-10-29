@@ -131,6 +131,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       fillText: (...args: [string, number, number, number?]) => paint("fillText", args),
       measureText: (text: string) => ({
         width: text.length * 8,
+        fontBoundingBoxAscent: 12,
+        fontBoundingBoxDescent: 4,
         actualBoundingBoxAscent: 9,
         actualBoundingBoxDescent: 3,
       }),
@@ -260,20 +262,19 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
-  it("reflows row height with the line height setting and never undercuts the glyph", async () => {
+  it("reflows row height with the cell height adjustment and never undercuts the glyph", async () => {
     const harness = createHarness();
     const surface = await harness.create({ font: { size: 12 } });
     const initial = surface.heightForRows(1);
-    await surface.setFont({ size: 12, lineHeight: 1.35 });
+    await surface.setFont({ size: 12, cellHeightAdjust: 0 });
     expect(surface.heightForRows(1)).toBe(initial);
-    await surface.setFont({ size: 12, lineHeight: 2 });
-    const loose = surface.heightForRows(1);
-    expect(loose).toBeGreaterThan(initial);
-    await surface.setFont({ size: 12, lineHeight: 1 });
-    const tight = surface.heightForRows(1);
-    expect(tight).toBeLessThan(initial);
-    await surface.setFont({ size: 12, lineHeight: 0.25 });
-    expect(surface.heightForRows(1)).toBe(tight);
+    await surface.setFont({ size: 12, cellHeightAdjust: 20 });
+    expect(surface.heightForRows(1)).toBeGreaterThan(initial);
+    await surface.setFont({ size: 12, cellHeightAdjust: -50 });
+    const clamped = surface.heightForRows(1);
+    expect(clamped).toBeLessThan(initial);
+    await surface.setFont({ size: 12, cellHeightAdjust: -100 });
+    expect(surface.heightForRows(1)).toBe(clamped);
   });
 
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {

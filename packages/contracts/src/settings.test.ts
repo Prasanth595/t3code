@@ -8,7 +8,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_TERMINAL_LINE_HEIGHT,
+  DEFAULT_TERMINAL_CELL_HEIGHT_ADJUST,
   globalIdleCompaction,
   idleCompactionPatch,
   requiredScopesForProjectMutation,
@@ -190,25 +190,31 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
-describe("ClientSettings terminal line height", () => {
-  it("defaults to the historical row pitch and keeps stored multipliers", () => {
-    expect(decodeClientSettings({}).lineHeightTerminal).toBe(DEFAULT_TERMINAL_LINE_HEIGHT);
-    expect(DEFAULT_TERMINAL_LINE_HEIGHT).toBe(1.35);
-    expect(decodeClientSettingsPatch({})).not.toHaveProperty("lineHeightTerminal");
-    const settings = decodeClientSettings({ lineHeightTerminal: 1.2 });
-    expect(settings.lineHeightTerminal).toBe(1.2);
-    expect(encodeClientSettings(settings).lineHeightTerminal).toBe(1.2);
-    expect(decodeClientSettings({ lineHeightTerminal: 1 }).lineHeightTerminal).toBe(1);
-    expect(decodeClientSettings({ lineHeightTerminal: 2 }).lineHeightTerminal).toBe(2);
-    expect(decodeClientSettingsPatch({ lineHeightTerminal: 1.2 })).toEqual({
-      lineHeightTerminal: 1.2,
+describe("ClientSettings terminal cell height", () => {
+  it("defaults to the font's natural height and keeps a stored percentage", () => {
+    expect(decodeClientSettings({}).terminalCellHeightAdjust).toBe(
+      DEFAULT_TERMINAL_CELL_HEIGHT_ADJUST,
+    );
+    expect(DEFAULT_TERMINAL_CELL_HEIGHT_ADJUST).toBe(0);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("terminalCellHeightAdjust");
+    const settings = decodeClientSettings({ terminalCellHeightAdjust: 20 });
+    expect(settings.terminalCellHeightAdjust).toBe(20);
+    expect(encodeClientSettings(settings).terminalCellHeightAdjust).toBe(20);
+    expect(decodeClientSettings({ terminalCellHeightAdjust: -50 }).terminalCellHeightAdjust).toBe(
+      -50,
+    );
+    expect(decodeClientSettings({ terminalCellHeightAdjust: 100 }).terminalCellHeightAdjust).toBe(
+      100,
+    );
+    expect(decodeClientSettingsPatch({ terminalCellHeightAdjust: 10 })).toEqual({
+      terminalCellHeightAdjust: 10,
     });
   });
 
-  it("rejects pitches outside 1 to 2", () => {
-    expect(() => decodeClientSettings({ lineHeightTerminal: 0.99 })).toThrow();
-    expect(() => decodeClientSettings({ lineHeightTerminal: 2.01 })).toThrow();
-    expect(() => decodeClientSettingsPatch({ lineHeightTerminal: "1.2" })).toThrow();
+  it("rejects percentages outside -50 to 100", () => {
+    expect(() => decodeClientSettings({ terminalCellHeightAdjust: -51 })).toThrow();
+    expect(() => decodeClientSettings({ terminalCellHeightAdjust: 101 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ terminalCellHeightAdjust: "10" })).toThrow();
   });
 });
 

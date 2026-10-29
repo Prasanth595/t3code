@@ -80,14 +80,14 @@ describe("background activity settings restore", () => {
 });
 
 describe("getChangedTypographySettingLabels", () => {
-  it("reports a terminal line height that differs from the historical pitch", () => {
+  it("reports a terminal cell height that differs from the font's natural height", () => {
     expect(getChangedTypographySettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
     expect(
       getChangedTypographySettingLabels({
         ...DEFAULT_UNIFIED_SETTINGS,
-        lineHeightTerminal: 1,
+        terminalCellHeightAdjust: 20,
       }),
-    ).toEqual(["Terminal line height"]);
+    ).toEqual(["Terminal cell height"]);
   });
 });
 

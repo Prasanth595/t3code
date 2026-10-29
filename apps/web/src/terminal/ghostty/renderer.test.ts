@@ -1,84 +1,78 @@
-import { DEFAULT_TERMINAL_LINE_HEIGHT } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { measureGhosttyCell, resolveTerminalLineHeight, terminalGridSize } from "./renderer";
+import { measureGhosttyCell, resolveTerminalCellHeightAdjust, terminalGridSize } from "./renderer";
 
 function measuringContext(metrics: {
-  readonly ascent: number;
-  readonly descent: number;
+  readonly fontAscent: number;
+  readonly fontDescent: number;
+  readonly inkAscent: number;
+  readonly inkDescent: number;
   readonly width?: number;
 }): CanvasRenderingContext2D {
   return {
     font: "",
     measureText: () => ({
       width: metrics.width ?? 8,
-      actualBoundingBoxAscent: metrics.ascent,
-      actualBoundingBoxDescent: metrics.descent,
+      fontBoundingBoxAscent: metrics.fontAscent,
+      fontBoundingBoxDescent: metrics.fontDescent,
+      actualBoundingBoxAscent: metrics.inkAscent,
+      actualBoundingBoxDescent: metrics.inkDescent,
     }),
   } as unknown as CanvasRenderingContext2D;
 }
 
 describe("measureGhosttyCell", () => {
-  const fontSize = 12;
-  const shortGlyph = measuringContext({ ascent: 8, descent: 2 });
-  const tallGlyph = measuringContext({ ascent: 14, descent: 5 });
-
-  it("keeps the historical row pitch when line height is omitted", () => {
-    const omitted = measureGhosttyCell(shortGlyph, fontSize, "monospace");
-    const explicit = measureGhosttyCell(
-      shortGlyph,
-      fontSize,
-      "monospace",
-      DEFAULT_TERMINAL_LINE_HEIGHT,
-    );
-    expect(DEFAULT_TERMINAL_LINE_HEIGHT).toBe(1.35);
-    expect(omitted).toEqual(explicit);
-    expect(omitted.height).toBe(Math.max(1, Math.round(fontSize * 1.35), 10));
+  const fontSize = 13;
+  // DejaVu Sans Mono at 13px: font box 12+3=15, which rounds to Ghostty's cell.
+  const dejavu = measuringContext({
+    fontAscent: 12,
+    fontDescent: 3,
+    inkAscent: 9,
+    inkDescent: 3,
   });
 
-  it("scales row height with the multiplier and refuses to clip the glyph", () => {
-    const tight = measureGhosttyCell(shortGlyph, fontSize, "monospace", 1);
-    const comfortable = measureGhosttyCell(shortGlyph, fontSize, "monospace", 1.2);
-    const loose = measureGhosttyCell(shortGlyph, fontSize, "monospace", 2);
-    expect(tight.height).toBe(Math.round(fontSize * 1));
-    expect(comfortable.height).toBe(Math.round(fontSize * 1.2));
-    expect(loose.height).toBe(Math.round(fontSize * 2));
-    expect(tight.height).toBeLessThan(comfortable.height);
-    expect(comfortable.height).toBeLessThan(
-      measureGhosttyCell(shortGlyph, fontSize, "monospace", 1.35).height,
+  it("uses the font box at 0% and grows it by a percentage", () => {
+    const natural = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono");
+    const explicit = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 0);
+    expect(natural).toEqual(explicit);
+    expect(natural.height).toBe(15);
+    expect(measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 10).height).toBe(
+      Math.round(15 * 1.1),
     );
-    expect(loose.height).toBeGreaterThan(
-      measureGhosttyCell(shortGlyph, fontSize, "monospace").height,
-    );
-
-    const glyphHeight = 19;
-    const clamped = measureGhosttyCell(tallGlyph, fontSize, "monospace", 1);
-    expect(Math.round(fontSize * 1)).toBeLessThan(glyphHeight);
-    expect(clamped.height).toBe(glyphHeight);
-    expect(clamped.baseline - 14).toBeGreaterThanOrEqual(0);
-    expect(clamped.baseline + 5).toBeLessThanOrEqual(clamped.height);
+    expect(measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 20).height).toBe(18);
+    expect(18).toBe(Math.round(fontSize * 1.35));
   });
 
-  it("clamps out-of-range pitches before measuring", () => {
-    expect(resolveTerminalLineHeight(undefined)).toBe(1.35);
-    expect(resolveTerminalLineHeight(Number.NaN)).toBe(1.35);
-    expect(resolveTerminalLineHeight(0.25)).toBe(1);
-    expect(resolveTerminalLineHeight(4)).toBe(2);
-    const below = measureGhosttyCell(shortGlyph, fontSize, "monospace", 0.25);
-    const above = measureGhosttyCell(shortGlyph, fontSize, "monospace", 4);
-    expect(below.height).toBe(measureGhosttyCell(shortGlyph, fontSize, "monospace", 1).height);
-    expect(above.height).toBe(measureGhosttyCell(shortGlyph, fontSize, "monospace", 2).height);
+  it("never shrinks a row below the measured glyph", () => {
+    const clamped = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", -50);
+    expect(Math.round(15 * 0.5)).toBeLessThan(12);
+    expect(clamped.height).toBe(12);
+    expect(clamped.baseline - 9).toBeGreaterThanOrEqual(0);
+    expect(clamped.baseline + 3).toBeLessThanOrEqual(clamped.height);
   });
 
-  it("fits fewer rows as the line height grows", () => {
+  it("clamps out-of-range percentages before measuring", () => {
+    expect(resolveTerminalCellHeightAdjust(undefined)).toBe(0);
+    expect(resolveTerminalCellHeightAdjust(Number.NaN)).toBe(0);
+    expect(resolveTerminalCellHeightAdjust(-80)).toBe(-50);
+    expect(resolveTerminalCellHeightAdjust(140)).toBe(100);
+    expect(measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", -80).height).toBe(
+      measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", -50).height,
+    );
+    expect(measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 140).height).toBe(
+      measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 100).height,
+    );
+  });
+
+  it("fits fewer rows as the cell grows", () => {
     const padding = 4;
-    const tight = measureGhosttyCell(shortGlyph, fontSize, "monospace", 1);
-    const loose = measureGhosttyCell(shortGlyph, fontSize, "monospace", 2);
-    expect(terminalGridSize(120, 80, loose, padding).rows).toBeLessThan(
-      terminalGridSize(120, 80, tight, padding).rows,
+    const natural = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 0);
+    const loose = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", 20);
+    expect(terminalGridSize(120, 72, loose, padding).rows).toBeLessThan(
+      terminalGridSize(120, 72, natural, padding).rows,
     );
-    expect(terminalGridSize(120, 80, tight, padding).cols).toBe(
-      terminalGridSize(120, 80, loose, padding).cols,
+    expect(terminalGridSize(120, 72, natural, padding).cols).toBe(
+      terminalGridSize(120, 72, loose, padding).cols,
     );
   });
 });

@@ -34,7 +34,7 @@ export default function ProviderAuthTerminal({
     let created: GhosttyTerminalSurface | null = null;
     void GhosttyTerminalSurface.create(element, {
       theme: terminalThemeFromApp(element),
-      font: { size: 13, lineHeight: getClientSettings().lineHeightTerminal },
+      font: { size: 13, cellHeightAdjust: getClientSettings().terminalCellHeightAdjust },
       onData: (data) => respond({ type: "terminal", data }),
       onResize: (cols, rows) => respond({ type: "terminal", data: "", size: { cols, rows } }),
       onSelectionChange: () => {},

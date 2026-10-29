@@ -1,7 +1,7 @@
 import {
-  DEFAULT_TERMINAL_LINE_HEIGHT,
-  MAX_TERMINAL_LINE_HEIGHT,
-  MIN_TERMINAL_LINE_HEIGHT,
+  DEFAULT_TERMINAL_CELL_HEIGHT_ADJUST,
+  MAX_TERMINAL_CELL_HEIGHT_ADJUST,
+  MIN_TERMINAL_CELL_HEIGHT_ADJUST,
 } from "@t3tools/contracts/settings";
 
 import {
@@ -90,30 +90,50 @@ function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): s
   return `${style} ${weight} ${fontSize}px ${fontFamily}`;
 }
 
-/** Missing or non-finite values keep the historical 1.35 pitch. Out-of-range values clamp. */
-export function resolveTerminalLineHeight(lineHeight?: number): number {
-  if (lineHeight === undefined || !Number.isFinite(lineHeight)) return DEFAULT_TERMINAL_LINE_HEIGHT;
-  return Math.min(MAX_TERMINAL_LINE_HEIGHT, Math.max(MIN_TERMINAL_LINE_HEIGHT, lineHeight));
+function nonnegativeMetric(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/** Missing values stay at 0%. Out-of-range percentages clamp. */
+export function resolveTerminalCellHeightAdjust(cellHeightAdjust?: number): number {
+  if (cellHeightAdjust === undefined || !Number.isFinite(cellHeightAdjust)) {
+    return DEFAULT_TERMINAL_CELL_HEIGHT_ADJUST;
+  }
+  return Math.min(
+    MAX_TERMINAL_CELL_HEIGHT_ADJUST,
+    Math.max(MIN_TERMINAL_CELL_HEIGHT_ADJUST, Math.round(cellHeightAdjust)),
+  );
 }
 
 export function measureGhosttyCell(
   context: CanvasRenderingContext2D,
   fontSize: number,
   fontFamily: string,
-  lineHeight?: number,
+  cellHeightAdjust?: number,
 ): GhosttyCellMetrics {
   context.font = `normal 400 ${fontSize}px ${fontFamily}`;
   const widthMeasurement = context.measureText("M");
   const verticalMeasurement = context.measureText("Mg");
-  const ascent = verticalMeasurement.actualBoundingBoxAscent || fontSize;
-  const descent = verticalMeasurement.actualBoundingBoxDescent;
-  const glyphHeight = ascent + descent;
-  const resolvedLineHeight = resolveTerminalLineHeight(lineHeight);
-  const height = Math.max(1, Math.round(fontSize * resolvedLineHeight), Math.ceil(glyphHeight));
+  const inkAscent = nonnegativeMetric(verticalMeasurement.actualBoundingBoxAscent, fontSize);
+  const inkDescent = nonnegativeMetric(verticalMeasurement.actualBoundingBoxDescent, 0);
+  const glyphHeight = inkAscent + inkDescent;
+  // Ghostty rounds ascent − descent + line gap. Canvas has no line gap, so the
+  // font bounding box is the natural cell. A zero gap (DejaVu Sans Mono) matches.
+  const fontAscent = nonnegativeMetric(verticalMeasurement.fontBoundingBoxAscent, inkAscent);
+  const fontDescent = nonnegativeMetric(verticalMeasurement.fontBoundingBoxDescent, inkDescent);
+  const natural = Math.max(1, Math.round(fontAscent + fontDescent));
+  const percent = resolveTerminalCellHeightAdjust(cellHeightAdjust);
+  const adjusted = Math.max(1, Math.round((natural * (100 + percent)) / 100));
+  const height = Math.max(adjusted, Math.ceil(glyphHeight));
+  const fontBox = fontAscent + fontDescent;
+  let baseline = Math.round(fontAscent + (height - fontBox) / 2);
+  if (baseline - inkAscent < 0 || baseline + inkDescent > height) {
+    baseline = Math.round((height - glyphHeight) / 2 + inkAscent);
+  }
   return {
     width: Math.max(1, widthMeasurement.width),
     height,
-    baseline: Math.round((height - glyphHeight) / 2 + ascent),
+    baseline,
   };
 }
 

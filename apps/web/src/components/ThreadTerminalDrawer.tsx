@@ -303,10 +303,12 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
 function terminalFontOptions(
   family: string,
   size: number,
-  lineHeight: number,
-): { family?: string; size: number; lineHeight: number } {
+  cellHeightAdjust: number,
+): { family?: string; size: number; cellHeightAdjust: number } {
   const trimmed = family.trim();
-  return trimmed.length > 0 ? { family: trimmed, size, lineHeight } : { size, lineHeight };
+  return trimmed.length > 0
+    ? { family: trimmed, size, cellHeightAdjust }
+    : { size, cellHeightAdjust };
 }
 
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
@@ -562,11 +564,13 @@ function TerminalSessionViewport({
       terminal: settings.fontSizeTerminal,
     }),
   );
-  const terminalLineHeight = useClientSettings((settings) => settings.lineHeightTerminal);
+  const terminalCellHeightAdjust = useClientSettings(
+    (settings) => settings.terminalCellHeightAdjust,
+  );
   const terminalFontRef = useRef({
     family: terminalFontFamily,
     size: terminalFontSize,
-    lineHeight: terminalLineHeight,
+    cellHeightAdjust: terminalCellHeightAdjust,
   });
   // Keyed by the launch (see TerminalViewport), so the atom is fixed for this surface.
   const terminalSessionAtom = attachedTerminalSessionAtom(environmentId, {
@@ -650,25 +654,25 @@ function TerminalSessionViewport({
     if (visible) consumePendingTerminalFocus(threadRef, terminalId);
   }, [terminalId, threadRef, visible]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies font family, size, and line height changes to the live Ghostty terminal surface
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies font family, size, and cell height changes to the live Ghostty terminal surface
   useEffect(() => {
     const current = terminalFontRef.current;
     if (
       current.family === terminalFontFamily &&
       current.size === terminalFontSize &&
-      current.lineHeight === terminalLineHeight
+      current.cellHeightAdjust === terminalCellHeightAdjust
     ) {
       return;
     }
     terminalFontRef.current = {
       family: terminalFontFamily,
       size: terminalFontSize,
-      lineHeight: terminalLineHeight,
+      cellHeightAdjust: terminalCellHeightAdjust,
     };
     void terminalRef.current?.setFont(
-      terminalFontOptions(terminalFontFamily, terminalFontSize, terminalLineHeight),
+      terminalFontOptions(terminalFontFamily, terminalFontSize, terminalCellHeightAdjust),
     );
-  }, [terminalFontFamily, terminalFontSize, terminalLineHeight]);
+  }, [terminalFontFamily, terminalFontSize, terminalCellHeightAdjust]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the Ghostty terminal in the mount node and subscribes it to the terminal session
   useEffect(() => {
@@ -686,7 +690,7 @@ function TerminalSessionViewport({
       const setupFont = terminalFontRef.current;
       const terminalOptions = withLiveVisibility(visibleRef, {
         theme: terminalThemeFromApp(mount),
-        font: terminalFontOptions(setupFont.family, setupFont.size, setupFont.lineHeight),
+        font: terminalFontOptions(setupFont.family, setupFont.size, setupFont.cellHeightAdjust),
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -715,10 +719,10 @@ function TerminalSessionViewport({
       if (
         currentFont.family !== setupFont.family ||
         currentFont.size !== setupFont.size ||
-        currentFont.lineHeight !== setupFont.lineHeight
+        currentFont.cellHeightAdjust !== setupFont.cellHeightAdjust
       ) {
         void terminal.setFont(
-          terminalFontOptions(currentFont.family, currentFont.size, currentFont.lineHeight),
+          terminalFontOptions(currentFont.family, currentFont.size, currentFont.cellHeightAdjust),
         );
       }
       const latestSession = readTerminalSession();
