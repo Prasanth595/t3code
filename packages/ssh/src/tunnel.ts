@@ -749,6 +749,21 @@ try {
 }
 NODE
 }
+# Prints the identity of PID $1 when state directory $2 launched it.
+launched_process_start() {
+  if [ -f "$2/process-start" ]; then
+    [ -f "$2/active-runner.sh" ] && matches_process_start "$1" "$2/process-start" || return 1
+    cat "$2/process-start"
+    return
+  fi
+  # Older launchers recorded only a PID, which a reused PID or a manually
+  # started server could match. Every launcher appends its server's output to
+  # its own server.log, so trust a process that still holds that file open.
+  LAUNCHED_START="$(process_start "$1")" || return 1
+  [ "/proc/$1/fd/1" -ef "$2/server.log" ] || return 1
+  [ "$(process_start "$1")" = "$LAUNCHED_START" ] || return 1
+  printf '%s\\n' "$LAUNCHED_START"
+}
 # Editing a connection's alias, host, user, or port gives it a new state key,
 # while the server it launched keeps running from the default home. Prints the
 # other state directory that recorded PID $1 as managed.
@@ -757,11 +772,7 @@ launcher_state_dir_for_pid() {
     [ "$OTHER_STATE_DIR" != "$STATE_DIR" ] || continue
     [ "$(cat "$OTHER_STATE_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
     [ "$(cat "$OTHER_STATE_DIR/pid" 2>/dev/null || true)" = "$1" ] || continue
-    # A bare PID from an older launcher cannot distinguish a manually started
-    # server after PID reuse. Only transfer a recorded process identity.
-    RECORDED_START="$(cat "$OTHER_STATE_DIR/process-start" 2>/dev/null || true)"
-    [ -n "$RECORDED_START" ] && [ -f "$OTHER_STATE_DIR/active-runner.sh" ] || continue
-    matches_process_start "$1" "$OTHER_STATE_DIR/process-start" || continue
+    launched_process_start "$1" "$OTHER_STATE_DIR" >/dev/null || continue
     printf '%s\\n' "$OTHER_STATE_DIR"
     return 0
   done
@@ -793,9 +804,10 @@ if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ "$DEF
 elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_for_pid "$DEFAULT_RUNTIME_PID")"; then
   # Adopting it as external would keep it on its old version through every
   # update. It runs the runner its previous state wrote, so that runner decides
-  # whether this launch is an update.
+  # whether this launch is an update. An older launcher recorded no runner, so
+  # its server is always replaced.
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@" && PREVIOUS_START="$(launched_process_start "$DEFAULT_RUNTIME_PID" "$PREVIOUS_STATE_DIR")"; then
     if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then
       RUNNER_CHANGED=0
     else
@@ -810,8 +822,12 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
     rm -f "$MANAGED_FILE"
     printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
     printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-    cp "$PREVIOUS_STATE_DIR/process-start" "$PROCESS_START_FILE"
-    cp "$PREVIOUS_STATE_DIR/active-runner.sh" "$ACTIVE_RUNNER_FILE"
+    printf '%s\\n' "$PREVIOUS_START" >"$PROCESS_START_FILE"
+    if [ -f "$PREVIOUS_STATE_DIR/active-runner.sh" ]; then
+      cp "$PREVIOUS_STATE_DIR/active-runner.sh" "$ACTIVE_RUNNER_FILE"
+    else
+      rm -f "$ACTIVE_RUNNER_FILE"
+    fi
     # Publish ownership with one rename after preparing the destination. A
     # signal or failed copy before this leaves the previous owner intact.
     mv "$PREVIOUS_STATE_DIR/managed" "$MANAGED_FILE"

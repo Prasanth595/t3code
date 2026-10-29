@@ -1028,5 +1028,54 @@ fi
         assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/managed`));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
+
+    it.live("replaces a server an older launcher recorded only by PID", () =>
+      Effect.gen(function* () {
+        const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+        const launched = yield* launch("old-alias");
+        const pid = yield* readManagedPid("old-alias");
+        // Older launchers recorded no process identity or active runner.
+        yield* fs.remove(`${stateDir("old-alias")}/process-start`);
+        yield* fs.remove(`${stateDir("old-alias")}/active-runner.sh`);
+        // The older desktop then adopted it as external under the renamed connection.
+        yield* fs.makeDirectory(stateDir("new-alias"), { recursive: true });
+        yield* fs.writeFileString(`${stateDir("new-alias")}/managed`, "external\n");
+        yield* fs.writeFileString(`${stateDir("new-alias")}/port`, `${launched.remotePort}\n`);
+
+        assert.equal((yield* launch("new-alias")).serverKind, "managed");
+        const replacementPid = yield* readManagedPid("new-alias");
+        assert.notEqual(replacementPid, pid);
+        assert.isFalse(isAlive(pid));
+        assert.isTrue(isAlive(replacementPid));
+        assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/managed`));
+        assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/pid`));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not take over a PID-only record whose server another launch started", () =>
+      Effect.gen(function* () {
+        const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+        const launched = yield* launch("other-alias");
+        const pid = yield* readManagedPid("other-alias");
+        // Nothing owns that server any more, as if started by hand, and an older
+        // launcher's record under another key names its PID, as after PID reuse.
+        for (const file of ["managed", "pid", "process-start", "active-runner.sh"]) {
+          yield* fs.remove(`${stateDir("other-alias")}/${file}`);
+        }
+        yield* fs.makeDirectory(stateDir("old-alias"), { recursive: true });
+        yield* fs.writeFileString(`${stateDir("old-alias")}/managed`, "managed\n");
+        yield* fs.writeFileString(`${stateDir("old-alias")}/pid`, `${pid}\n`);
+        yield* fs.writeFileString(`${stateDir("old-alias")}/port`, `${launched.remotePort}\n`);
+        yield* fs.writeFileString(`${stateDir("old-alias")}/server.log`, "");
+
+        assert.deepEqual(yield* launch("new-alias"), {
+          remotePort: launched.remotePort,
+          serverKind: "external",
+        });
+        assert.isTrue(isAlive(pid));
+        assert.equal(yield* fs.readFileString(`${stateDir("old-alias")}/managed`), "managed\n");
+        assert.isFalse(yield* fs.exists(`${stateDir("new-alias")}/pid`));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
   });
 });
