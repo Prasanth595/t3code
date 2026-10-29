@@ -92,6 +92,19 @@ return { scanned, reviewed }`,
 
   it("keeps Date arguments deterministic through calls and prototype constructors", async () => {
     expect(await run("return Date(0) === new Date(0).toString()", host())).toBe(true);
+    // A replaced Array iterator must not turn the wrapper's arguments into none.
+    expect(
+      await run(
+        "const epoch = new Date(0).toString(); Array.prototype[Symbol.iterator] = function* () {}; return [new Date(0).getTime(), Date(0) === epoch]",
+        host(),
+      ),
+    ).toEqual([0, true]);
+    expect(
+      await run(
+        "class Day extends Date {} const day = new Day(0); return [day instanceof Day, day.getTime()]",
+        host(),
+      ),
+    ).toEqual([true, 0]);
     expect(
       await run(
         "return [new Date(0).getTime(), Date.UTC(1970, 0, 1), Date.parse('1970-01-01T00:00:00Z')]",

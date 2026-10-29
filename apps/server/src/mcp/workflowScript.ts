@@ -56,9 +56,13 @@ const PRELUDE = `
   };
   Math.random = unavailable("Math.random()");
   const RealDate = Date;
+  // Reflect.construct reads the argument list by index; a spread would run the script's own
+  // Array iterator, which can hand the real constructor no arguments and so the current time.
+  const construct = Reflect.construct;
   const WorkflowDate = function Date(...values) {
     if (values.length === 0) throw new Error("new Date() without a value is unavailable in workflows.");
-    return new.target ? new RealDate(...values) : new RealDate(...values).toString();
+    const date = construct(RealDate, values, new.target ?? RealDate);
+    return new.target ? date : date.toString();
   };
   WorkflowDate.prototype = RealDate.prototype;
   Object.defineProperty(WorkflowDate.prototype, "constructor", { value: WorkflowDate, writable: true, configurable: true });
