@@ -17,6 +17,8 @@ const loadPlaywright = () =>
 interface Options {
   readonly profilesDir: string;
   readonly executable: () => Promise<string>;
+  /** A path that starts `executable`, such as one that moves Chrome out of the server's cgroup. */
+  readonly launcher?: (executable: string) => Promise<string>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -79,9 +81,11 @@ export class ServerBrowserContexts {
   }
 
   private async launchOptions() {
-    const executablePath = await this.options.executable();
+    const executable = await this.options.executable();
+    const executablePath = (await this.options.launcher?.(executable)) ?? executable;
     const env = this.options.env ?? process.env;
     return {
+      executable,
       executablePath,
       env,
       args: [
@@ -96,19 +100,19 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(options: { readonly executablePath: string }, start: () => Promise<A>) {
+  private async launch<A>(executable: string, start: () => Promise<A>) {
     try {
       return await start();
     } catch (cause) {
-      throw (await this.options.diagnose?.(options.executablePath, cause)) ?? cause;
+      throw (await this.options.diagnose?.(executable, cause)) ?? cause;
     }
   }
 
   private sharedBrowser() {
     if (!this.browser) {
-      const launched = this.launchOptions().then(async (options) => {
+      const launched = this.launchOptions().then(async ({ executable, ...options }) => {
         const { chromium } = loadPlaywright();
-        const browser = await this.launch(options, () => chromium.launch(options));
+        const browser = await this.launch(executable, () => chromium.launch(options));
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -156,10 +160,10 @@ export class ServerBrowserContexts {
       return browser.newContext(contextOptions);
     }
     const directory = this.profileDirectory(profileId);
-    const options = await this.launchOptions();
+    const { executable, ...options } = await this.launchOptions();
     const { chromium } = loadPlaywright();
     await NodeFSP.mkdir(directory, { recursive: true });
-    return this.launch(options, () =>
+    return this.launch(executable, () =>
       chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
     );
   }
