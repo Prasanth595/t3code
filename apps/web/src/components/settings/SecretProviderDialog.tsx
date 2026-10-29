@@ -15,7 +15,11 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { secretProviderFromDraft, type SecretProviderDraft } from "./SecretProviderDialog.logic";
+import {
+  draftFromSecretProvider,
+  secretProviderFromDraft,
+  type SecretProviderDraft,
+} from "./SecretProviderDialog.logic";
 
 /** Mounted per open, so each open starts from a fresh draft. */
 export function SecretProviderDialog({
@@ -32,10 +36,9 @@ export function SecretProviderDialog({
   readonly existing?: { readonly id: SecretProviderId; readonly config: SecretProviderConfig };
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [draft, setDraft] = useState<SecretProviderDraft>({
-    name: existing?.config.label ?? "",
-    account: existing?.config.account ?? "",
-  });
+  const [draft, setDraft] = useState<SecretProviderDraft>(
+    existing ? draftFromSecretProvider(existing.config) : { name: "", account: "" },
+  );
   const [submitted, setSubmitted] = useState(false);
   const result = secretProviderFromDraft(
     draft,
@@ -87,7 +90,6 @@ export function SecretProviderDialog({
                 placeholder="Personal"
                 value={draft.name}
                 onChange={(event) => update({ name: event.target.value })}
-                readOnly={existing !== undefined}
                 maxLength={64}
                 aria-invalid={nameError !== undefined}
                 aria-describedby={
@@ -102,11 +104,6 @@ export function SecretProviderDialog({
                   className="text-xs text-destructive"
                 >
                   {nameError}
-                </p>
-              ) : null}
-              {existing ? (
-                <p className="text-xs text-muted-foreground">
-                  Variables pick this provider by name, so it cannot change.
                 </p>
               ) : null}
             </div>

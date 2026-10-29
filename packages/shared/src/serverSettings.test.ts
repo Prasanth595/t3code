@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
+  SecretProviderKind,
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -532,9 +533,9 @@ describe("serverSettings helpers", () => {
     const personal = SecretProviderId.make("personal");
     const work = SecretProviderId.make("work");
     const onePassword = (label: string, account: string) => ({
-      kind: "1password" as const,
+      kind: SecretProviderKind.make("1password"),
       label,
-      account: OnePasswordAccount.make(account),
+      config: { account: OnePasswordAccount.make(account) },
     });
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

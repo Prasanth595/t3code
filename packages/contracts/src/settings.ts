@@ -46,6 +46,7 @@ import {
   ProviderInstanceConfig,
   ProviderInstanceId,
   ProviderDriverKind,
+  SlugSchema,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -852,8 +853,15 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
-export const SecretProviderId = Schema.String.pipe(Schema.brand("SecretProviderId"));
+export const SecretProviderId = SlugSchema.pipe(Schema.brand("SecretProviderId"));
 export type SecretProviderId = typeof SecretProviderId.Type;
+
+// Same shape as a slug but may start with a digit, because the first kind is "1password".
+export const SecretProviderKind = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
+).pipe(Schema.brand("SecretProviderKind"));
+export type SecretProviderKind = typeof SecretProviderKind.Type;
 
 const ONE_PASSWORD_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -871,18 +879,20 @@ export const OnePasswordAccount = Schema.String.check(
 ).pipe(Schema.brand("OnePasswordAccount"));
 export type OnePasswordAccount = typeof OnePasswordAccount.Type;
 
-const SecretProviderLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export const SecretProviderLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 
 export const OnePasswordSecretProviderConfig = Schema.Struct({
-  kind: Schema.Literal("1password"),
-  label: SecretProviderLabel,
   account: OnePasswordAccount,
 });
+export type OnePasswordSecretProviderConfig = typeof OnePasswordSecretProviderConfig.Type;
 
-/** One member per kind; clients key per-kind presentation by `kind`. */
-export const SecretProviderConfig = Schema.Union([OnePasswordSecretProviderConfig]);
+/** Kinds decode their own config; unknown-kind envelopes round-trip verbatim across versions. */
+export const SecretProviderConfig = Schema.Struct({
+  kind: SecretProviderKind,
+  label: SecretProviderLabel,
+  config: Schema.optionalKey(Schema.Unknown),
+});
 export type SecretProviderConfig = typeof SecretProviderConfig.Type;
-export type SecretProviderKind = SecretProviderConfig["kind"];
 
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;

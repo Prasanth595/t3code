@@ -1,8 +1,4 @@
-import type {
-  SecretProviderConfig,
-  SecretProviderId,
-  SecretProviderKind,
-} from "@t3tools/contracts";
+import type { SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -21,6 +17,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { SecretProviderDialog } from "./SecretProviderDialog";
+import { classifySecretProvider } from "./SecretProviderDialog.logic";
 import {
   classifyProviderEnvironmentAccess,
   resolveRemoteOperateAccess,
@@ -31,7 +28,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const SECRET_PROVIDER_KINDS: Readonly<
-  Record<SecretProviderKind, { readonly name: string; readonly icon: Icon }>
+  Record<string, { readonly name: string; readonly icon: Icon }>
 > = {
   "1password": { name: "1Password", icon: OnePasswordIcon },
 };
@@ -113,38 +110,50 @@ function EnvironmentSecretProviders({
           />
         ) : (
           entries.map(([id, config]) => {
-            const kind = SECRET_PROVIDER_KINDS[config.kind];
+            const classified = classifySecretProvider(config);
+            const kind =
+              classified.kind === "unsupported"
+                ? undefined
+                : SECRET_PROVIDER_KINDS[classified.kind];
             return (
               <SettingsRow
                 key={id}
                 title={
                   <span className="flex min-w-0 items-center gap-2">
-                    <kind.icon className="size-4.5 shrink-0 text-foreground/80" aria-hidden />
+                    {kind ? (
+                      <kind.icon className="size-4.5 shrink-0 text-foreground/80" aria-hidden />
+                    ) : null}
                     <span className="min-w-0 wrap-anywhere">{config.label}</span>
                   </span>
                 }
                 description={
-                  <span className="flex min-w-0 items-center gap-1">
-                    <span className="shrink-0">{kind.name} ·</span>
-                    <RedactedSensitiveText
-                      value={config.account}
-                      ariaLabel="Toggle account visibility"
-                      revealTooltip="Click to reveal account"
-                      hideTooltip="Click to hide account"
-                      className="max-w-full truncate"
-                    />
-                  </span>
+                  classified.kind === "1password" && kind ? (
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="shrink-0">{kind.name} ·</span>
+                      <RedactedSensitiveText
+                        value={classified.account}
+                        ariaLabel="Toggle account visibility"
+                        revealTooltip="Click to reveal account"
+                        hideTooltip="Click to hide account"
+                        className="max-w-full truncate"
+                      />
+                    </span>
+                  ) : (
+                    `Unsupported provider (${config.kind})`
+                  )
                 }
                 control={
                   !readOnly ? (
                     <div className="flex items-center gap-1">
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => setDialog({ mode: "edit", id })}
-                      >
-                        Edit
-                      </Button>
+                      {kind ? (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setDialog({ mode: "edit", id })}
+                        >
+                          Edit
+                        </Button>
+                      ) : null}
                       <RemoveSecretProviderButton
                         label={config.label}
                         onConfirm={() => updateSettings({ secretProviders: { [id]: null } })}
