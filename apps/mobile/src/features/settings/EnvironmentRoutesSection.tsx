@@ -2,14 +2,19 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AVAILABLE_CONNECTION_STATE,
   type ConnectionRoute,
   type ConnectionRouteKind,
+  type ConnectionRouteOutcome,
   connectionRouteAddress,
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
   connectionRoutes,
   isLearned,
+  offTailnetHint,
+  routeOutcomeText,
+  unusedWithTailnetSignIn,
 } from "@t3tools/client-runtime/connection";
 import { type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
@@ -32,6 +37,7 @@ import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
+const UNUSED_WITH_TAILNET_SIGN_IN = "Not used with Tailscale sign-in";
 const REMOVE_SIZE = 20;
 
 const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
@@ -57,6 +63,10 @@ export function EnvironmentRoutesSection({
   const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
   const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
   const session = AsyncResult.getOrElse(sessionResult, () => null);
+  const connectionState = AsyncResult.getOrElse(
+    useAtomValue(environmentCatalog.stateAtom(environmentId)),
+    () => AVAILABLE_CONNECTION_STATE,
+  );
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "route reorder");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "route removal");
@@ -82,6 +92,8 @@ export function EnvironmentRoutesSection({
   const routes = order.flatMap((id) => byId.get(id) ?? []);
   const activeRouteId =
     connected && Option.isSome(prepared) ? connectionRouteId(prepared.value.target) : null;
+  const outcomes = new Map(connectionState.routes.map((outcome) => [outcome.routeId, outcome]));
+  const hint = offTailnetHint(connectionState);
 
   const commit = (next: ReadonlyArray<string>) => {
     setPending(next);
@@ -187,6 +199,8 @@ export function EnvironmentRoutesSection({
             position={index + 1}
             count={routes.length}
             inUse={id === activeRouteId}
+            outcome={outcomes.get(id)}
+            unused={unusedWithTailnetSignIn(entry, route)}
             editing={editing}
             offset={index === dragFrom ? (drag?.translation ?? 0) : shift}
             lifted={index === dragFrom}
@@ -210,6 +224,9 @@ export function EnvironmentRoutesSection({
           />
         );
       })}
+      {hint !== null ? (
+        <Text className="px-4 py-2 text-sm text-foreground-muted">{hint}</Text>
+      ) : null}
       <SettingsActionRow icon="plus" label="Add route" onPress={onAddRoute} />
     </SettingsSection>
   );
@@ -220,6 +237,8 @@ function RouteRow(props: {
   readonly position: number;
   readonly count: number;
   readonly inUse: boolean;
+  readonly outcome: ConnectionRouteOutcome | undefined;
+  readonly unused: boolean;
   readonly editing: boolean;
   readonly offset: number;
   readonly lifted: boolean;
@@ -233,6 +252,13 @@ function RouteRow(props: {
   const { route, lifted, offset } = props;
   const label = connectionRouteLabel(route);
   const address = connectionRouteAddress(route);
+  const status = props.inUse
+    ? "In use"
+    : props.unused
+      ? UNUSED_WITH_TAILNET_SIGN_IN
+      : props.outcome
+        ? routeOutcomeText(props.outcome)
+        : null;
   const style = useAnimatedStyle(() => ({
     transform: [
       {
@@ -273,7 +299,7 @@ function RouteRow(props: {
           label,
           address,
           isLearned(route) ? "Found automatically" : null,
-          props.inUse ? "In use" : null,
+          status,
           `Route ${props.position} of ${props.count}`,
         ]
           .filter((part) => part !== null)
@@ -298,6 +324,19 @@ function RouteRow(props: {
             </Text>
             {props.inUse ? (
               <StatusPill {...connectionTone("connected")} label="In use" size="compact" />
+            ) : props.unused ? (
+              <Text className="text-sm text-foreground-muted">{UNUSED_WITH_TAILNET_SIGN_IN}</Text>
+            ) : props.outcome ? (
+              <Text
+                className={cn(
+                  "text-sm",
+                  props.outcome.result === "answered"
+                    ? "text-foreground-muted"
+                    : "text-danger-foreground",
+                )}
+              >
+                {routeOutcomeText(props.outcome)}
+              </Text>
             ) : null}
           </View>
           {address !== null ? (

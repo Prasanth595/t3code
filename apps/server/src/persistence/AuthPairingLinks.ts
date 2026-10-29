@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, TAILNET_SUBJECT_PREFIX } from "@t3tools/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -180,6 +180,11 @@ export const make = Effect.gen(function* () {
               SELECT value FROM json_each(auth_pairing_links.scopes)
             )
           ))
+          AND NOT EXISTS (
+            SELECT 1
+            FROM auth_tailnet_device_blocks AS blocks
+            WHERE auth_pairing_links.subject = ${TAILNET_SUBJECT_PREFIX} || blocks.stable_node_id
+          )
         RETURNING
           id AS "id",
           credential AS "credential",

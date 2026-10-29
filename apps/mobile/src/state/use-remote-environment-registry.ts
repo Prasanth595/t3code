@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 
@@ -17,7 +18,10 @@ import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
-import { connectPairingUrl as connectPairingUrlCommand } from "../connection/onboarding";
+import {
+  connectPairingUrl as connectPairingUrlCommand,
+  connectTailnet as connectTailnetCommand,
+} from "../connection/onboarding";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -66,6 +70,37 @@ export async function pairEnvironment(
     return { ok: false, error: null };
   }
   return { ok: false, error: message };
+}
+
+/**
+ * Signs in through Tailscale at a machine name, 100.x address, or `t3 up` QR
+ * URL. Asks for a pairing code when the machine does not offer it.
+ */
+export async function signInOverTailnet(
+  address: string,
+  expectedEnvironmentId?: EnvironmentId,
+): Promise<PairingOutcome> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    connectTailnetCommand,
+    { address, ...(expectedEnvironmentId === undefined ? {} : { expectedEnvironmentId }) },
+    { reportFailure: false },
+  );
+  if (AsyncResult.isSuccess(result)) {
+    if (Option.isNone(result.value)) {
+      return {
+        ok: false,
+        error: "That machine does not offer Tailscale sign-in. Enter its pairing code.",
+      };
+    }
+    appAtomRegistry.set(connectionPairingUrlAtom, "");
+    return { ok: true, error: null };
+  }
+  const error = Cause.squash(result.cause);
+  return {
+    ok: false,
+    error: error instanceof Error ? error.message : "Failed to sign in through Tailscale.",
+  };
 }
 
 const remoteEnvironmentProjections = createRemoteEnvironmentProjectionAtoms({

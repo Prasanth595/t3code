@@ -33,6 +33,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
@@ -703,6 +704,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
+  const sql = yield* SqlClient.SqlClient;
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
@@ -931,6 +933,9 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // Consuming the grant (which checks the Tailscale block list) and creating the
+  // session share one write transaction. Blocking a device takes the same writer,
+  // so a block either lands before the grant is spent or revokes the new session.
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
@@ -970,6 +975,11 @@ export const make = Effect.gen(function* () {
               );
           }),
         ),
+        sql.withTransaction,
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(new ServerAuthAuthenticatedAccessTokenIssueError({ cause })),
+        }),
         Effect.flatMap((session) =>
           DateTime.now.pipe(
             Effect.map(

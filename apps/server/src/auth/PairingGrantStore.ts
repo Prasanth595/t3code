@@ -3,6 +3,7 @@ import {
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type ServerAuthBootstrapMethod,
+  TAILNET_SUBJECT_PREFIX,
 } from "@t3tools/contracts";
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -254,6 +255,9 @@ const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
 
+// Tailscale sign-in mints a grant per sign-in and renewal; they are not links anyone shares.
+const isListedSubject = (subject: string) => !subject.startsWith(TAILNET_SUBJECT_PREFIX);
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
@@ -330,24 +334,26 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const rows = yield* pairingLinks.listActive({ now });
 
-      return rows.map((row) =>
-        row.label
-          ? ({
-              id: row.id,
-              scopes: row.scopes,
-              subject: row.subject,
-              label: row.label,
-              createdAt: row.createdAt,
-              expiresAt: row.expiresAt,
-            } satisfies AuthPairingLink)
-          : ({
-              id: row.id,
-              scopes: row.scopes,
-              subject: row.subject,
-              createdAt: row.createdAt,
-              expiresAt: row.expiresAt,
-            } satisfies AuthPairingLink),
-      );
+      return rows
+        .filter((row) => isListedSubject(row.subject))
+        .map((row) =>
+          row.label
+            ? ({
+                id: row.id,
+                scopes: row.scopes,
+                subject: row.subject,
+                label: row.label,
+                createdAt: row.createdAt,
+                expiresAt: row.expiresAt,
+              } satisfies AuthPairingLink)
+            : ({
+                id: row.id,
+                scopes: row.scopes,
+                subject: row.subject,
+                createdAt: row.createdAt,
+                expiresAt: row.expiresAt,
+              } satisfies AuthPairingLink),
+        );
     },
     Effect.mapError((cause) => new ActivePairingLinksLoadError({ cause })),
   );
@@ -417,14 +423,16 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    yield* emitUpsert({
-      id,
-      scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: input?.subject ?? "one-time-token",
-      ...(input?.label ? { label: input.label } : {}),
-      createdAt: now,
-      expiresAt,
-    });
+    if (isListedSubject(subject)) {
+      yield* emitUpsert({
+        id,
+        scopes: input?.scopes ?? AuthStandardClientScopes,
+        subject,
+        ...(input?.label ? { label: input.label } : {}),
+        createdAt: now,
+        expiresAt,
+      });
+    }
     return issued;
   });
 
@@ -546,7 +554,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new BootstrapCredentialConsumeAvailableError({ cause })));
 
       if (Option.isSome(consumed)) {
-        yield* emitRemoved(consumed.value.id);
+        if (isListedSubject(consumed.value.subject)) {
+          yield* emitRemoved(consumed.value.id);
+        }
         return {
           method: consumed.value.method,
           scopes: consumed.value.scopes,

@@ -108,13 +108,13 @@ reporting that address.
 
 T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
-again, after the other routes, if none of them connect. While connected over a
-later route, T3 Code checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+again, after the other routes, if none of them connect. A working connection
+stays on its route, even when an earlier route comes back. The route order
+applies the next time T3 Code has to reconnect.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Environments** to see its routes. Drag a route to change the order,
-or remove it. On mobile, open the machine under **Settings → Environments** and
+**Settings → Environments** to see its routes. Each route shows whether it
+answered on the last try. Drag a route to change the order, or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
 
@@ -143,6 +143,67 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Tailscale sign-in
+
+On a personal tailnet, your own devices can connect to a machine with no pairing
+code. Run this on each machine, as the user who should own T3 Code:
+
+```bash
+npx t3 up
+```
+
+It checks Tailscale, turns on Tailscale sign-in and Tailscale-only networking,
+installs the [background service](./background-service.md), and prints the
+machine's tailnet address with a QR code. Tailscale-only networking accepts
+loopback and tailnet connections and closes the LAN. `--https` also sets up
+Tailscale HTTPS.
+
+Any untagged device that the machine's owner has on the tailnet gets full access,
+including terminals and files. Tagged devices, devices shared in from another
+tailnet, other users, and subnet routers cannot sign in. Browsers
+still need a pairing code. To remove a device's access everywhere, remove it from
+your tailnet; access ends within an hour.
+
+To connect from the desktop or mobile app, with Tailscale on:
+
+- **Desktop:** do nothing. The app finds the machines on your tailnet that offer
+  sign-in and adds them.
+- **Phone:** scan the QR code from `t3 up`, or type the machine's name, MagicDNS
+  name, or `100.x` address in **Add environment** and leave the code empty. After
+  that, the phone asks the machines it is connected to for the others and adds
+  them.
+
+A machine you remove stays removed; add it again by name to bring it back. If a
+machine you already have answers at a new address, the app warns you instead of
+adding it. When this device is off Tailscale, its machines stay saved and
+reconnect when Tailscale is back.
+
+To let your phone reach your laptop the same way, turn on **Tailscale sign-in** in
+**Settings → Sharing & access**. The app restarts and listens on your tailnet at
+port 3773, without opening your LAN. If that port is in use, Settings shows the
+port it uses, and other devices add the laptop by name with that port.
+
+To cut off one device on one machine, open **Settings → Sharing & access** on the
+desktop app, or **Environments** on mobile, and **Block** it under **Tailscale
+devices**. Its sessions there end now, and **Unblock** undoes it. A device that
+rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.
+
+On an untagged machine the owner is its own Tailscale user. On a tagged machine,
+`t3 up` asks for the owner's login, or takes `--owner <login>`. Tag machines that
+run agents, so those agents cannot sign in to your other machines.
+
+`t3 up` writes these settings to `service.env`. Use them with `t3 serve` as flags
+too:
+
+| `service.env`                 | Flag                     | Meaning                                    |
+| ----------------------------- | ------------------------ | ------------------------------------------ |
+| `T3CODE_TAILSCALE_SIGN_IN=1`  | `--tailscale-sign-in`    | Your own devices sign in with no code      |
+| `T3CODE_TAILSCALE_ONLY=1`     | `--tailscale-only`       | Accept only loopback and tailnet peers     |
+| `T3CODE_TAILSCALE_OWNER=<id>` | `--tailscale-owner <id>` | Owner's Tailscale user ID on a tagged host |
+
+Tailscale sign-in does not work with userspace networking, which is common in
+LXC and other containers; `t3 up` tells you when it finds it.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
@@ -170,6 +231,23 @@ tailscale serve --https=443 off
 
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+
+### Tailscale troubleshooting
+
+When a Tailscale route fails, the machine's row in **Settings → Environments** says
+why, using what the host last reported about its own Tailscale: signed out, off,
+waiting for approval, or a node key that has expired or expires soon. The desktop
+app also checks Tailscale on this device and whether the host is online on your
+tailnet. Online only means the host is connected to Tailscale, not that this
+device can reach it.
+
+On the host, run:
+
+```bash
+t3 tailscale status
+```
+
+It prints the same facts with a fix for each. Add `--json` for scripts.
 
 ### Hosted web app
 

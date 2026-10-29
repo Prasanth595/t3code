@@ -49,6 +49,9 @@ const minimalDesktopFlags = (baseDir: string) => ({
   logWebSocketEvents: Option.none<boolean>(),
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
+  tailscaleSignInEnabled: Option.none<boolean>(),
+  tailscaleOwnerUserId: Option.none<string>(),
+  tailscaleOnly: Option.none<boolean>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -231,6 +234,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
+        tailscaleOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -275,6 +281,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
+        tailscaleOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -330,6 +339,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -406,6 +418,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -553,6 +568,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -601,6 +619,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -641,6 +662,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.none(),
         {
@@ -703,6 +727,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
+          tailscaleOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -742,6 +769,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     logWebSocketEvents: Option.none<boolean>(),
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
+    tailscaleSignInEnabled: Option.none<boolean>(),
+    tailscaleOwnerUserId: Option.none<string>(),
+    tailscaleOnly: Option.none<boolean>(),
   });
 
   it.effect(

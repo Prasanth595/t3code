@@ -14,6 +14,7 @@ import {
   EnvironmentResourceNotFoundError,
   type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
+  EnvironmentTailnetSignInRefusedError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TailnetSignIn from "./TailnetSignIn.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -512,5 +514,53 @@ export const layer = HttpApiBuilder.group(
           ),
         ),
       );
+  }),
+);
+
+export const layerTailnet = HttpApiBuilder.group(
+  EnvironmentHttpApi,
+  "tailnet",
+  Effect.fnUntraced(function* (handlers) {
+    const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
+
+    return handlers.handle(
+      "signIn",
+      Effect.fn("environment.auth.tailnetSignIn")(
+        function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* appendCredentialResponseHeaders;
+          return yield* tailnetSignIn.signIn(request);
+        },
+        Effect.catchTags({
+          TailnetSignInRefusedError: (error) =>
+            currentEnvironmentTraceId.pipe(
+              Effect.flatMap((traceId) =>
+                Effect.fail(
+                  new EnvironmentTailnetSignInRefusedError({
+                    code: "tailnet_sign_in_refused",
+                    reason: error.reason,
+                    traceId,
+                  }),
+                ),
+              ),
+            ),
+          ServerAuthInvalidCredentialError: (error) =>
+            appendDpopChallengeHeader.pipe(
+              Effect.andThen(
+                failEnvironmentAuthInvalid(
+                  "invalid_credential",
+                  EnvironmentAuth.serverAuthDpopFailureReason(error),
+                ),
+              ),
+            ),
+          TailnetDeviceBlockLookupError: (error) =>
+            failEnvironmentInternal("internal_error", error),
+        }),
+        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+          failEnvironmentInternal("pairing_credential_issuance_failed", error),
+        ),
+      ),
+    );
   }),
 );

@@ -42,6 +42,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
+import { AuthTailnetSignInResult, TailnetSignInRefusedReason } from "./tailnet.ts";
 import {
   DpopFailureReason,
   AuthSessionId,
@@ -217,6 +218,27 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
 
   override get message(): string {
     return `The environment failed to answer this request (${this.reason}).`;
+  }
+}
+
+/** Tailscale sign-in failed a check. A hard 403 that CORS cannot relax. */
+export class EnvironmentTailnetSignInRefusedError extends Schema.TaggedError<EnvironmentTailnetSignInRefusedError>()(
+  "EnvironmentTailnetSignInRefusedError",
+  {
+    code: Schema.Literal("tailnet_sign_in_refused"),
+    reason: TailnetSignInRefusedReason,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 403 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentTailnetSignInRefusedError)(this, {
+      status: 403,
+    });
+  }
+
+  override get message(): string {
+    return `The environment refused Tailscale sign-in (${this.reason}).`;
   }
 }
 
@@ -601,6 +623,19 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/** Tailscale sign-in: the owner's own devices get a grant to exchange at `/oauth/token`. */
+class EnvironmentTailnetHttpApi extends HttpApiGroup.make("tailnet").add(
+  HttpApiEndpoint.post("signIn", "/api/auth/tailnet", {
+    headers: OptionalDpopProofHeaders,
+    success: AuthTailnetSignInResult,
+    error: [
+      EnvironmentTailnetSignInRefusedError,
+      EnvironmentAuthInvalidError,
+      EnvironmentInternalError,
+    ],
+  }),
+) {}
+
 class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(
     HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
@@ -838,6 +873,7 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
+  .add(EnvironmentTailnetHttpApi)
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)

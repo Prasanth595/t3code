@@ -84,6 +84,27 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+/** Tailscale user IDs are int64; keep them as digits. */
+export const TailscaleUserId = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,18}$/));
+const tailscaleSignInFlag = Flag.Boolean("tailscale-sign-in").pipe(
+  Flag.withDescription(
+    "Let the owner's own untagged Tailscale devices sign in with no pairing code (equivalent to T3CODE_TAILSCALE_SIGN_IN).",
+  ),
+  Flag.optional,
+);
+const tailscaleOwnerFlag = Flag.String("tailscale-owner").pipe(
+  Flag.withSchema(TailscaleUserId),
+  Flag.withDescription(
+    "Tailscale user ID that owns this host when it is tagged (equivalent to T3CODE_TAILSCALE_OWNER). `t3 up` sets it.",
+  ),
+  Flag.optional,
+);
+const tailscaleOnlyFlag = Flag.Boolean("tailscale-only").pipe(
+  Flag.withDescription(
+    "Accept only loopback and Tailscale connections, and advertise no LAN address (equivalent to T3CODE_TAILSCALE_ONLY).",
+  ),
+  Flag.optional,
+);
 
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
@@ -164,6 +185,18 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailscaleSignInEnabled: Config.Boolean("T3CODE_TAILSCALE_SIGN_IN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  tailscaleOwnerUserId: Config.schema(TailscaleUserId, "T3CODE_TAILSCALE_OWNER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  tailscaleOnly: Config.Boolean("T3CODE_TAILSCALE_ONLY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -199,6 +232,9 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly tailscaleSignInEnabled: Option.Option<boolean>;
+  readonly tailscaleOwnerUserId: Option.Option<string>;
+  readonly tailscaleOnly: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -233,6 +269,9 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  tailscaleSignInEnabled: tailscaleSignInFlag,
+  tailscaleOwnerUserId: tailscaleOwnerFlag,
+  tailscaleOnly: tailscaleOnlyFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -276,6 +315,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+    tailscaleSignInEnabled: flags.tailscaleSignInEnabled ?? Option.none(),
+    tailscaleOwnerUserId: flags.tailscaleOwnerUserId ?? Option.none(),
+    tailscaleOnly: flags.tailscaleOnly ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -403,6 +445,28 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => 443,
   );
+  const tailscaleSignInEnabled = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleSignInEnabled,
+      Option.fromUndefinedOr(env.tailscaleSignInEnabled),
+      Option.fromUndefinedOr(bootstrap?.tailscaleSignInEnabled),
+    ),
+    () => false,
+  );
+  const tailscaleOwnerUserId = Option.getOrUndefined(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleOwnerUserId,
+      Option.fromUndefinedOr(env.tailscaleOwnerUserId),
+    ),
+  );
+  const tailscaleOnly = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleOnly,
+      Option.fromUndefinedOr(env.tailscaleOnly),
+      Option.fromUndefinedOr(bootstrap?.tailscaleOnly),
+    ),
+    () => false,
+  );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
     normalizedFlags.host,
@@ -420,7 +484,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       Effect.orElseSucceed(() => false),
     ));
   const host = Option.getOrElse(explicitHost, () =>
-    privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
+    privateNetworkOnly || tailscaleOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -505,6 +569,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(tailscaleSignInEnabled ? { tailscaleSignInEnabled } : {}),
+    ...(tailscaleOwnerUserId === undefined ? {} : { tailscaleOwnerUserId }),
+    ...(tailscaleOnly ? { tailscaleOnly } : {}),
   };
 
   return config;
@@ -528,6 +595,9 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      tailscaleSignInEnabled: Option.none(),
+      tailscaleOwnerUserId: Option.none(),
+      tailscaleOnly: Option.none(),
     },
     cliLogLevel,
   );
