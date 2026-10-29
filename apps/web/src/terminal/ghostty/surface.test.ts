@@ -260,6 +260,22 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("reflows row height with the line height setting and never undercuts the glyph", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ font: { size: 12 } });
+    const initial = surface.heightForRows(1);
+    await surface.setFont({ size: 12, lineHeight: 1.35 });
+    expect(surface.heightForRows(1)).toBe(initial);
+    await surface.setFont({ size: 12, lineHeight: 2 });
+    const loose = surface.heightForRows(1);
+    expect(loose).toBeGreaterThan(initial);
+    await surface.setFont({ size: 12, lineHeight: 1 });
+    const tight = surface.heightForRows(1);
+    expect(tight).toBeLessThan(initial);
+    await surface.setFont({ size: 12, lineHeight: 0.25 });
+    expect(surface.heightForRows(1)).toBe(tight);
+  });
+
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();

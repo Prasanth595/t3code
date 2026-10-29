@@ -147,22 +147,34 @@ const TERMINAL_PREVIEW_TRANSCRIPT =
   TERMINAL_PROMPT;
 const TERMINAL_PREVIEW_ROWS = TERMINAL_PREVIEW_TRANSCRIPT.split("\r\n").length;
 
-function previewTerminalFont(family: string, size: number): { family?: string; size: number } {
+function previewTerminalFont(
+  family: string,
+  size: number,
+  lineHeight: number,
+): { family?: string; size: number; lineHeight: number } {
   const trimmed = family.trim();
-  return trimmed.length > 0 ? { family: trimmed, size } : { size };
+  return trimmed.length > 0 ? { family: trimmed, size, lineHeight } : { size, lineHeight };
 }
 
-export function TerminalFontPreview({ family, size }: { family: string; size: number }) {
+export function TerminalFontPreview({
+  family,
+  size,
+  lineHeight,
+}: {
+  family: string;
+  size: number;
+  lineHeight: number;
+}) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);
-  const [initialFont] = useState(() => previewTerminalFont(family, size));
+  const [initialFont] = useState(() => previewTerminalFont(family, size, lineHeight));
   const { theme, resolvedTheme } = useTheme();
 
   // The box grows with the font so the whole transcript shows without scrolling.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the font to the Ghostty preview surface and resizes its DOM box to fit the rows
   useEffect(() => {
     if (!surface) return;
-    void surface.setFont(previewTerminalFont(family, size)).then(() => {
+    void surface.setFont(previewTerminalFont(family, size, lineHeight)).then(() => {
       const mount = mountRef.current;
       if (!mount) return;
       // The border sits inside the box's height and is not part of the terminal's grid.
@@ -170,7 +182,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       mount.style.height = `${surface.heightForRows(TERMINAL_PREVIEW_ROWS) + border}px`;
       surface.fit();
     });
-  }, [surface, family, size]);
+  }, [surface, family, size, lineHeight]);
 
   // Palette changes may preserve light/dark mode; re-read terminal tokens for every theme change.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes theme tokens read from the DOM's computed styles into the Ghostty preview surface

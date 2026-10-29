@@ -300,9 +300,13 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
   return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
 }
 
-function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
+function terminalFontOptions(
+  family: string,
+  size: number,
+  lineHeight: number,
+): { family?: string; size: number; lineHeight: number } {
   const trimmed = family.trim();
-  return trimmed.length > 0 ? { family: trimmed, size } : { size };
+  return trimmed.length > 0 ? { family: trimmed, size, lineHeight } : { size, lineHeight };
 }
 
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
@@ -558,7 +562,12 @@ function TerminalSessionViewport({
       terminal: settings.fontSizeTerminal,
     }),
   );
-  const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const terminalLineHeight = useClientSettings((settings) => settings.lineHeightTerminal);
+  const terminalFontRef = useRef({
+    family: terminalFontFamily,
+    size: terminalFontSize,
+    lineHeight: terminalLineHeight,
+  });
   // Keyed by the launch (see TerminalViewport), so the atom is fixed for this surface.
   const terminalSessionAtom = attachedTerminalSessionAtom(environmentId, {
     threadId,
@@ -641,13 +650,25 @@ function TerminalSessionViewport({
     if (visible) consumePendingTerminalFocus(threadRef, terminalId);
   }, [terminalId, threadRef, visible]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies font family and size changes to the live Ghostty terminal surface
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies font family, size, and line height changes to the live Ghostty terminal surface
   useEffect(() => {
     const current = terminalFontRef.current;
-    if (current.family === terminalFontFamily && current.size === terminalFontSize) return;
-    terminalFontRef.current = { family: terminalFontFamily, size: terminalFontSize };
-    void terminalRef.current?.setFont(terminalFontOptions(terminalFontFamily, terminalFontSize));
-  }, [terminalFontFamily, terminalFontSize]);
+    if (
+      current.family === terminalFontFamily &&
+      current.size === terminalFontSize &&
+      current.lineHeight === terminalLineHeight
+    ) {
+      return;
+    }
+    terminalFontRef.current = {
+      family: terminalFontFamily,
+      size: terminalFontSize,
+      lineHeight: terminalLineHeight,
+    };
+    void terminalRef.current?.setFont(
+      terminalFontOptions(terminalFontFamily, terminalFontSize, terminalLineHeight),
+    );
+  }, [terminalFontFamily, terminalFontSize, terminalLineHeight]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the Ghostty terminal in the mount node and subscribes it to the terminal session
   useEffect(() => {
@@ -665,7 +686,7 @@ function TerminalSessionViewport({
       const setupFont = terminalFontRef.current;
       const terminalOptions = withLiveVisibility(visibleRef, {
         theme: terminalThemeFromApp(mount),
-        font: terminalFontOptions(setupFont.family, setupFont.size),
+        font: terminalFontOptions(setupFont.family, setupFont.size, setupFont.lineHeight),
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -691,8 +712,14 @@ function TerminalSessionViewport({
       terminal.input.readOnly = !hasTerminalWriteAccess();
       // Reapply font settings hydrated during loading, when terminalRef was null.
       const currentFont = terminalFontRef.current;
-      if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
-        void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
+      if (
+        currentFont.family !== setupFont.family ||
+        currentFont.size !== setupFont.size ||
+        currentFont.lineHeight !== setupFont.lineHeight
+      ) {
+        void terminal.setFont(
+          terminalFontOptions(currentFont.family, currentFont.size, currentFont.lineHeight),
+        );
       }
       const latestSession = readTerminalSession();
       terminal.setSharedGrid(latestSession.grid);

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -6,10 +6,13 @@ import {
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_TERMINAL_LINE_HEIGHT,
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_LINE_HEIGHT,
+  TERMINAL_LINE_HEIGHT_STEP,
 } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -194,7 +197,68 @@ function TerminalFontRow() {
             terminal: settings.fontFamilyTerminal,
           })}
           size={settings.fontSizeTerminal}
+          lineHeight={settings.lineHeightTerminal}
         />
+      }
+    />
+  );
+}
+
+function TerminalLineHeightRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const ratio =
+    (settings.lineHeightTerminal - MIN_TERMINAL_LINE_HEIGHT) /
+    (MAX_TERMINAL_LINE_HEIGHT - MIN_TERMINAL_LINE_HEIGHT);
+  const sliderStyle = {
+    "--settings-slider-progress": `${ratio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
+  } as CSSProperties;
+  return (
+    <SettingsRow
+      {...searchableSetting("terminal-line-height")}
+      description="Height of each terminal row as a multiple of the font size. Rows stay tall enough to fit the glyphs."
+      resetAction={
+        settings.lineHeightTerminal !== DEFAULT_UNIFIED_SETTINGS.lineHeightTerminal ? (
+          <SettingResetButton
+            label="terminal line height"
+            onClick={() =>
+              updateSettings({
+                lineHeightTerminal: DEFAULT_UNIFIED_SETTINGS.lineHeightTerminal,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <div className="flex w-full items-center gap-3 sm:w-52">
+          <output
+            className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+            htmlFor="terminal-line-height-control"
+          >
+            {settings.lineHeightTerminal.toFixed(2)}
+          </output>
+          <input
+            aria-label="Terminal line height"
+            className="settings-slider min-w-0 flex-1"
+            id="terminal-line-height-control"
+            max={MAX_TERMINAL_LINE_HEIGHT}
+            min={MIN_TERMINAL_LINE_HEIGHT}
+            onChange={(event) => {
+              const lineHeightTerminal = Math.round(Number(event.currentTarget.value) * 100) / 100;
+              if (
+                lineHeightTerminal >= MIN_TERMINAL_LINE_HEIGHT &&
+                lineHeightTerminal <= MAX_TERMINAL_LINE_HEIGHT
+              ) {
+                updateSettings({ lineHeightTerminal });
+              }
+            }}
+            step={TERMINAL_LINE_HEIGHT_STEP}
+            style={sliderStyle}
+            type="range"
+            value={settings.lineHeightTerminal}
+          />
+        </div>
       }
     />
   );
@@ -262,6 +326,7 @@ function FontSettingsGroup() {
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
+      <TerminalLineHeightRow />
     </>
   );
 }
@@ -310,10 +375,12 @@ function SimpleFontRows() {
                 code: settings.fontSizeCode,
                 terminal: settings.fontSizeTerminal,
               })}
+              lineHeight={settings.lineHeightTerminal}
             />
           </>
         }
       />
+      <TerminalLineHeightRow />
     </>
   );
 }

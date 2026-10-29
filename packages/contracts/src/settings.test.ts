@@ -8,6 +8,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_TERMINAL_LINE_HEIGHT,
   globalIdleCompaction,
   idleCompactionPatch,
   requiredScopesForProjectMutation,
@@ -186,6 +187,28 @@ describe("resolveIdleCompaction", () => {
     expect(idleCompactionPatch({ compactIdleThreads: false }, "beforeCacheExpires")).toEqual({
       compactIdleThreads: true,
     });
+  });
+});
+
+describe("ClientSettings terminal line height", () => {
+  it("defaults to the historical row pitch and keeps stored multipliers", () => {
+    expect(decodeClientSettings({}).lineHeightTerminal).toBe(DEFAULT_TERMINAL_LINE_HEIGHT);
+    expect(DEFAULT_TERMINAL_LINE_HEIGHT).toBe(1.35);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("lineHeightTerminal");
+    const settings = decodeClientSettings({ lineHeightTerminal: 1.2 });
+    expect(settings.lineHeightTerminal).toBe(1.2);
+    expect(encodeClientSettings(settings).lineHeightTerminal).toBe(1.2);
+    expect(decodeClientSettings({ lineHeightTerminal: 1 }).lineHeightTerminal).toBe(1);
+    expect(decodeClientSettings({ lineHeightTerminal: 2 }).lineHeightTerminal).toBe(2);
+    expect(decodeClientSettingsPatch({ lineHeightTerminal: 1.2 })).toEqual({
+      lineHeightTerminal: 1.2,
+    });
+  });
+
+  it("rejects pitches outside 1 to 2", () => {
+    expect(() => decodeClientSettings({ lineHeightTerminal: 0.99 })).toThrow();
+    expect(() => decodeClientSettings({ lineHeightTerminal: 2.01 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ lineHeightTerminal: "1.2" })).toThrow();
   });
 });
 

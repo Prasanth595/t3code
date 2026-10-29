@@ -10,6 +10,7 @@ import {
 import {
   measureGhosttyCell,
   renderGhosttySnapshot,
+  resolveTerminalLineHeight,
   terminalGridSize,
   type GhosttyCellRange,
   type GhosttyCellMetrics,
@@ -46,6 +47,7 @@ const TERMINAL_FONT_LOAD_VARIANTS = [
 export interface GhosttyTerminalFont {
   readonly family?: string;
   readonly size?: number;
+  readonly lineHeight?: number;
 }
 
 let symbolsFontLoad: Promise<void> | null = null;
@@ -535,6 +537,7 @@ export class GhosttyTerminalSurface {
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
   private fontSize: number;
+  private lineHeight: number;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly stopObservingResize: () => void;
@@ -644,6 +647,7 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
+    this.lineHeight = resolveTerminalLineHeight(options.font?.lineHeight);
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
@@ -688,12 +692,13 @@ export class GhosttyTerminalSurface {
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
     const fontSize = terminalFontSize(options.font?.size);
+    const lineHeight = resolveTerminalLineHeight(options.font?.lineHeight);
     try {
       // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
       await ensureTerminalSymbolsFont();
     } catch {}
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+    const metrics = measureGhosttyCell(context, fontSize, fontFamily, lineHeight);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
       grid.cols,
@@ -780,6 +785,15 @@ export class GhosttyTerminalSurface {
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
     const fontSize = terminalFontSize(font.size);
+    const lineHeight = resolveTerminalLineHeight(font.lineHeight);
+    if (font.family === this.requestedFontFamily && fontSize === this.fontSize) {
+      if (lineHeight === this.lineHeight) return;
+      this.lineHeight = lineHeight;
+      // A size or family load still in flight applies this pitch when it commits.
+      if (this.pendingFontEpoch === null) this.applyFontMetrics();
+      return;
+    }
+    this.lineHeight = lineHeight;
     // Commit fields with loaded metrics; the epoch makes the newest overlapping call win.
     const epoch = ++this.fontEpoch;
     this.pendingFontEpoch = epoch;
@@ -793,7 +807,12 @@ export class GhosttyTerminalSurface {
   }
 
   private applyFontMetrics(): void {
-    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+    this.metrics = measureGhosttyCell(
+      this.context,
+      this.fontSize,
+      this.fontFamily,
+      this.lineHeight,
+    );
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
     this.inputLeft = -1;
     this.inputTop = -1;
@@ -820,7 +839,12 @@ export class GhosttyTerminalSurface {
       this.applyFontMetrics();
       return;
     }
-    const metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+    const metrics = measureGhosttyCell(
+      this.context,
+      this.fontSize,
+      this.fontFamily,
+      this.lineHeight,
+    );
     if (
       metrics.width === this.metrics.width &&
       metrics.height === this.metrics.height &&

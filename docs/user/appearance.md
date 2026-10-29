@@ -48,6 +48,13 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
+## Terminal line height
+
+On web and desktop, **Settings → Appearance** includes **Terminal line height**. It sets how
+tall each terminal row is, as a multiple of the font size, from 1 to 2. The default, 1.35, is
+the spacing the terminal already uses. A row never gets shorter than its glyphs, so box drawing
+and QR codes stay intact. Mobile keeps its own terminal text settings.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

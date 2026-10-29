@@ -372,6 +372,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["typography family size monospace output"],
   },
   {
+    id: "terminal-line-height",
+    title: "Terminal line height",
+    to: "/settings/appearance",
+    searchTerms: ["typography spacing leading rows cell height terminal font"],
+  },
+  {
     id: "separate-fonts",
     title: "Separate fonts",
     to: "/settings/appearance",

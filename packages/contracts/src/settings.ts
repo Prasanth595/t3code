@@ -182,6 +182,19 @@ export const TerminalFontSize = Schema.Int.check(
 export type TerminalFontSize = typeof TerminalFontSize.Type;
 const DEFAULT_TERMINAL_FONT_SIZE: TerminalFontSize = 12;
 
+export const MIN_TERMINAL_LINE_HEIGHT = 1;
+export const MAX_TERMINAL_LINE_HEIGHT = 2;
+export const TERMINAL_LINE_HEIGHT_STEP = 0.05;
+// The canvas renderer sized rows at fontSize * 1.35 before this setting existed.
+export const DEFAULT_TERMINAL_LINE_HEIGHT = 1.35;
+export const TerminalLineHeight = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_TERMINAL_LINE_HEIGHT,
+    maximum: MAX_TERMINAL_LINE_HEIGHT,
+  }),
+);
+export type TerminalLineHeight = typeof TerminalLineHeight.Type;
+
 // "artwork" follows the running channel and shows nothing on Latest. The fixed artwork
 // modes let any channel opt into a specific channel's art.
 export const EnvironmentIdentificationMode = Schema.Literals([
@@ -436,6 +449,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   fontSizeTerminal: TerminalFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
+  lineHeightTerminal: TerminalLineHeight.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_LINE_HEIGHT)),
   ),
   fontFamilyCode: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilyComposer: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1706,6 +1722,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
   fontSizeTerminal: Schema.optionalKey(TerminalFontSize),
+  lineHeightTerminal: Schema.optionalKey(TerminalLineHeight),
   fontFamilyCode: Schema.optionalKey(FontFamilyPreference),
   fontFamilyComposer: Schema.optionalKey(FontFamilyPreference),
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),

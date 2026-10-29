@@ -1,4 +1,10 @@
 import {
+  DEFAULT_TERMINAL_LINE_HEIGHT,
+  MAX_TERMINAL_LINE_HEIGHT,
+  MIN_TERMINAL_LINE_HEIGHT,
+} from "@t3tools/contracts/settings";
+
+import {
   GHOSTTY_CELL_WIDE,
   ghosttyColorsEqual,
   type GhosttyCell,
@@ -84,10 +90,17 @@ function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): s
   return `${style} ${weight} ${fontSize}px ${fontFamily}`;
 }
 
+/** Missing or non-finite values keep the historical 1.35 pitch. Out-of-range values clamp. */
+export function resolveTerminalLineHeight(lineHeight?: number): number {
+  if (lineHeight === undefined || !Number.isFinite(lineHeight)) return DEFAULT_TERMINAL_LINE_HEIGHT;
+  return Math.min(MAX_TERMINAL_LINE_HEIGHT, Math.max(MIN_TERMINAL_LINE_HEIGHT, lineHeight));
+}
+
 export function measureGhosttyCell(
   context: CanvasRenderingContext2D,
   fontSize: number,
   fontFamily: string,
+  lineHeight?: number,
 ): GhosttyCellMetrics {
   context.font = `normal 400 ${fontSize}px ${fontFamily}`;
   const widthMeasurement = context.measureText("M");
@@ -95,7 +108,8 @@ export function measureGhosttyCell(
   const ascent = verticalMeasurement.actualBoundingBoxAscent || fontSize;
   const descent = verticalMeasurement.actualBoundingBoxDescent;
   const glyphHeight = ascent + descent;
-  const height = Math.max(1, Math.round(fontSize * 1.35), Math.ceil(glyphHeight));
+  const resolvedLineHeight = resolveTerminalLineHeight(lineHeight);
+  const height = Math.max(1, Math.round(fontSize * resolvedLineHeight), Math.ceil(glyphHeight));
   return {
     width: Math.max(1, widthMeasurement.width),
     height,

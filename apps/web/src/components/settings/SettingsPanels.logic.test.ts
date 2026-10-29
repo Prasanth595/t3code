@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundActivitySharedPolicySettings,
   getChangedBrowserSettingLabels,
+  getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
 } from "./SettingsPanels.logic";
 
@@ -75,6 +76,18 @@ describe("background activity settings restore", () => {
         automaticGitFetchInterval,
       },
     });
+  });
+});
+
+describe("getChangedTypographySettingLabels", () => {
+  it("reports a terminal line height that differs from the historical pitch", () => {
+    expect(getChangedTypographySettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
+    expect(
+      getChangedTypographySettingLabels({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        lineHeightTerminal: 1,
+      }),
+    ).toEqual(["Terminal line height"]);
   });
 });
 

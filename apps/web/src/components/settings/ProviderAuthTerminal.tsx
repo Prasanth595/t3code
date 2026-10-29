@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { GhosttyTerminalSurface } from "../../terminal/ghostty/surface";
 import { ensureLocalApi } from "../../localApi";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { getClientSettings } from "../../hooks/useSettings";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
 
 export default function ProviderAuthTerminal({
@@ -33,7 +34,7 @@ export default function ProviderAuthTerminal({
     let created: GhosttyTerminalSurface | null = null;
     void GhosttyTerminalSurface.create(element, {
       theme: terminalThemeFromApp(element),
-      font: { size: 13 },
+      font: { size: 13, lineHeight: getClientSettings().lineHeightTerminal },
       onData: (data) => respond({ type: "terminal", data }),
       onResize: (cols, rows) => respond({ type: "terminal", data: "", size: { cols, rows } }),
       onSelectionChange: () => {},
