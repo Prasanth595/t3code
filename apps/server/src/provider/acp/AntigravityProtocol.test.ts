@@ -448,6 +448,25 @@ describe("Antigravity served reads", () => {
     });
   });
 
+  it("forgets an earlier turn's unannounced served read", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    reads.reset();
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_refused",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    reads.attempted("/repo/a.ts", false);
+    expect(flush(reads, "call_refused")).toMatchObject({ status: "failed" });
+  });
+
   it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
     const reads = makeAntigravityReadRepair();
     const announce = (toolCallId: string) =>
