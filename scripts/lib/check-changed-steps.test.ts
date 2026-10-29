@@ -58,7 +58,7 @@ describe("check:changed concurrency", () => {
 
   it("counts a weighted task's slots and starts nothing ahead of a waiting heavy task", async () => {
     const limit = createLimiter(3);
-    const gates = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+    const gates = Array.from({ length: 5 }, () => Promise.withResolvers<void>());
     const started: Array<string> = [];
     const run = (name: string, gate: number, weight?: number) =>
       limit(async () => {
@@ -68,7 +68,9 @@ describe("check:changed concurrency", () => {
     const light = run("light", 0);
     // Above the limit, so it holds every slot rather than never starting.
     const heavy = run("heavy", 1, 5);
-    const after = run("after", 2);
+    const pair = run("pair", 2, 2);
+    const beside = run("beside", 3);
+    const last = run("last", 4);
     await Promise.resolve();
     expect(started).toEqual(["light"]);
 
@@ -78,9 +80,14 @@ describe("check:changed concurrency", () => {
 
     gates[1]!.resolve();
     await heavy;
-    expect(started).toEqual(["light", "heavy", "after"]);
+    expect(started).toEqual(["light", "heavy", "pair", "beside"]);
+
+    gates[3]!.resolve();
+    await beside;
+    expect(started).toEqual(["light", "heavy", "pair", "beside", "last"]);
     gates[2]!.resolve();
-    await after;
+    gates[4]!.resolve();
+    await Promise.all([pair, last]);
   });
 });
 
