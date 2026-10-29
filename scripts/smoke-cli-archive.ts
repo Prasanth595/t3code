@@ -115,7 +115,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   if (platform === "linux") {
     const ldd = yield* spawner.string(ChildProcess.make("ldd", [executable]));
     // Older glibc prints the path as given, newer prints it resolved; compare both resolved.
-    const loaded = /libatomic\.so\.1 => (\/\S+)/.exec(ldd)?.[1];
+    const loaded = /libatomic\.so\.1 => (\/.*) \(0x[0-9a-f]+\)/.exec(ldd)?.[1];
     if (
       loaded === undefined ||
       (yield* fs.realPath(loaded)) !== (yield* fs.realPath(bundledLibatomic))
