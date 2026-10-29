@@ -287,3 +287,23 @@ export function resolveThreadOutboxFailureAction(input: {
   }
   return "restore";
 }
+
+export type AcknowledgedThreadMessage = QueuedThreadMessage & {
+  /** The server sequence that committed the message; older servers do not report it. */
+  readonly sequence?: number;
+};
+
+/**
+ * The thread holds the message once it has applied the message's sequence. A bounded
+ * projection can page the message out later, so finding it is only a fallback.
+ */
+export function threadHasCaughtUpTo(
+  message: AcknowledgedThreadMessage,
+  thread: {
+    readonly sequence: number;
+    readonly messages: ReadonlyArray<{ readonly id: string }> | undefined;
+  },
+): boolean {
+  if (message.sequence !== undefined && thread.sequence >= message.sequence) return true;
+  return thread.messages?.some((entry) => entry.id === message.messageId) ?? false;
+}

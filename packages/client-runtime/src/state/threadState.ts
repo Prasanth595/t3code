@@ -14,6 +14,8 @@ export interface EnvironmentThreadState {
    * disconnect path.
    */
   readonly history: ThreadHistoryMeta;
+  /** The last server sequence `data` reflects, so readers can tell a write has landed without searching paged-out history. */
+  readonly sequence: number;
 }
 
 export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {
@@ -21,4 +23,5 @@ export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {
   status: "empty",
   error: Option.none(),
   history: EMPTY_THREAD_HISTORY_META,
+  sequence: 0,
 };
