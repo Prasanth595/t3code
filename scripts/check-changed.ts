@@ -274,7 +274,7 @@ const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script has no Effect runtime.
 const platform = process.platform;
-// The typecheck step gets the same budget for its own package runs. macOS
+// macOS
 // counts its file cache as used, so available memory there would starve a large
 // Mac. Elsewhere availableMemory() also honors a container's cgroup limit.
 const concurrency =
@@ -285,6 +285,7 @@ const concurrency =
   );
 const timeoutSeconds = positiveInteger(process.env.CHECK_CHANGED_TIMEOUT) ?? 900;
 
+const typecheckWorkers = Math.min(concurrency, affected.length);
 const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
 const steps = [
   runPatchCheck && { name: "unused patches", run: checkPatches },
@@ -300,6 +301,8 @@ const steps = [
   })),
   affected.length > 0 && {
     name: `typecheck (${affected.length} packages)`,
+    // Each parallel package typecheck takes a slot of the step budget.
+    weight: typecheckWorkers,
     // `tsc --noEmit` writes nothing another package reads, so dependency order
     // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
     args: [
@@ -307,7 +310,7 @@ const steps = [
       "--cache",
       "--parallel",
       "--concurrency-limit",
-      String(concurrency),
+      String(typecheckWorkers),
       ...filters(affected),
       "typecheck",
     ],
@@ -376,7 +379,8 @@ const limit = createLimiter(concurrency);
 let previousVitest: Promise<unknown> = Promise.resolve();
 const results = await Promise.all(
   steps.map((step) => {
-    if (!("args" in step) || step.args[0] !== "test") return limit(() => runStep(step));
+    const weight = "weight" in step ? step.weight : 1;
+    if (!("args" in step) || step.args[0] !== "test") return limit(() => runStep(step), weight);
     const result = previousVitest.then(() => limit(() => runStep(step)));
     previousVitest = result;
     return result;

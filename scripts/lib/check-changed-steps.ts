@@ -11,17 +11,28 @@ export const positiveInteger = (value: string | undefined) => {
 export const defaultConcurrency = (cores: number, availableBytes: number) =>
   Math.max(1, Math.min(Math.floor(cores / 2), Math.floor(availableBytes / (6 * GiB))));
 
+// A task holds `weight` slots, capped at the limit, so a step that runs its own
+// workers counts each one. Tasks start in order: a heavy task waiting for room
+// is never overtaken by lighter ones behind it.
 export const createLimiter = (concurrency: number) => {
   let active = 0;
-  const queue: Array<() => void> = [];
-  return async <A>(task: () => Promise<A>): Promise<A> => {
-    if (active >= concurrency) await new Promise<void>((resolve) => queue.push(resolve));
-    active++;
+  const queue: Array<{ slots: number; start: () => void }> = [];
+  const startQueued = () => {
+    while (queue.length > 0 && active + queue[0]!.slots <= concurrency) {
+      const next = queue.shift()!;
+      active += next.slots;
+      next.start();
+    }
+  };
+  return async <A>(task: () => Promise<A>, weight = 1): Promise<A> => {
+    const slots = Math.min(Math.max(weight, 1), concurrency);
+    if (queue.length === 0 && active + slots <= concurrency) active += slots;
+    else await new Promise<void>((start) => queue.push({ slots, start }));
     try {
       return await task();
     } finally {
-      active--;
-      queue.shift()?.();
+      active -= slots;
+      startQueued();
     }
   };
 };
