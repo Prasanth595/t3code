@@ -34,6 +34,7 @@ import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
+import { SkillReviewService } from "../skills/SkillReviewService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -66,6 +67,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
+  Layer.mock(SkillReviewService)({}),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
   Layer.mock(ServerEnvironment)({}),
   Layer.mock(ServerSecretStore)({}),
@@ -127,6 +129,14 @@ it.effect("agent context matches the committed budget", () =>
       measured,
       "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
     ).toEqual(budget);
+    // Anthropic rejects top-level composition in tool input schemas, so Claude Code drops the tool silently.
+    expect(
+      mcp.tools
+        .filter(({ tool }) =>
+          ["allOf", "anyOf", "oneOf"].some((keyword) => keyword in (tool.inputSchema as object)),
+        )
+        .map(({ tool }) => tool.name),
+    ).toEqual([]);
   }).pipe(
     Effect.provide(
       McpHttpServer.layerTools.pipe(
