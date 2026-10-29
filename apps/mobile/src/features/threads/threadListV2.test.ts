@@ -14,7 +14,10 @@ import {
   type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  INDEFINITE_SNOOZE_UNTIL,
+  resolveSnoozePresets,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -1332,6 +1335,12 @@ describe("threadListV2ListItemsAreEqual", () => {
           snoozedAt: NOW,
           snoozedUntil: isoAt(BASE_MS + 61 * MINUTE_MS),
         }),
+        makeThread({
+          id: ThreadId.make("forever"),
+          title: "forever",
+          snoozedAt: NOW,
+          snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
+        }),
       ],
       environmentId: null,
       searchQuery: "",
@@ -1350,8 +1359,8 @@ describe("threadListV2ListItemsAreEqual", () => {
       snoozedShelfExpanded: true,
       snoozeLabelNow: isoAt(BASE_MS + MINUTE_MS),
     });
-    const rows = (items: ThreadListV2ListItem[]) => {
-      const row = items.find((item) => item.key === `v2-thread:${environmentId}:wake`);
+    const rows = (items: ThreadListV2ListItem[], id = "wake") => {
+      const row = items.find((item) => item.key === `v2-thread:${environmentId}:${id}`);
       expect(row?.type).toBe("v2-thread");
       if (row?.type !== "v2-thread") throw new Error("missing snoozed row");
       return row;
@@ -1359,6 +1368,7 @@ describe("threadListV2ListItemsAreEqual", () => {
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
+    expect(rows(earlier, "forever").snoozeWakeLabelText).toBe("Snoozed");
   });
 
   it("notices a trailing-divider flip caused by a neighbour change", () => {
