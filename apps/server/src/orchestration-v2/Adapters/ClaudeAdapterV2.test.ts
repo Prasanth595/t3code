@@ -5751,67 +5751,105 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["environment", "settings"])(
-    "uses the matching proxy reset from %s when Claude omits a reset time",
-    (source) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-proxy-reset-" });
-        if (source === "settings")
-          yield* fs.writeFileString(
-            path.join(configDir, "settings.json"),
-            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } }),
-          );
-        const harness = yield* makeWakeHarnessWithOptions({
-          environment: {
-            CLAUDE_CONFIG_DIR: configDir,
-            ...(source === "environment" ? { ANTHROPIC_BASE_URL: "https://hub.test/v1" } : {}),
-          },
-        });
-        const now = yield* DateTime.now;
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-proxy-reset"),
-            text: "Continue.",
-            attachments: [],
-          }),
+  it.effect.each([
+    "environment",
+    "settings",
+    "lenient settings",
+    "root local",
+    "launch inline",
+    "launch file",
+  ])("uses the matching proxy reset from %s when Claude omits a reset time", (source) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-proxy-reset-" });
+      if (source === "settings")
+        yield* fs.writeFileString(
+          path.join(configDir, "settings.json"),
+          JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } }),
         );
-        yield* Queue.offerAll(harness.sdkMessages, [
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000652",
-            error: "rate_limit",
-          }),
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000653",
-            result: "Usage limit reached.",
-            terminalReason: "blocking_limit",
-            isError: true,
-            apiErrorStatus: 429,
-          }),
-        ]);
-        const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal.status, "failed");
-        if (terminal.status !== "failed") return;
-        assert.equal(terminal.failure.class, "usage_limit");
-        assert.equal(terminal.failure.resetAt, "2099-01-01T02:00:00.000Z");
-      }).pipe(
-        Effect.provide([
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          Layer.mock(UsageLimitSources.UsageLimitSources)({
-            resolveResetAt: (input) => {
-              assert.equal(input.endpoint, "https://hub.test/v1");
-              assert.isNotEmpty(input.model);
-              return Effect.succeed("2099-01-01T02:00:00.000Z");
-            },
-          }),
-        ]),
-      ),
+      const cwd = path.join(configDir, "repo", "nested");
+      yield* fs.makeDirectory(path.join(configDir, "repo", ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(cwd, ".claude"), { recursive: true });
+      if (source === "lenient settings")
+        yield* fs.writeFileString(
+          path.join(configDir, "settings.json"),
+          '{ // Claude settings allow comments and trailing commas\n "env": { "ANTHROPIC_BASE_URL": "https://hub.test/v1", }, }',
+        );
+      if (source === "root local") {
+        yield* fs.writeFileString(
+          path.join(cwd, ".claude", "settings.local.json"),
+          JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://wrong.test" } }),
+        );
+        yield* fs.makeDirectory(path.join(configDir, "repo", ".claude"));
+        yield* fs.writeFileString(
+          path.join(configDir, "repo", ".claude", "settings.local.json"),
+          JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } }),
+        );
+      }
+      const launchSettings = JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } });
+      if (source === "launch file")
+        yield* fs.writeFileString(path.join(cwd, "launch.json"), launchSettings);
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs:
+            source === "launch inline"
+              ? `--settings '${launchSettings}'`
+              : source === "launch file"
+                ? "--settings launch.json"
+                : "",
+        },
+        environment: {
+          CLAUDE_CONFIG_DIR: configDir,
+          ANTHROPIC_BASE_URL:
+            source === "environment" ? "https://hub.test/v1" : "https://wrong.test",
+        },
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-proxy-reset"),
+          text: "Continue.",
+          attachments: [],
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd },
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000652",
+          error: "rate_limit",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000653",
+          result: "Usage limit reached.",
+          terminalReason: "blocking_limit",
+          isError: true,
+          apiErrorStatus: 429,
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.resetAt, "2099-01-01T02:00:00.000Z");
+    }).pipe(
+      Effect.provide([
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        Layer.mock(UsageLimitSources.UsageLimitSources)({
+          resolveResetAt: (input) => {
+            assert.equal(input.endpoint, "https://hub.test/v1");
+            assert.isNotEmpty(input.model);
+            return Effect.succeed("2099-01-01T02:00:00.000Z");
+          },
+        }),
+      ]),
+    ),
   );
 
   it.effect.each([

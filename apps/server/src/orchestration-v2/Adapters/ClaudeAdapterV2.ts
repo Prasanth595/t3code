@@ -2598,7 +2598,7 @@ const ClaudeBypassSettings = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.Unknown)],
 );
 const decodeClaudeEndpointSettings = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
+  fromLenientJson(
     Schema.Struct({
       env: Schema.optional(Schema.Struct({ ANTHROPIC_BASE_URL: Schema.optional(Schema.String) })),
     }),
@@ -4380,10 +4380,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
   const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(function* (
     context: ActiveClaudeTurnContext,
-    cwd: string,
   ) {
     if (Option.isNone(usageLimitSources)) return null;
-
+    const cwd = context.input.runtimePolicy.cwd;
+    const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
     let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
     const settingsPaths = [
       path.join(homePath, "settings.json"),
@@ -4391,6 +4391,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ? [
             path.join(cwd, ".claude", "settings.json"),
             path.join(cwd, ".claude", "settings.local.json"),
+            ...(localDirectory === null || localDirectory === cwd
+              ? []
+              : [path.join(localDirectory, ".claude", "settings.local.json")]),
           ]
         : []),
     ];
@@ -4401,6 +4404,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       );
       endpoint = settings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
     }
+    const launchSettings = yield* readClaudeLaunchArgSettings({
+      settings: adapterOptions.settings,
+      cwd,
+      fileSystem,
+      path,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    endpoint = launchSettings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
     if (!endpoint) return null;
     return yield* usageLimitSources.value.resolveResetAt({
       endpoint,
@@ -9261,7 +9271,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit" &&
               resetAt === null &&
               resultFailure.resetAt == null
-                ? yield* proxyResetAt(context, session.cwd)
+                ? yield* proxyResetAt(context)
                 : null;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
