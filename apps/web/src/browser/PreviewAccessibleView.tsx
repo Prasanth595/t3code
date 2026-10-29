@@ -22,7 +22,7 @@ export function PreviewAccessibleView(props: {
   const viewRef = useRef<AccessibleDocumentView | null>(null);
   const act = useEffectEvent((action: PreviewAccessibilityAction) => props.onAction(action));
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Owns the imperative DOM the shared renderer keys by node id.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the imperative DOM the shared renderer keys by node id.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -34,12 +34,12 @@ export function PreviewAccessibleView(props: {
     };
   }, []);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Updates in place so focus and edits survive new snapshots.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Updates in place so focus and edits survive new snapshots.
   useEffect(() => {
     viewRef.current?.update(document, canAct);
   }, [document, canAct]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Server notices go to the view's own live region.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Server notices go to the view's own live region.
   useEffect(() => {
     if (notice) viewRef.current?.notice(notice.message);
   }, [notice]);
