@@ -163,6 +163,19 @@ describe("checkFxProviderStatus", () => {
         draft.models.map((model) => model.slug),
         ["default", "codex:gpt-5.5"],
       );
+
+      // An earlier backend whose sign-in fx could not report does not hide Codex's.
+      const unreadable = yield* check({
+        " status --json": status("missing", { model: "spacexai/grok-4.7" }),
+        "gateway models --json": GATEWAY_MODELS,
+        "codex status --json": status("chatgpt subscription"),
+        "codex models --json": models(["gpt-5.5"]),
+        "grok status --json": status("missing"),
+      });
+      assert.deepEqual(unreadable.draft.auth, {
+        status: "authenticated",
+        label: "Codex subscription",
+      });
     }),
   );
 
