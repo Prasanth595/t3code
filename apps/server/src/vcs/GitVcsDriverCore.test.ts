@@ -2919,6 +2919,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(firstPage.totalCount, everything.refs.length);
         assert.equal(firstPage.nextCursor, 1);
         assert.equal(firstPage.refs[0]?.current, true);
+        const secondPage = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          cursor: 1,
+          limit: 1,
+        });
+        assert.deepEqual(secondPage.refs, everything.refs.slice(1, 2));
+        assert.equal(secondPage.nextCursor, 2);
         const pastEnd = yield* driver.listRefs({
           cwd,
           includeMatchingRemoteRefs: true,
