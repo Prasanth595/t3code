@@ -3489,6 +3489,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const restricted = yield* open;
         assert.equal(restricted.permissionMode, "default");
         assert.isUndefined(restricted.allowDangerouslySkipPermissions);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({
+            permissions: { disableBypassPermissionsMode: false, disableAutoMode: false },
+            disableAutoMode: false,
+            managedSourcesBehavior: "merge",
+          }),
+        );
+        const unrestricted = yield* open;
+        assert.equal(unrestricted.permissionMode, "bypassPermissions");
+        assert.equal(unrestricted.allowDangerouslySkipPermissions, true);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({
+            permissions: { disableBypassPermissionsMode: "disable", disableAutoMode: "disable" },
+            disableAutoMode: false,
+          }),
+        );
+        const mixed = yield* open;
+        assert.equal(mixed.permissionMode, "default");
+        assert.isUndefined(mixed.allowDangerouslySkipPermissions);
+        yield* fileSystem.writeFileString(
+          remoteFile,
+          JSON.stringify({ permissions: { disableBypassPermissionsMode: true } }),
+        );
+        assert.equal((yield* open).permissionMode, "auto");
         yield* fileSystem.remove(remoteFile);
         assert.equal((yield* open).permissionMode, "bypassPermissions");
         const launchRestricted = yield* openWith(
