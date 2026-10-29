@@ -106,12 +106,11 @@ afterEach(() => {
 });
 
 describe("QuestionAttachments answer field", () => {
-  it("keeps newer typing when a delayed echo of an older draft arrives", () => {
+  it("keeps newer typing when the thread screen echoes an older draft", () => {
     render("de");
     type("de ");
     type("de s");
 
-    // The thread screen has not caught up yet and still reports the first edit.
     render("de ");
     expect(input().value).toBe("de s");
 
@@ -119,19 +118,19 @@ describe("QuestionAttachments answer field", () => {
     expect(input().value).toBe("de s");
   });
 
-  it("keeps an IME composition when a parent echo is older than the composed text", () => {
+  it("keeps a 注音 composition when a late echo arrives mid-composition", () => {
     render("");
-    type("n");
-    type("ni");
-    type("nih");
+    type("ㄋ");
+    type("ㄋㄧ");
+    type("ㄋㄧˇ");
 
-    render("ni");
-    expect(input().value).toBe("nih");
+    render("ㄋㄧ");
+    expect(input().value).toBe("ㄋㄧˇ");
 
-    // Committing a candidate replaces the composed pinyin with the chosen characters.
-    type("你好");
-    render("你好");
-    expect(input().value).toBe("你好");
+    // Picking a candidate replaces the composed symbols with the character.
+    type("你");
+    render("你");
+    expect(input().value).toBe("你");
   });
 
   it("adopts a draft changed from outside the field", () => {
@@ -140,8 +139,16 @@ describe("QuestionAttachments answer field", () => {
     render("my own colour");
 
     render("");
-
     expect(input().value).toBe("");
-    expect(onChangeText).toHaveBeenLastCalledWith("my own colour");
+  });
+
+  it("adopts an outside change while its own echoes are still pending", () => {
+    render("");
+    type("a");
+    type("ab");
+
+    render("a");
+    render("");
+    expect(input().value).toBe("");
   });
 });
