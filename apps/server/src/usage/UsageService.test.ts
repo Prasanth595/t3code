@@ -1394,7 +1394,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("ignores a stale macOS Keychain login when Cursor is not installed", () =>
+  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const cursor = makeFakeCursor();
