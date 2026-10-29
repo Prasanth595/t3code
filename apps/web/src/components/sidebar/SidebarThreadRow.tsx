@@ -1000,9 +1000,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
 
+  // Beside an async question's Input, the spinner and timer already say Working; Goal says more.
+  const topStatusLabel =
+    hasAsyncQuestion && topStatus?.label === "Working" ? null : (topStatus?.label ?? null);
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: hasAsyncQuestion ? "Input, still working" : (topStatus?.label ?? null),
+    statusLabel: hasAsyncQuestion ? `Input, ${topStatusLabel ?? "still working"}` : topStatusLabel,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1514,7 +1517,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
-                          {hasAsyncQuestion ? null : topStatus.label}
+                          {topStatusLabel}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />

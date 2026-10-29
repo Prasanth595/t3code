@@ -1170,7 +1170,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
-                {hasAsyncQuestion ? null : statusLabel.label}
+                {/* Beside Input the spinner and timer already say Working; Goal says more. */}
+                {hasAsyncQuestion && statusLabel.label === "Working" ? null : statusLabel.label}
                 {status === "working" ? (
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (
@@ -1320,7 +1321,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const rowAccessibilityLabel = [
     thread.title,
-    hasAsyncQuestion ? "Input, still working" : null,
+    hasAsyncQuestion ? `Input, ${statusLabel?.label === "Goal" ? "Goal" : "still working"}` : null,
     props.hasQueuedMessages ? "messages queued to send" : null,
   ]
     .filter(Boolean)
