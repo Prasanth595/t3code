@@ -125,7 +125,8 @@ export function HtmlRenderWebView(props: {
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
         allowsInlineMediaPlayback
-        contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
+        // "automatic" skips the header inset when a short page fits the screen, as on iPad.
+        contentInsetAdjustmentBehavior={props.nested ? "never" : "always"}
         bounces={!props.nested}
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
