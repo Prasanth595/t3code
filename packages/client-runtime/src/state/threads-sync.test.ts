@@ -714,10 +714,11 @@ describe("EnvironmentThreads", () => {
           },
         },
       });
-      yield* awaitThreadState(
+      const resync = yield* awaitThreadState(
         harness.observed,
         (value) => Option.getOrNull(value.error) === "This thread fell out of sync. Reloading it.",
       );
+      expect(resync.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE);
       // The client resubscribes without a cursor, so the server sends a snapshot.
       yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
         Stream.filter((count) => count >= 2),

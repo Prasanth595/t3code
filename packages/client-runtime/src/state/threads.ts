@@ -590,7 +590,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           if (applied._tag === "delete" || applied._tag === "resync") break;
         }
         // A batch that changed nothing keeps its state object, so readers do not re-render.
-        return [result, result._tag === "noop" ? current : { ...current, sequence }];
+        return [
+          result,
+          result._tag === "noop"
+            ? current
+            : { ...current, sequence: result._tag === "resync" ? appliedSequence : sequence },
+        ];
       },
     );
 
