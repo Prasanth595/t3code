@@ -19,10 +19,14 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { rehypePullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+import { rehypePullRequestMentions } from "./pullRequestMentions";
 
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
+  repositoryUrl: string | null;
+  viewer: string | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -71,9 +75,20 @@ export function PullRequestMarkdown({
   const context = useContext(PullRequestMarkdownContext);
   const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
-    ? [[remarkPullRequestAutolinks, { autolinks }]]
-    : [];
+  const extraRehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [];
+  // Check authored mentions before reference links split text and discard positions.
+  if (context?.repositoryUrl) {
+    extraRehypePlugins.push([
+      rehypePullRequestMentions,
+      { repositoryUrl: context.repositoryUrl, viewer: context.viewer },
+    ]);
+  }
+  if (autolinks) {
+    extraRehypePlugins.push([
+      rehypePullRequestAutolinks,
+      { autolinks, userMentionsHandled: Boolean(context?.repositoryUrl) },
+    ]);
+  }
   return (
     <div
       className={cn(
@@ -81,6 +96,7 @@ export function PullRequestMarkdown({
         className,
       )}
       data-image-gallery
+      data-pull-request-markdown
     >
       {segments.map((segment) => {
         if (segment.kind === "markdown" || segment.media === "image") {
@@ -92,7 +108,7 @@ export function PullRequestMarkdown({
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
-              extraRemarkPlugins={extraRemarkPlugins}
+              extraRehypePlugins={extraRehypePlugins}
               sourceControlMedia
             />
           );

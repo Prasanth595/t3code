@@ -236,10 +236,15 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
+  detail: Pick<PullRequestDetail, "provider" | "url" | "viewer"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
+  return {
+    autolinks: changeRequestReferenceAutolinker(detail),
+    repositoryUrl: detail?.provider === "github" ? detail.url : null,
+    viewer: detail?.provider === "github" ? (detail.viewer ?? null) : null,
+    threadRef,
+  };
 }
 
 function pullRequestStackReference(

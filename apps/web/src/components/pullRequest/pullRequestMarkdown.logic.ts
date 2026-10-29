@@ -9,27 +9,35 @@ type MarkdownNode = {
   type: string;
   value?: string;
   children?: MarkdownNode[];
-  url?: string;
-  data?: unknown;
+  tagName?: string;
+  properties?: Record<string, unknown>;
 };
 
-const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
+const AUTOLINK_IGNORED_TYPES = new Set(["a", "code", "pre", "kbd", "samp", "script", "style"]);
 
-export function remarkPullRequestAutolinks(options: {
+export function rehypePullRequestAutolinks(options: {
   readonly autolinks: (text: string) => ReadonlyArray<ReferenceAutolink>;
+  readonly userMentionsHandled?: boolean;
 }) {
   const visit = (node: MarkdownNode): void => {
     const children = node.children;
     if (children === undefined) return;
     for (let index = 0; index < children.length; index += 1) {
       const child = children[index]!;
-      if (AUTOLINK_IGNORED_TYPES.has(child.type)) continue;
+      if (child.tagName !== undefined && AUTOLINK_IGNORED_TYPES.has(child.tagName)) continue;
       if (child.type !== "text" || child.value === undefined) {
         visit(child);
         continue;
       }
       const value = child.value;
-      const links = options.autolinks(value);
+      // The mention pass already checked authored escapes and username boundaries.
+      // Keep host-specific team links, but do not relink rejected user mentions.
+      const links = options
+        .autolinks(value)
+        .filter(
+          (link) =>
+            !options.userMentionsHandled || link.kind !== "mention" || link.text.includes("/"),
+        );
       if (links.length === 0) continue;
       const replacements: MarkdownNode[] = [];
       let start = 0;
@@ -38,9 +46,9 @@ export function remarkPullRequestAutolinks(options: {
           replacements.push({ type: "text", value: value.slice(start, link.index) });
         }
         replacements.push({
-          type: "link",
-          url: link.url,
-          data: { hProperties: { dataPullRequestAutolink: link.kind } },
+          type: "element",
+          tagName: "a",
+          properties: { href: link.url, dataPullRequestAutolink: link.kind },
           children: [{ type: "text", value: link.label }],
         });
         start = link.index + link.text.length;
