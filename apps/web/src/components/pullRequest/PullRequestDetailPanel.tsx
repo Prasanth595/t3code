@@ -1136,6 +1136,7 @@ export function PullRequestDetailPanel({
         state: detail.state,
         isDraft: detail.isDraft,
         mergeability: detail.mergeability,
+        mergeBlocked: detail.mergeBlocked,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
         hasMergeMethod: allowedMergeMethods.length > 0,
@@ -1165,6 +1166,7 @@ export function PullRequestDetailPanel({
     can("merge") &&
     !detail.isDraft &&
     !conflicting &&
+    detail.mergeBlocked !== true &&
     allowedMergeMethods.length > 0;
   const showsMergeMethods =
     detail?.state === "open" &&
