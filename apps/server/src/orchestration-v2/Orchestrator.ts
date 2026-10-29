@@ -715,21 +715,22 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
-/** A workflow member may return before checkpoint capture once its other work and requests end. */
-function settledWorkflowMemberRun<R extends OrchestrationV2Run | undefined>(
+/** Workflow results wait for all work and requests, regardless of checkpoint capture. */
+function workflowMemberResultRun(
   controls: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "messages" | "subagents" | "providerThreads" | "runtimeRequests"
   >,
-  run: R,
-): R {
+  run: OrchestrationV2Run | undefined,
+): OrchestrationV2Run | undefined {
   if (
     run === undefined ||
-    run.status !== "waiting" ||
-    controls.thread.lineage.workflowId === undefined
+    controls.thread.lineage.workflowId === undefined ||
+    (run.status !== "waiting" && delegatedTaskTerminalStatus(run.status) === null)
   )
     return run;
-  const settledRun = { ...run, status: "completed" as const };
+  // A completed provider turn can return before its checkpoint is captured.
+  const settledRun = run.status === "waiting" ? { ...run, status: "completed" as const } : run;
   const progress = delegatedTaskProgress({
     ...controls,
     runs: controls.runs.map((candidate) => (candidate.id === run.id ? settledRun : candidate)),
@@ -737,7 +738,7 @@ function settledWorkflowMemberRun<R extends OrchestrationV2Run | undefined>(
   return progress.state === "result_available" &&
     !controls.runtimeRequests.some((request) => request.status === "pending")
     ? settledRun
-    : run;
+    : undefined;
 }
 
 function delegatedTaskTerminalStatus(
@@ -12317,7 +12318,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.task.id);
-      const childRun = settledWorkflowMemberRun(
+      const childRun = workflowMemberResultRun(
         childControls,
         taskRuns.length === 0
           ? options.task.id === forkedFrom.nodeId
@@ -12628,8 +12629,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     const progress = delegatedTaskProgress(childControls);
     const latestRun = childControls.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-    const settledMemberRun = settledWorkflowMemberRun(childControls, latestRun);
-    const memberTurnSettled = settledMemberRun !== latestRun;
+    const settledMemberRun = workflowMemberResultRun(childControls, latestRun);
+    const memberTurnSettled = settledMemberRun !== undefined && settledMemberRun !== latestRun;
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
       "subagents",
       "contextTransfers",
@@ -13690,7 +13691,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const threadId = stored.event.threadId;
       const run = stored.event.payload;
       // A completed turn persists as waiting until its checkpoint capture lands. Only a
-      // workflow member's result is taken then (see settledWorkflowMemberRun).
+      // workflow member's result is taken then (see workflowMemberResultRun).
       if (
         run.status === "waiting" &&
         !(yield* projectionStore.getThread(threadId).pipe(

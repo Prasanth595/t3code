@@ -1,4 +1,5 @@
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 // @effect-diagnostics nodeBuiltinImport:off -- tests write the declared files an agent would.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -60,6 +61,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -73,6 +75,7 @@ import {
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -150,14 +153,22 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const makeLayerTest = (
   maxRunningDelegatedTasks?: number,
   providers: ReadonlyArray<ServerProvider> = [provider, claudeProvider],
+  runtime?: {
+    readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
+    readonly cwd: string;
+  },
 ) => {
-  const layerAdapters = ProviderAdapterRegistry.layerFromAdapters([adapter, claudeAdapter]);
+  const layerAdapters = ProviderAdapterRegistry.layerFromAdapters([
+    runtime?.adapter ?? adapter,
+    claudeAdapter,
+  ]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "delegate-tasks" },
     layerAdapters,
     {
       databaseLayer: layerDatabase,
-      runEffectWorker: false,
+      runEffectWorker: runtime !== undefined,
+      configureMcp: runtime !== undefined,
       serverSettings: { workflows: true },
       ...(maxRunningDelegatedTasks === undefined ? {} : { maxRunningDelegatedTasks }),
     },
@@ -213,7 +224,7 @@ const makeLayerTest = (
             id: projectId,
             title: "Delegate tasks",
             // A real directory, so process checks have somewhere to run.
-            workspaceRoot: process.cwd(),
+            workspaceRoot: runtime?.cwd ?? process.cwd(),
           } as never),
       }),
     ),
@@ -273,7 +284,11 @@ const invoke = (name: string, args: Record<string, unknown>) =>
 const errorText = (result: McpSchema.CallToolResult) =>
   result.content.map((part) => ("text" in part ? part.text : "")).join("");
 
-const startParentWithSelection = (selection: ModelSelection, text = "Fan out work.") =>
+const startParentWithSelection = (
+  selection: ModelSelection,
+  text = "Fan out work.",
+  worktreePath: string | null = null,
+) =>
   Effect.gen(function* () {
     yield* (yield* McpProviderSessions.McpProviderSessions).set({
       environmentId: invocation.environmentId,
@@ -298,7 +313,7 @@ const startParentWithSelection = (selection: ModelSelection, text = "Fan out wor
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: null,
+      worktreePath,
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
@@ -3405,95 +3420,364 @@ describe("workflow checks", () => {
       ),
   );
 
-  it.effect.each(["background", "child", "request"] as const)(
-    "holds a waiting workflow member result while %s work is pending",
-    (kind) =>
+  it.effect("holds a checkpoint-completed workflow member result until its request resolves", () =>
+    Effect.scoped(
       Effect.gen(function* () {
-        yield* startParent;
-        const started = yield* startWorkflow('return await agent("summarize the notes")');
-        const member = yield* awaitMember(started.workflowId, 1);
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const childId = member.childThreadId!;
-        const child = yield* orchestrator.getThreadProjection(childId);
-        const run = child.runs.at(-1)!;
-        const now = yield* DateTime.now;
-        for (const pending of [true, false]) {
-          const scope = {
-            id: EventId.make(`event:member-blocker:${kind}:${pending}`),
-            threadId: childId,
-            runId: run.id,
-            occurredAt: now,
-          };
-          const event: OrchestrationV2DomainEvent =
-            kind === "background"
-              ? {
-                  ...scope,
-                  type: "provider-thread.updated",
-                  payload: {
-                    id: ProviderThreadId.make("provider-thread:member-blocker"),
-                    driver: ProviderDriverKind.make("codex"),
+        const cwd = yield* checkpointWorkspace("workflow-member-pending-request");
+        const started = yield* Queue.unbounded<{
+          readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
+          readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
+        }>();
+        const runtimeAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+          ...adapter,
+          openSession: (input) =>
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+              return {
+                instanceId,
+                driver: adapter.driver,
+                providerSessionId: input.providerSessionId,
+                providerSession: {
+                  id: input.providerSessionId,
+                  driver: adapter.driver,
+                  providerInstanceId: instanceId,
+                  status: "ready",
+                  cwd,
+                  model,
+                  capabilities: CodexProviderCapabilitiesV2,
+                  createdAt: now,
+                  updatedAt: now,
+                  lastError: null,
+                },
+                events: Stream.fromQueue(events),
+                ensureThread: ({ threadId }) =>
+                  Effect.succeed({
+                    id: ProviderThreadId.make(`provider-thread:${threadId}`),
+                    driver: adapter.driver,
                     providerInstanceId: instanceId,
-                    providerSessionId: null,
-                    appThreadId: childId,
+                    providerSessionId: input.providerSessionId,
+                    appThreadId: threadId,
                     ownerNodeId: null,
-                    nativeThreadRef: null,
+                    nativeThreadRef: {
+                      driver: adapter.driver,
+                      nativeId: threadId,
+                      strength: "strong",
+                    },
                     nativeConversationHeadRef: null,
                     status: "idle",
                     firstRunOrdinal: null,
                     lastRunOrdinal: null,
                     handoffIds: [],
                     forkedFrom: null,
-                    pendingBackgroundTasks: pending
-                      ? [{ taskId: "background", kind: "command" }]
-                      : [],
                     createdAt: now,
                     updatedAt: now,
+                  }),
+                resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+                startTurn: (turn) =>
+                  Effect.gen(function* () {
+                    yield* Queue.offer(events, {
+                      type: "provider_turn.updated",
+                      driver: adapter.driver,
+                      providerTurn: {
+                        id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                        providerThreadId: turn.providerThread.id,
+                        nodeId: turn.rootNodeId,
+                        runAttemptId: turn.attemptId,
+                        nativeTurnRef: null,
+                        ordinal: turn.providerTurnOrdinal,
+                        status: "running",
+                        startedAt: now,
+                        completedAt: null,
+                      },
+                    });
+                    yield* Queue.offer(started, { turn, events });
+                  }),
+                steerTurn: () => Effect.void,
+                interruptTurn: () => Effect.void,
+                respondToRuntimeRequest: () => Effect.void,
+                readThreadSnapshot: () => Effect.die("unused"),
+                rollbackThread: () => Effect.die("unused"),
+                forkThread: ({ sourceProviderThread, targetThreadId }) =>
+                  Effect.succeed({
+                    ...sourceProviderThread,
+                    id: ProviderThreadId.make(`provider-thread:${targetThreadId}`),
+                    providerSessionId: input.providerSessionId,
+                    appThreadId: targetThreadId,
+                    nativeThreadRef: {
+                      driver: adapter.driver,
+                      nativeId: targetThreadId,
+                      strength: "strong",
+                    },
+                  }),
+              };
+            }),
+        };
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* startParentWithSelection(modelSelection, "Fan out work.", cwd);
+          yield* worker.drain();
+          const { turn: parentTurn } = yield* Queue.take(started);
+          const workflowId = NodeId.make("workflow:checkpoint-member");
+          yield* orchestrator.dispatch({
+            type: "workflow.start",
+            commandId: CommandId.make("command:checkpoint-workflow"),
+            createdBy: "agent",
+            creationSource: "mcp",
+            threadId: parentThreadId,
+            runId: parentTurn.runId,
+            workflowId,
+            title: "Test workflow",
+            script: 'return await agent("summarize the notes")',
+          });
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("command:checkpoint-member"),
+            createdBy: "agent",
+            creationSource: "mcp",
+            parentThreadId,
+            parentRunId: parentTurn.runId,
+            parentNodeId: workflowId,
+            workflowId,
+            task: "summarize the notes",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "settled_only",
+          });
+          const member = yield* awaitMember(workflowId, 1);
+          yield* worker.drain();
+          const { turn, events } = yield* Queue.take(started);
+          const childId = member.childThreadId!;
+          const now = yield* DateTime.now;
+          const providerTurnId = ProviderTurnId.make(`provider-turn:${turn.attemptId}`);
+          const request = {
+            id: RuntimeRequestId.make("request:checkpoint-member"),
+            nodeId: turn.rootNodeId,
+            providerTurnId,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: now,
+            resolvedAt: null,
+          };
+          yield* Queue.offer(events, {
+            type: "runtime_request.updated",
+            driver: adapter.driver,
+            threadId: childId,
+            runtimeRequest: request,
+          });
+          yield* Queue.offer(events, {
+            type: "turn_item.updated",
+            driver: adapter.driver,
+            turnItem: {
+              id: TurnItemId.make("item:checkpoint-member-result"),
+              threadId: childId,
+              runId: turn.runId,
+              nodeId: turn.rootNodeId,
+              providerThreadId: turn.providerThread.id,
+              providerTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make("message:checkpoint-member-result"),
+              text: "the notes say hello",
+              streaming: false,
+            },
+          });
+          yield* Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver: adapter.driver,
+            providerTurn: {
+              id: providerTurnId,
+              providerThreadId: turn.providerThread.id,
+              nodeId: turn.rootNodeId,
+              runAttemptId: turn.attemptId,
+              nativeTurnRef: null,
+              ordinal: turn.providerTurnOrdinal,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver: adapter.driver,
+            providerThreadId: turn.providerThread.id,
+            providerTurnId,
+            runOrdinal: turn.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* orchestrator.streamStoredEventsFrom({ threadId: childId, afterSequence: 0 }).pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.id === turn.runId &&
+                event.payload.status === "waiting",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          yield* orchestrator.streamStoredEventsFrom({ threadId: childId, afterSequence: 0 }).pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.id === turn.runId &&
+                event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          const child = yield* orchestrator.getThreadProjection(childId);
+          expect(child.runs.find((run) => run.id === turn.runId)?.status).toBe("completed");
+          expect(child.runs.find((run) => run.id === turn.runId)?.checkpointId).not.toBeNull();
+          expect(child.runtimeRequests.find((entry) => entry.id === request.id)?.status).toBe(
+            "pending",
+          );
+          // Serialize with the finalizer after the real checkpoint effect has completed.
+          yield* orchestrator.recoverDelegatedTask(childId, turn.runId);
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(parent.subagents.find((task) => task.id === member.id)?.result).toBeNull();
+
+          const sink = yield* EventSink.EventSinkV2;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("event:checkpoint-member-request-resolved"),
+                type: "runtime-request.updated",
+                threadId: childId,
+                runId: turn.runId,
+                occurredAt: now,
+                payload: { ...request, status: "resolved", resolvedAt: now },
+              },
+            ],
+          });
+          const published = yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: parentThreadId,
+              afterSequence: 0,
+            })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "subagent.updated" &&
+                  event.payload.id === member.id &&
+                  event.payload.result !== null,
+              ),
+              Stream.map(({ event }) => event.payload),
+              Stream.runHead,
+            );
+          expect(Option.getOrThrow(published)).toMatchObject({
+            status: "completed",
+            result: "the notes say hello",
+          });
+        }).pipe(
+          Effect.provide(makeLayerTest(undefined, undefined, { adapter: runtimeAdapter, cwd })),
+        );
+      }),
+    ),
+  );
+
+  it.effect.each(
+    (["background", "child", "request"] as const).flatMap((kind) =>
+      (["waiting", "completed"] as const).map((status) => ({ kind, status })),
+    ),
+  )("holds a $status workflow member result while $kind work is pending", ({ kind, status }) =>
+    Effect.gen(function* () {
+      yield* startParent;
+      const started = yield* startWorkflow('return await agent("summarize the notes")');
+      const member = yield* awaitMember(started.workflowId, 1);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const childId = member.childThreadId!;
+      const child = yield* orchestrator.getThreadProjection(childId);
+      const run = child.runs.at(-1)!;
+      const now = yield* DateTime.now;
+      for (const pending of [true, false]) {
+        const scope = {
+          id: EventId.make(`event:member-blocker:${kind}:${pending}`),
+          threadId: childId,
+          runId: run.id,
+          occurredAt: now,
+        };
+        const event: OrchestrationV2DomainEvent =
+          kind === "background"
+            ? {
+                ...scope,
+                type: "provider-thread.updated",
+                payload: {
+                  id: ProviderThreadId.make("provider-thread:member-blocker"),
+                  driver: ProviderDriverKind.make("codex"),
+                  providerInstanceId: instanceId,
+                  providerSessionId: null,
+                  appThreadId: childId,
+                  ownerNodeId: null,
+                  nativeThreadRef: null,
+                  nativeConversationHeadRef: null,
+                  status: "idle",
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  pendingBackgroundTasks: pending
+                    ? [{ taskId: "background", kind: "command" }]
+                    : [],
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              }
+            : kind === "child"
+              ? {
+                  ...scope,
+                  type: "subagent.updated",
+                  payload: {
+                    ...member,
+                    id: NodeId.make("subagent:member-blocker"),
+                    threadId: childId,
+                    runId: run.id,
+                    parentNodeId: run.rootNodeId!,
+                    childThreadId: null,
+                    origin: "provider_native",
+                    status: pending ? "running" : "completed",
+                    result: pending ? null : "child finished",
                   },
                 }
-              : kind === "child"
-                ? {
-                    ...scope,
-                    type: "subagent.updated",
-                    payload: {
-                      ...member,
-                      id: NodeId.make("subagent:member-blocker"),
-                      threadId: childId,
-                      runId: run.id,
-                      parentNodeId: run.rootNodeId!,
-                      childThreadId: null,
-                      origin: "provider_native",
-                      status: pending ? "running" : "completed",
-                      result: pending ? null : "child finished",
-                    },
-                  }
-                : {
-                    ...scope,
-                    type: "runtime-request.updated",
-                    payload: {
-                      id: RuntimeRequestId.make("request:member-blocker"),
-                      nodeId: run.rootNodeId!,
-                      providerTurnId: null,
-                      nativeRequestRef: null,
-                      kind: "user_input",
-                      status: pending ? "pending" : "resolved",
-                      responseCapability: { type: "not_resumable", reason: "test" },
-                      createdAt: now,
-                      resolvedAt: pending ? null : now,
-                    },
-                  };
-          yield* sink.write({ events: [event] });
-          if (pending) yield* completeChild(childId, "the notes say hello", { status: "waiting" });
-          if (pending) {
-            yield* orchestrator.recoverDelegatedTask(childId, run.id);
-            const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-            expect(parent.subagents.find((task) => task.id === member.id)?.result).toBeNull();
-          }
+              : {
+                  ...scope,
+                  type: "runtime-request.updated",
+                  payload: {
+                    id: RuntimeRequestId.make("request:member-blocker"),
+                    nodeId: run.rootNodeId!,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: pending ? "pending" : "resolved",
+                    responseCapability: { type: "not_resumable", reason: "test" },
+                    createdAt: now,
+                    resolvedAt: pending ? null : now,
+                  },
+                };
+        yield* sink.write({ events: [event] });
+        if (pending) yield* completeChild(childId, "the notes say hello", { status });
+        if (pending) {
+          yield* orchestrator.recoverDelegatedTask(childId, run.id);
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(parent.subagents.find((task) => task.id === member.id)?.result).toBeNull();
         }
-        const ended = yield* awaitWorkflowEnd(started.workflowId);
-        expect(ended.status).toBe("completed");
-        expect(JSON.parse(ended.result!)).toBe("the notes say hello");
-      }).pipe(Effect.provide(layerTest)),
+      }
+      const ended = yield* awaitWorkflowEnd(started.workflowId);
+      expect(ended.status).toBe("completed");
+      expect(JSON.parse(ended.result!)).toBe("the notes say hello");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(
