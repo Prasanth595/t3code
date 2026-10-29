@@ -185,7 +185,7 @@ export interface AcpAdapterV2ExtensionContext {
     readonly output?: string;
     readonly report?: BackgroundWork;
   }) => Effect.Effect<void>;
-  /** For compactions reported outside ACP `compaction_update`; ignores non-root sessions. */
+  /** For compactions reported outside ACP `compaction_update`. */
   readonly markSessionCompacted: (sessionId: string) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
@@ -1599,11 +1599,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
-        // The next prompt in a compacted root session resends T3's instructions and runtime notes.
+        // ACP may patch a completed compaction again; each compaction id marks its session once.
+        const completedCompactionIds = yield* Ref.make(new Set<string>());
+        // The next prompt in a compacted session resends T3's instructions and runtime notes.
+        // Only root sessions get prompts, so a marker on a child session is never read.
         const markSessionCompacted = Effect.fn("AcpAdapterV2.markSessionCompacted")(function* (
           sessionId: string,
+          compactionId?: string,
         ) {
-          if (sessionId !== (yield* Ref.get(activeSessionId))) return;
+          if (compactionId !== undefined) {
+            const key = `${sessionId}\u0000${compactionId}`;
+            const alreadyMarked = yield* Ref.modify(
+              completedCompactionIds,
+              (current): [boolean, Set<string>] =>
+                current.has(key) ? [true, current] : [false, new Set(current).add(key)],
+            );
+            if (alreadyMarked) return;
+          }
           yield* Ref.update(compactionMarkers, (current) =>
             new Map(current).set(sessionId, Symbol()),
           );
@@ -3681,7 +3693,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 updated.delete(context.nativeThreadId);
                 return updated;
               });
-              yield* markSessionCompacted(context.nativeThreadId);
+              yield* markSessionCompacted(
+                context.nativeThreadId,
+                toolCall.toolCallId.slice("acp-compaction:".length),
+              );
             }
           } else if (mcpIdentity !== undefined) {
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
@@ -5839,7 +5854,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 normalized.update.sessionUpdate === "compaction_update" &&
                 normalized.update.status === "completed"
               ) {
-                yield* markSessionCompacted(normalized.sessionId);
+                yield* markSessionCompacted(normalized.sessionId, normalized.update.compactionId);
               }
               yield* handleSessionUpdate(normalized);
             },
@@ -6595,6 +6610,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
+            yield* Ref.set(completedCompactionIds, new Set());
             yield* Ref.set(providerTurns, new Map());
             yield* Ref.set(snapshot, {
               order: [],

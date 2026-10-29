@@ -1109,6 +1109,14 @@ describe("AcpAdapterV2", () => {
           yield* runTurn("Continue after idle compaction."),
           "Continue after idle compaction.",
         );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-idle",
+          status: "completed",
+        });
+        assert.deepEqual(yield* runTurn("Continue after a repeated compaction update."), [
+          { type: "text", text: "Continue after a repeated compaction update." },
+        ]);
         const copilotCompaction = { success: true, outcome: "applied", trigger: "threshold" };
         yield* idleCopilotSessionEvent({
           type: "session.compaction_complete",
