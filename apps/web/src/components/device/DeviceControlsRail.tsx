@@ -52,7 +52,7 @@ export function DeviceControlsRail(props: {
   const popupSide = "left";
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
-  const supportsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
@@ -87,7 +87,7 @@ export function DeviceControlsRail(props: {
             >
               <Square />
             </RailButton>
-            {supportsHostCommands ? (
+            {runsHostCommands ? (
               <Menu>
                 <MenuTrigger
                   render={
@@ -128,7 +128,7 @@ export function DeviceControlsRail(props: {
             <RotateCcw />
           </RailButton>
         )}
-        {supportsHostCommands ? (
+        {runsHostCommands ? (
           <>
             <RailDivider />
             <RailButton

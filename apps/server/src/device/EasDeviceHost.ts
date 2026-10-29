@@ -42,10 +42,33 @@ const STATUS_TTL_MS = 15_000;
 // Expo's own CLI waits this long once a worker picks the session up.
 const START_TIMEOUT = Duration.minutes(15);
 const PREVIEW_TIMEOUT = Duration.seconds(20);
+const decodeServeSimApi = Schema.decodeUnknownEffect(
+  Schema.Struct({ device: Schema.NonEmptyString }),
+);
+const decodeServeEmuApi = Schema.decodeUnknownEffect(
+  Schema.Struct({ serial: Schema.NonEmptyString }),
+);
+/**
+ * Each session's preview host serves serve-sim at its root and serve-emu under
+ * its vendor prefix, and names its device by an id of its own that agent-device
+ * also selects it by.
+ */
 const PLATFORMS = {
-  ios: { prefix: "/vendor/serve-sim", name: "iPhone (EAS Simulator)" },
-  android: { prefix: "/vendor/serve-emu", name: "Android (EAS Simulator)" },
-};
+  ios: {
+    name: "iPhone (EAS Simulator)",
+    hubPrefix: "/vendor/serve-sim",
+    previewPrefix: "",
+    protocol: "serve-sim",
+    remoteDeviceId: (api: unknown) => decodeServeSimApi(api).pipe(Effect.map((api) => api.device)),
+  },
+  android: {
+    name: "Android (EAS Simulator)",
+    hubPrefix: "/vendor/serve-emu",
+    previewPrefix: "/vendor/serve-emu",
+    protocol: "serve-emu",
+    remoteDeviceId: (api: unknown) => decodeServeEmuApi(api).pipe(Effect.map((api) => api.serial)),
+  },
+} as const;
 
 /** EAS picks the simulator model; one entry starts a session. */
 const CATALOG: ReadonlyArray<DeviceHost.HostDevice> = [
@@ -106,11 +129,6 @@ const RECORD_MAX_AGE_MS = 24 * 60 * 60_000;
 const UNCERTAIN_CREATE_MS = 5 * 60_000;
 // One failed request to Expo during a minutes-long start does not end the start.
 const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
-const remoteDeviceId = Schema.String.check(Schema.isMinLength(1));
-const decodeIosPreviewApi = Schema.decodeUnknownEffect(Schema.Struct({ device: remoteDeviceId }));
-const decodeAndroidPreviewApi = Schema.decodeUnknownEffect(
-  Schema.Struct({ serial: remoteDeviceId }),
-);
 
 /** A malformed escape names no device, so the proxy answers 404 instead of failing. */
 const decodePathSegment = (segment: string): string | null => {
@@ -132,7 +150,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   const hostId = config.id;
   const ledgerPath = path.join(server.stateDir, "device", "eas", `${hostId}.json`);
   // Keyed by Expo's session id, which is also the device id: every EAS
-  // device can report the same remote ID, so it cannot tell sessions apart.
+  // simulator reports the same remote device id, so that id cannot tell sessions apart.
   const sessions = new Map<string, RunningSession>();
   const checkedAt = new Map<string, number>();
   const startLock = yield* Semaphore.make(1);
@@ -371,18 +389,14 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   ) =>
     http
       .execute(
-        HttpClientRequest.get(
-          `${origin}${platform === "android" ? PLATFORMS.android.prefix : ""}/api`,
-        ).pipe(HttpClientRequest.bearerToken(Redacted.value(token))),
+        HttpClientRequest.get(`${origin}${PLATFORMS[platform].previewPrefix}/api`).pipe(
+          HttpClientRequest.bearerToken(Redacted.value(token)),
+        ),
       )
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap((response) => response.json),
-        Effect.flatMap((body) =>
-          platform === "ios"
-            ? decodeIosPreviewApi(body).pipe(Effect.map((api) => api.device))
-            : decodeAndroidPreviewApi(body).pipe(Effect.map((api) => api.serial)),
-        ),
+        Effect.flatMap(PLATFORMS[platform].remoteDeviceId),
         Effect.scoped,
         Effect.timeout(PREVIEW_TIMEOUT),
         Effect.retry(TRANSIENT_RETRY),
@@ -735,7 +749,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
           http
             .execute(
               HttpClientRequest.post(
-                `${session.preview.origin}${session.platform === "android" ? PLATFORMS.android.prefix : ""}/api/screenshot?device=${encodeURIComponent(session.remoteDeviceId)}`,
+                `${session.preview.origin}${PLATFORMS[session.platform].previewPrefix}/api/screenshot?device=${encodeURIComponent(session.remoteDeviceId)}`,
               ).pipe(HttpClientRequest.bearerToken(Redacted.value(session.preview.token))),
             )
             .pipe(
@@ -763,38 +777,31 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     endsDevices: true,
   };
 
+  /**
+   * Clients name the device by its session id; the preview host knows it by its
+   * own id, so the session id is swapped for that in the path and in the
+   * `device` parameter. A session answers only on its own platform's server.
+   */
   const upstream: NonNullable<DeviceHost.DeviceHostReady["upstream"]> = (hubPath, search) =>
     Effect.sync(() => {
-      const platform = hubPath.startsWith(`${PLATFORMS.ios.prefix}/`)
-        ? "ios"
-        : hubPath.startsWith(`${PLATFORMS.android.prefix}/`)
-          ? "android"
-          : null;
+      const platform = (["ios", "android"] as const).find((candidate) =>
+        hubPath.startsWith(`${PLATFORMS[candidate].hubPrefix}/`),
+      );
       if (!platform) return null;
       const helper = /^\/vendor\/serve-sim\/helper\/([^/]+)\//.exec(hubPath);
-      const pathDevice = helper ? decodePathSegment(helper[1]!) : null;
-      if (helper && pathDevice === null) return null;
-      const queryDevices = search.getAll("device");
-      const queryDevice = queryDevices[0];
-      if (
-        queryDevices.some((id) => id !== queryDevice) ||
-        (pathDevice !== null && queryDevice !== undefined && pathDevice !== queryDevice)
-      )
-        return null;
-      const deviceId = pathDevice ?? queryDevice;
-      const compatible = [...sessions.values()].filter((session) => session.platform === platform);
+      const deviceId = helper ? decodePathSegment(helper[1]!) : search.get("device");
+      if (helper && deviceId === null) return null;
       const session =
-        deviceId !== undefined
+        deviceId !== null
           ? sessions.get(deviceId)
-          : platform === "ios" && compatible.length === 1
-            ? compatible[0]
+          : sessions.size === 1
+            ? [...sessions.values()][0]
             : undefined;
-      if (!session || session.platform !== platform) return null;
+      if (session?.platform !== platform) return null;
+      const { hubPrefix, previewPrefix, protocol } = PLATFORMS[platform];
       const path = helper
         ? `/helper/${encodeURIComponent(session.remoteDeviceId)}${hubPath.slice(helper[0].length - 1)}`
-        : platform === "ios"
-          ? hubPath.slice(PLATFORMS.ios.prefix.length)
-          : hubPath;
+        : `${previewPrefix}${hubPath.slice(hubPrefix.length)}`;
       const params = new URLSearchParams(search);
       if (params.has("device")) params.set("device", session.remoteDeviceId);
       const query = params.size > 0 ? `?${params.toString()}` : "";
@@ -802,7 +809,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
       return {
         url: `${session.preview.origin}${path}${query}`,
         headers: { authorization: `Bearer ${token}` },
-        protocols: [`${platform === "ios" ? "serve-sim" : "serve-emu"}.token.${token}`],
+        protocols: [`${protocol}.token.${token}`],
       };
     });
 
