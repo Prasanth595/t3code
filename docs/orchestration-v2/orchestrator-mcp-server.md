@@ -540,7 +540,7 @@ These follow the `omx graph` execution graph's protected verifiers
 
 #### Ultracode
 
-The `ultracode` server setting (also a project override; Settings, General) asks agents
+The `ultracode` server setting (also a project override; Settings, Threads) asks agents
 to orchestrate substantive work as a workflow. `keyword`, the default, opts in a turn
 whose message contains the word ultracode; `always` opts in every user or agent turn;
 `off` never does. System turns, such as completion wakes, are never opted in. An opted-in
