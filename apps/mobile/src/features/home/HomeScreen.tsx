@@ -316,9 +316,14 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
   const restoredOffset = workspace?.state.tabs.threads.scrollOffset;
+  // Only a return from search restores. On mount, UIKit already rests the list
+  // below the header, and a scroll here would use an unmeasured header inset.
+  const previousSearchMode = useRef(searchMode);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the thread list's saved scroll offset through the list ref when search goes back to resting
   useEffect(() => {
-    if (searchMode !== "resting" || restoredOffset === undefined) return;
+    const restoringSearch = previousSearchMode.current !== "resting" && searchMode === "resting";
+    previousSearchMode.current = searchMode;
+    if (!restoringSearch || restoredOffset === undefined) return;
     listRef.current?.scrollToOffset({
       offset: restoredOffset - (Platform.OS === "ios" ? insets.top : 0),
       animated: false,
@@ -813,6 +818,8 @@ export function HomeScreen(props: HomeScreenProps) {
               // the list in the same frame as the bar.
               contentInsetAdjustmentBehavior="automatic"
               contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+              // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
+              scrollToOverflowEnabled
               initialScrollOffset={
                 initialScrollOffset > 0
                   ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
