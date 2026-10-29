@@ -31,7 +31,7 @@ export const make = (tracer: Tracer.Tracer, heapUsed: () => number = readHeapUse
       Tracer.Span,
       { readonly name: string; readonly startHeap: number; readonly startTick: number }
     >();
-    const recent: Array<Growth> = [];
+    const recent: Array<Growth & { readonly endTick: number }> = [];
     const samples: Array<number> = [];
     let cooldown = 0;
     let tick = 0;
@@ -48,7 +48,7 @@ export const make = (tracer: Tracer.Tracer, heapUsed: () => number = readHeapUse
           const growthBytes = heapUsed() - startHeap;
           if (growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES) {
             span.attribute("memory.heap_growth_bytes", growthBytes);
-            recent.push({ name: options.name, growthBytes });
+            recent.push({ name: options.name, growthBytes, endTick: tick });
             if (recent.length > RECENT_SPANS) recent.shift();
           }
           end(endTime, exit);
@@ -75,7 +75,7 @@ export const make = (tracer: Tracer.Tracer, heapUsed: () => number = readHeapUse
         ...[...open.values()]
           .filter(({ startTick }) => tick - startTick <= samples.length)
           .map(({ name, startHeap }) => ({ name, growthBytes: heap - startHeap })),
-        ...recent,
+        ...recent.filter(({ endTick }) => tick - endTick <= samples.length),
       ]
         .filter((suspect) => suspect.growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES)
         .toSorted((left, right) => right.growthBytes - left.growthBytes)

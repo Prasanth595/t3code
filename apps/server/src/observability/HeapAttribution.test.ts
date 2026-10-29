@@ -9,7 +9,7 @@ import * as HeapAttribution from "./HeapAttribution.ts";
 
 const MB = 1024 * 1024;
 
-it.effect("names the span that grew the heap in a spike, not an older open one", () =>
+it.effect("names the span that grew the heap in a spike, not an older open or ended one", () =>
   Effect.gen(function* () {
     const ended: Array<Tracer.NativeSpan> = [];
     const inner = Tracer.make({
@@ -41,10 +41,12 @@ it.effect("names the span that grew the heap in a spike, not an older open one",
       });
 
     const subscription = open("ws.rpc.orchestration.subscribeShell");
+    const old = open("ProjectionStore.getSnapshot");
     // Slow drift never spikes, but leaves the long-lived span far above its start.
     for (let step = 0; step < 5; step++) {
       heap += 80 * MB;
       yield* TestClock.adjust("11 seconds");
+      if (step === 1) old.end(1n, undefined as never);
     }
     const small = open("ProjectionStore.getThreadShell");
     const big = open("ProjectionStore.getThreadProjection");
@@ -62,5 +64,6 @@ it.effect("names the span that grew the heap in a spike, not an older open one",
     subscription.end(3n, undefined as never);
     assert.equal(big.attributes.get("memory.heap_growth_bytes"), 200 * MB);
     assert.isUndefined(small.attributes.get("memory.heap_growth_bytes"));
+    assert.equal(old.attributes.get("memory.heap_growth_bytes"), 160 * MB);
   }),
 );
