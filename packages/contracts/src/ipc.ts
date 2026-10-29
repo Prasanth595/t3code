@@ -290,6 +290,10 @@ export interface DesktopUpdateReleaseNote {
   totalItems: number;
   /** ISO time the update feed reports for this version. Only the offered version has one. */
   releasedAt?: string;
+  /** Generated summaries only: the highlights paragraph. `items` then holds the fixes. */
+  intro?: string;
+  /** Generated summaries only, for example "275 changes from 22 contributors". */
+  stats?: string;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
@@ -297,6 +301,8 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
   releasedAt: Schema.optionalKey(Schema.String),
+  intro: Schema.optionalKey(Schema.String),
+  stats: Schema.optionalKey(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({

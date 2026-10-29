@@ -93,17 +93,49 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
 interface ExtractedReleaseNoteItems {
   readonly items: ReadonlyArray<string>;
   readonly totalItems: number;
+  readonly intro?: string;
+  readonly stats?: string;
+}
+
+/**
+ * Reads a generated summary (`scripts/generate-release-notes.ts`): a `v1.2.3 · N changes…`
+ * header, a highlights paragraph, and fix bullets. PR numbers are left to the GitHub page.
+ */
+function extractReleaseNoteSummary(summary: string): ExtractedReleaseNoteItems {
+  let stats: string | undefined;
+  const intro: string[] = [];
+  const items: string[] = [];
+  for (const rawLine of stripMarkup(summary).split("\n")) {
+    const line = rawLine.trim().replace(/\s+/g, " ");
+    if (line === "" || /^#{1,6}\s+/.test(line)) continue;
+    if (stats === undefined && /^v\S+ · /.test(line)) {
+      stats = line.slice(line.indexOf(" · ") + 3);
+      continue;
+    }
+    const text = line
+      .replace(/^[-*]\s+/, "")
+      .replace(/\s*\((?:#\d+(?:,\s*)?)+\)\.?$/, "")
+      .trim();
+    if (/^[-*]\s+/.test(line)) items.push(text);
+    else intro.push(text);
+  }
+  return {
+    items,
+    totalItems: items.length + intro.length,
+    ...(intro.length > 0 ? { intro: intro.join(" ") } : {}),
+    ...(stats ? { stats } : {}),
+  };
 }
 
 function extractReleaseNoteItems(note: string | null | undefined): ExtractedReleaseNoteItems {
   if (!note) return { items: [], totalItems: 0 };
 
-  // Generated summaries fold GitHub's full list under <details>; show the summary in order.
+  // Generated summaries fold GitHub's full list under <details>.
   const summaryEnd = note.search(/<details\b/i);
-  const isSummary = summaryEnd >= 0;
+  if (summaryEnd >= 0) return extractReleaseNoteSummary(note.slice(0, summaryEnd));
   const items: string[] = [];
   let totalItems = 0;
-  for (const rawLine of stripMarkup(isSummary ? note.slice(0, summaryEnd) : note).split("\n")) {
+  for (const rawLine of stripMarkup(note).split("\n")) {
     const item = rawLine
       .trim()
       .replace(/^[-*]\s+/, "")
@@ -114,15 +146,10 @@ function extractReleaseNoteItems(note: string | null | undefined): ExtractedRele
     if (/^#{1,6}\s+/.test(item)) continue;
     if (isIgnoredReleaseNoteLine(item)) continue;
     totalItems += 1;
-    // A summary is already short; cutting it would drop the highlights mid-sentence.
-    if (isSummary) {
-      items.push(item);
-      continue;
-    }
     items.push(truncateReleaseNoteItem(item));
     if (items.length > MAX_RELEASE_NOTE_ITEMS_PER_GROUP) items.shift();
   }
-  return { items: isSummary ? items : items.toReversed(), totalItems };
+  return { items: items.toReversed(), totalItems };
 }
 
 interface NormalizedDesktopUpdateReleaseNotes {
@@ -146,13 +173,15 @@ export function normalizeDesktopUpdateReleaseNotes(
   ).filter((entry) => desktopUpdateChannelOf(entry.version) === channel);
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
-    const { items, totalItems } = extractReleaseNoteItems(entry.note);
+    const { items, totalItems, intro, stats } = extractReleaseNoteItems(entry.note);
     if (totalItems === 0) return [];
     return [
       {
         version: entry.version,
         items,
         totalItems,
+        ...(intro ? { intro } : {}),
+        ...(stats ? { stats } : {}),
         ...(releaseDate && entry.version === fallbackVersion ? { releasedAt: releaseDate } : {}),
       },
     ];

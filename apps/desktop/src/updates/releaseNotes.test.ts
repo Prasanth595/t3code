@@ -60,7 +60,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
-  it("shows a generated summary in order and skips the folded full list", () => {
+  it("reads a generated summary as a note and skips the folded full list", () => {
     const fixes = Array.from({ length: 9 }, (_, index) => `- Fix ${index + 1} (#${index + 1})`);
     const result = normalizeDesktopUpdateReleaseNotes(
       [
@@ -83,12 +83,10 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       {
         version: "1.2.4",
         releasedAt: "2026-10-29T10:00:00.000Z",
-        items: [
-          "v1.2.4 · 12 changes from 3 contributors",
-          "Link machines (beta).",
-          ...fixes.map((fix) => fix.slice(2)),
-        ],
-        totalItems: 11,
+        stats: "12 changes from 3 contributors",
+        intro: "Link machines (beta).",
+        items: fixes.map((_, index) => `Fix ${index + 1}`),
+        totalItems: 10,
       },
     ]);
   });

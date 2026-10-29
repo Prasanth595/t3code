@@ -89,6 +89,43 @@ export function SidebarUpdateReleaseNotes({
               ? "View release on GitHub"
               : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`;
 
+          if (releaseNote.intro !== undefined) {
+            return (
+              <div key={releaseNote.version}>
+                {index > 0 && <Separator className="my-3" />}
+                <section>
+                  {index > 0 ? (
+                    <h3 className="mb-1.5 text-foreground text-xs leading-4 font-semibold">
+                      {releaseNote.version}
+                    </h3>
+                  ) : null}
+                  <p className="break-words text-sm leading-6 text-popover-foreground">
+                    {releaseNote.intro}
+                  </p>
+                  {releaseNote.items.length > 0 ? (
+                    <>
+                      <h3 className="mt-3 text-foreground text-xs leading-4 font-semibold">
+                        Fixes
+                      </h3>
+                      <div className="mt-1 space-y-0.5 text-xs leading-5 text-popover-foreground/80">
+                        {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
+                          <p className="break-words" key={key}>
+                            {item}
+                          </p>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                  {releaseUrl ? (
+                    <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
+                      {releaseNote.stats ?? "View release on GitHub"}
+                    </ReleaseLink>
+                  ) : null}
+                </section>
+              </div>
+            );
+          }
+
           return (
             <div key={releaseNote.version}>
               {index > 0 && <Separator className="my-3" />}
