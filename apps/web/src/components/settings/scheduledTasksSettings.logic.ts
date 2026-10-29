@@ -11,7 +11,9 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { ULTRATHINK_PROMPT_PREFIX } from "@t3tools/client-runtime/model-traits";
 import {
+  DEFAULT_WEBHOOK_PROMPT,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
@@ -26,6 +28,21 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+
+const ULTRATHINK_PREFIX_PATTERN = /^\s*Ultrathink:\s*/i;
+
+/** The prompt the user wrote, without the Ultrathink prefix the reasoning picker adds. */
+export function promptBody(prompt: string): string {
+  return prompt.replace(ULTRATHINK_PREFIX_PATTERN, "").trim();
+}
+
+/** Fills a prompt with no body with the webhook default, and keeps a chosen Ultrathink prefix. */
+export function withDefaultWebhookPrompt(prompt: string): string {
+  if (promptBody(prompt)) return prompt;
+  return ULTRATHINK_PREFIX_PATTERN.test(prompt)
+    ? `${ULTRATHINK_PROMPT_PREFIX}${DEFAULT_WEBHOOK_PROMPT}`
+    : DEFAULT_WEBHOOK_PROMPT;
+}
 
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,

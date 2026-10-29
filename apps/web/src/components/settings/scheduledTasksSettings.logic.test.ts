@@ -16,11 +16,14 @@ import type {
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { DEFAULT_WEBHOOK_PROMPT } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
+  promptBody,
   scheduleFromDraft,
   taskToDraft,
+  withDefaultWebhookPrompt,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -332,4 +335,19 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("scheduled task prompt", () => {
+  it("does not count the Ultrathink prefix as a prompt", () => {
+    expect(promptBody("Ultrathink:\n")).toBe("");
+    expect(promptBody("Ultrathink:\nRun tests")).toBe("Run tests");
+  });
+
+  it("fills an empty webhook prompt and keeps the Ultrathink prefix", () => {
+    expect(withDefaultWebhookPrompt("  ")).toBe(DEFAULT_WEBHOOK_PROMPT);
+    expect(withDefaultWebhookPrompt("Ultrathink:\n")).toBe(
+      `Ultrathink:\n${DEFAULT_WEBHOOK_PROMPT}`,
+    );
+    expect(withDefaultWebhookPrompt("Run tests")).toBe("Run tests");
+  });
 });

@@ -24,7 +24,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
   parseWebhookFilterDrafts,
   removeWebhookFilterDraft,
@@ -79,8 +78,10 @@ import {
   webhookDeliveryLabel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  promptBody,
   scheduledTaskDefaultModel,
   taskToDraft,
+  withDefaultWebhookPrompt,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
@@ -255,7 +256,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   htmlFor?: string;
   children: ReactNode;
 }) {
@@ -1147,6 +1148,7 @@ function ScheduledTaskEditorForm({
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
       ? draftSelection
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const boundToThread = draft.threadId !== "";
   const activeEntry = instanceEntries.find(
     (entry) => entry.instanceId === activeSelection?.instanceId,
   );
@@ -1183,7 +1185,7 @@ function ScheduledTaskEditorForm({
     const selection = activeSelection;
     if (
       !draft.title.trim() ||
-      !draft.prompt.trim() ||
+      !promptBody(draft.prompt) ||
       !projects.some((project) => project.id === selectedProjectId) ||
       selection === null
     ) {
@@ -1452,11 +1454,12 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <Field label="Model">
+          {/* A run on a bound thread follows that thread's model and reasoning, so the stored choice has no effect. */}
+          <Field label="Model" hint={boundToThread ? "set by the bound thread" : undefined}>
             <div className="flex flex-wrap items-center gap-1.5">
               <ProviderModelPicker
                 environmentId={environmentId}
-                disabled={saving || !connected}
+                disabled={saving || !connected || boundToThread}
                 activeInstanceId={activeInstanceId}
                 model={activeModel}
                 lockedProvider={null}
@@ -1487,7 +1490,7 @@ function ScheduledTaskEditorForm({
                     setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
                   }
                   planModeEnabled={settings.planModeEnabled}
-                  disabled={saving || !connected}
+                  disabled={saving || !connected || boundToThread}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setDraft((current) => ({
@@ -1525,8 +1528,8 @@ function ScheduledTaskEditorForm({
                       ...current,
                       scheduleMode: mode,
                       prompt:
-                        mode === "webhook" && !current.prompt.trim()
-                          ? DEFAULT_WEBHOOK_PROMPT
+                        mode === "webhook"
+                          ? withDefaultWebhookPrompt(current.prompt)
                           : current.prompt,
                     }));
                 }}
