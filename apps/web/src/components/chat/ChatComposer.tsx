@@ -198,6 +198,7 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerRichTextToggle } from "./ComposerRichTextToggle";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -3429,7 +3430,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                {composerAttachButton || !isLiteralPendingAnswer ? (
+                  <div className="me-2 flex items-center gap-0.5">
+                    {composerAttachButton}
+                    {isLiteralPendingAnswer ? null : (
+                      <ComposerRichTextToggle richTextEnabled={settings.composerRichTextEnabled} />
+                    )}
+                  </div>
+                ) : null}
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
