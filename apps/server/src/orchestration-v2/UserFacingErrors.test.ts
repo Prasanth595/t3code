@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -8,7 +9,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
-import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
+import {
+  userFacingDatabaseErrorMessage,
+  userFacingDispatchErrorMessage,
+} from "./UserFacingErrors.ts";
 
 describe("userFacingDispatchErrorMessage", () => {
   it.effect("explains a real database open failure through dispatch and persistence wrappers", () =>
@@ -79,5 +83,36 @@ describe("userFacingDispatchErrorMessage", () => {
     assert.include(message, "server could not complete this database request");
     assert.include(message, "server logs");
     assert.notInclude(message, "private-query-data");
+  });
+});
+
+describe("userFacingDatabaseErrorMessage", () => {
+  it.each([
+    { errcode: 14, expected: "server could not open a database file (SQLITE_CANTOPEN)" },
+    { errcode: 13, expected: "database or disk is full (SQLITE_FULL)" },
+  ])("explains SQLite error $errcode behind event ingestion wrappers", ({ errcode, expected }) => {
+    const sqlError = new SqlError({
+      reason: classifySqliteError(Object.assign(new Error("private-driver-text"), { errcode })),
+    });
+    const message = userFacingDatabaseErrorMessage(
+      Cause.fail(
+        new Error("Failed to publish 1 normalized provider event(s).", {
+          cause: toPersistenceSqlError("OrchestrationEventStore.appendAgentEvents:insert")(
+            sqlError,
+          ),
+        }),
+      ),
+    );
+
+    assert.include(message, expected);
+    assert.notInclude(message, "private-driver-text");
+  });
+
+  it("ignores failures without a SQL error", () => {
+    assert.isUndefined(
+      userFacingDatabaseErrorMessage(
+        new Error("provider-text", { cause: Object.assign(new Error("nested"), { errcode: 14 }) }),
+      ),
+    );
   });
 });

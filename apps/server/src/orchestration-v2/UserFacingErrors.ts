@@ -1,4 +1,5 @@
 import { PROVIDER_DISPLAY_NAMES, type ProviderDriverKind } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Predicate from "effect/Predicate";
 import * as SqlError from "effect/sql/SqlError";
 
@@ -35,6 +36,23 @@ function databaseErrorMessage(value: unknown): string | undefined {
   }
 
   return "The T3 Code server could not complete this database request. Retry once; if it still fails, check the server logs for the database error.";
+}
+
+/** Curated text for the first SQL error in a cause chain; never the error's own text. */
+export function userFacingDatabaseErrorMessage(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let value = cause;
+  while (Predicate.isObject(value) && !seen.has(value)) {
+    seen.add(value);
+    if (Cause.isCause(value)) {
+      value = Cause.squash(value);
+      continue;
+    }
+    const message = databaseErrorMessage(value);
+    if (message !== undefined) return message;
+    value = value.cause;
+  }
+  return undefined;
 }
 
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
