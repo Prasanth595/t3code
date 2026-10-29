@@ -7052,7 +7052,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const now = yield* DateTime.now;
           if (
             flavor.supportsCompaction === true &&
-            context.input.message.text.trim() === "/compact" &&
+            // Some agents accept preservation instructions after the command.
+            /^\/compact(?:\s|$)/.test(context.input.message.text.trim()) &&
             context.input.message.attachments.length === 0 &&
             settledStatus === "completed"
           ) {

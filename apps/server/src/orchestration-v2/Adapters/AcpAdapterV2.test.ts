@@ -1249,6 +1249,14 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(yield* runTurn("/repro-skill"), [{ type: "text", text: "/repro-skill" }]);
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
         assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
+        // Agents such as Grok accept preservation instructions after the command.
+        assert.deepEqual(yield* runTurn("/compact keep the plan"), [
+          { type: "text", text: "/compact keep the plan" },
+        ]);
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the focused compact."),
+          "Continue after the focused compact.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
