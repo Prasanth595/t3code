@@ -113,6 +113,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
+    entryRelativePath: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -518,7 +519,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             version: 1 as const,
             kind: "workspace-file" as const,
             workspaceRoot: canonicalWorkspaceRoot,
+            // Workspace-relative URLs keep parent references beneath the signed token.
             baseRelativePath: ".",
+            entryRelativePath: resolved.relativePath,
             expiresAt: input.expiresAt,
           },
       fileName: /\.html?$/i.test(resolved.relativePath)
@@ -1026,6 +1029,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return exactWorkspaceFile
       ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
       : null;
+  }
+  // Only the explicitly selected entry may bypass hidden dependency filtering.
+  if (decodedPath === claims.entryRelativePath) {
+    const entryFile = yield* resolveCanonicalWorkspaceFileForRequest({
+      workspaceRoot: claims.workspaceRoot,
+      relativePath: claims.entryRelativePath,
+    });
+    return entryFile ? ({ kind: "file", path: entryFile } satisfies ResolvedAsset) : null;
   }
   const segments = decodedPath.split(/[\\/]/);
   if (

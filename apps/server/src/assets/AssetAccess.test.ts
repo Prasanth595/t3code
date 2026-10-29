@@ -999,6 +999,59 @@ describe("AssetAccess", () => {
           }
         }
       }
+      for (const entryPath of [".output/public/index.html", "site #1/.preview/.index.HTM"]) {
+        yield* fileSystem.makeDirectory(path.dirname(path.join(root, entryPath)), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(path.join(root, entryPath), "<p>hidden entry</p>");
+        const siblingPath = path.join(path.dirname(entryPath), "private.css");
+        yield* fileSystem.writeFileString(path.join(root, siblingPath), "private");
+        for (const resource of [
+          { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: entryPath },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: entryPath },
+        ]) {
+          const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const entryUrl = new URL(issued.relativeUrl, "http://preview.test");
+          const suffix = entryUrl.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const token = suffix.slice(0, suffix.indexOf("/"));
+          const requestPath = suffix.slice(suffix.indexOf("/") + 1);
+          expect(yield* resolveAsset(token, requestPath)).toEqual({
+            kind: "file",
+            path: yield* fileSystem.realPath(path.join(root, entryPath)),
+          });
+          for (const deniedPath of [
+            siblingPath,
+            ".hidden/private.css",
+            ".env",
+            `${path.dirname(entryPath)}/../private.css`,
+            "private.db",
+            "escape.css",
+          ]) {
+            expect(yield* resolveAsset(token, deniedPath)).toBeNull();
+          }
+          expect(yield* resolveAsset(`${token}tampered`, requestPath)).toBeNull();
+        }
+        if (symlinksSupported) {
+          const issued = yield* issueAssetUrl({
+            resource: { _tag: "draft-workspace-file", cwd: root, path: entryPath },
+            workspaceRoot: root,
+          });
+          const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const outside = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-entry-outside-",
+          });
+          const outsidePath = path.join(outside, "index.html");
+          yield* fileSystem.writeFileString(outsidePath, "outside");
+          yield* fileSystem.remove(path.join(root, entryPath));
+          yield* fileSystem.symlink(outsidePath, path.join(root, entryPath));
+          expect(
+            yield* resolveAsset(
+              suffix.slice(0, suffix.indexOf("/")),
+              suffix.slice(suffix.indexOf("/") + 1),
+            ),
+          ).toBeNull();
+        }
+      }
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
@@ -1083,7 +1136,7 @@ describe("AssetAccess", () => {
       const root = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-asset-image-workspace-",
       });
-      const assetsDirectory = path.join(root, "assets");
+      const assetsDirectory = path.join(root, ".assets");
       yield* fileSystem.makeDirectory(assetsDirectory, { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(assetsDirectory, "private.docx"),
@@ -1118,7 +1171,7 @@ describe("AssetAccess", () => {
         "sqlite3",
         "db",
       ]) {
-        const name = `preview.${extension}`;
+        const name = `.preview.${extension}`;
         const filePath = path.join(assetsDirectory, name);
         const siblingName = `other.${extension}`;
         yield* fileSystem.writeFileString(filePath, "preview");
@@ -1133,7 +1186,7 @@ describe("AssetAccess", () => {
             threadId: ThreadId.make("thread-1"),
             path: filePath,
           },
-          { _tag: "draft-workspace-file" as const, cwd: root, path: `assets/${name}` },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: `.assets/${name}` },
         ]) {
           const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
           const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
