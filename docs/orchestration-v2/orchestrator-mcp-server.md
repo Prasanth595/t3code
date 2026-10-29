@@ -636,10 +636,10 @@ closed, and no second run starts.
 The calling thread's timeline shows a T3-run workflow where it started: its state
 (running, finished, failed or stopped), name and description, agent counts, the
 script's latest log line (or, once it ends, its result), each phase with its agents
-and their own provider icons. A graph workflow shows its wave canvas instead of phases. While it runs, a
-Stop button stops the whole workflow. The thread's Lineage panel shows the workflow
-as one row whose phases expand to its agents, with the same Stop. Agents open their
-own threads. The row stores the script with a settings line for its args and budget;
+and their own provider icons. A graph workflow shows its wave canvas instead of
+phases. While it runs, a Stop button stops the whole workflow. The thread's Lineage
+panel shows the workflow as one row whose phases expand to its agents, with the same
+Stop. Agents open their own threads. The row stores the script with a settings line for its args and budget;
 `@t3tools/shared/storedWorkflowScript` owns that format for the server and clients.
 
 #### Durability and limits
