@@ -105,6 +105,7 @@ export interface ThreadRuntimeSummary {
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
   readonly usageLimitResetAt?: string | null;
+  readonly usageLimitRetryAt?: string | null;
   readonly updatedAt: string;
 }
 
@@ -241,6 +242,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
     lastErrorClass: thread.lastErrorClass ?? null,
     lastErrorCode: thread.lastErrorCode ?? null,
     usageLimitResetAt: thread.usageLimitResetAt ?? null,
+    usageLimitRetryAt: thread.usageLimitRetryAt ?? null,
     updatedAt: iso(thread.updatedAt),
   };
 }

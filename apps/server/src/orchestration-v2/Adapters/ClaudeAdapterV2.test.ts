@@ -5808,6 +5808,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    { status: 503, code: "claude_quota_exhausted" },
+    { status: 503, code: "claude_quota_unavailable" },
+    { status: 429, code: "claude_quota_exhausted" },
+  ])("schedules gateway quota recovery for $code ($status)", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-gateway-quota"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000654",
+          result: `API Error: ${input.status} ${input.code}: No Claude account has quota for this model`,
+          terminalReason: "api_error",
+          isError: true,
+          apiErrorStatus: input.status,
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.retryable, true);
+      assert.equal(terminal.failure.code, input.code);
+      assert.notExists(terminal.failure.resetAt);
+      assert.isAtLeast(Date.parse(terminal.failure.retryAt!), DateTime.toEpochMillis(now) + 60_000);
+      assert.isAtMost(Date.parse(terminal.failure.retryAt!), DateTime.toEpochMillis(now) + 72_000);
+      const updated = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(
+        updated?.type === "provider_thread.updated"
+          ? updated.providerThread.nativeMetadata?.claudeQuotaRetryCount
+          : null,
+        1,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("keeps the measured context when a usage limit ends the turn", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

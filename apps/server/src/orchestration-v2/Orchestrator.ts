@@ -3155,6 +3155,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
       if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
         return yield* new OrchestratorDispatchError({
@@ -3169,7 +3170,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
-        failure.resetAt !== command.limitRecovery.resetAt ||
+        recoveryAt !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
@@ -5061,6 +5062,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       const now = yield* DateTime.now;
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
@@ -5069,7 +5071,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
+        recovery.resetAt !== recoveryAt ||
         Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -10292,15 +10294,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(input.command));
       const failure = latestRootProviderFailure(latest, turnItems);
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       if (
         failure?.class === "usage_limit" &&
-        failure.resetAt != null &&
-        Number.isFinite(Date.parse(failure.resetAt)) &&
-        (recovery?.runId !== latest.id || recovery.resetAt !== failure.resetAt)
+        recoveryAt != null &&
+        Number.isFinite(Date.parse(recoveryAt)) &&
+        (recovery?.runId !== latest.id || recovery.resetAt !== recoveryAt)
       ) {
         recovery = {
           runId: latest.id,
-          resetAt: failure.resetAt,
+          resetAt: recoveryAt,
           autoResume: false,
           snooze: false,
         };

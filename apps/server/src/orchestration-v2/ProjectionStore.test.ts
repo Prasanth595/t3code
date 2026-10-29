@@ -4110,9 +4110,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         failure: {
           class: "usage_limit" as const,
           message: "Plan limit reached.",
-          resetAt: "2099-01-01T00:00:00.000Z",
+          retryAt: "2099-01-01T00:00:00.000Z",
           code: "usageLimitExceeded",
-          retryable: null,
+          retryable: true,
         },
       };
       const applyRun = (status: typeof original.status, rootNodeId = original.rootNodeId) =>
@@ -4134,8 +4134,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         for (const shell of [memoryShell, sqlShell]) {
           assert.equal(shell.lastError, lastError);
           assert.equal(shell.lastErrorClass, lastErrorClass);
+          assert.isNull(shell.usageLimitResetAt);
           assert.equal(
-            shell.usageLimitResetAt,
+            shell.usageLimitRetryAt,
             lastErrorClass === "usage_limit" ? "2099-01-01T00:00:00.000Z" : null,
           );
         }
@@ -4152,6 +4153,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
+            usageLimitRetryAt: sqlShell.usageLimitRetryAt,
             latestRunId: sqlShell.latestRunId,
             latestRunCompletedAt: sqlShell.latestRunCompletedAt,
             updatedAt: sqlShell.updatedAt,
@@ -4317,10 +4319,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
-      const reset = DateTime.makeUnsafe(limitItem.failure.resetAt);
+      const reset = DateTime.makeUnsafe(limitItem.failure.retryAt);
       const recovery = {
         runId: original.id,
-        resetAt: limitItem.failure.resetAt,
+        resetAt: limitItem.failure.retryAt,
         autoResume: true,
         requestId: CommandId.make("recovery:choice"),
       };

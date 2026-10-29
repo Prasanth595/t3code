@@ -21,7 +21,8 @@ export function UsageLimitRecoveryCard({
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const resetAt = thread.runtime?.usageLimitResetAt ?? null;
+  const knownResetAt = thread.runtime?.usageLimitResetAt ?? null;
+  const resetAt = knownResetAt ?? thread.runtime?.usageLimitRetryAt ?? null;
   const canSchedule =
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
@@ -72,19 +73,27 @@ export function UsageLimitRecoveryCard({
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm text-warning-foreground">
         {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+          ? `${knownResetAt ? "Usage limit resets" : scheduled ? "Waiting for quota; retrying" : "Next retry"} ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
-            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            label={
+              scheduled
+                ? "Cancel auto-resume"
+                : knownResetAt
+                  ? "Resume at reset"
+                  : "Resume automatically"
+            }
             tone="secondary"
             disabled={pending}
             onPress={() => void toggle("resume")}
           />
           <Button
-            label={snoozed ? "Wake now" : "Snooze until reset"}
+            label={
+              snoozed ? "Wake now" : knownResetAt ? "Snooze until reset" : "Snooze until retry"
+            }
             tone="secondary"
             disabled={pending || (!snoozed && resetPassed)}
             onPress={() => void toggle("snooze")}

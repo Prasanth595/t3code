@@ -46,6 +46,10 @@ export function threadErrorSummary(
   return {
     usageLimitResetAt:
       currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
+    usageLimitRetryAt:
+      currentFailure?.class === "usage_limit" && currentFailure.retryable === true
+        ? (currentFailure.retryAt ?? null)
+        : null,
     lastError: sessionError ?? failure?.message ?? null,
     lastErrorClass: currentFailure?.class ?? null,
     lastErrorCode: currentFailure?.code ?? null,
