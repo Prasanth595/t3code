@@ -459,19 +459,87 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects writes by absolute path", () =>
+    it.effect("refuses a host write that does not name the contents it replaces", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const outsideDir = yield* makeTempDir;
-        const absolutePath = path.join(outsideDir, "cleanup-report.md");
+        yield* writeTextFile(outsideDir, "AGENTS.md", "# Rules\n");
+        const absolutePath = path.join(outsideDir, "AGENTS.md");
+        const missingPath = path.join(outsideDir, "new.md");
 
-        const error = yield* workspaceFileSystem
+        const unconditional = yield* workspaceFileSystem
           .writeFile({ cwd, relativePath: absolutePath, contents: "# Edited\n" })
           .pipe(Effect.flip);
+        const creation = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: missingPath,
+            contents: "# New\n",
+            expectedContents: null,
+          })
+          .pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        expect(unconditional).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        expect(creation).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        expect(yield* fileSystem.readFileString(absolutePath)).toBe("# Rules\n");
+        expect(yield* fileSystem.exists(missingPath)).toBe(false);
+      }),
+    );
+
+    it.effect("edits an existing host file in place by absolute and ~/ path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, ".codex/AGENTS.md", "# Rules\n");
+        const absolutePath = path.join(home, ".codex/AGENTS.md");
+
+        const absolute = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: absolutePath,
+          contents: "# Rules\nBe brief.\n",
+          expectedContents: "# Rules\n",
+        });
+        const tilde = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "~/.codex/AGENTS.md",
+            contents: "# Rules\nBe briefer.\n",
+            expectedContents: "# Rules\nBe brief.\n",
+          })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(absolute).toEqual({ relativePath: absolutePath });
+        expect(tilde).toEqual({ relativePath: "~/.codex/AGENTS.md" });
+        expect(yield* fileSystem.readFileString(absolutePath)).toBe("# Rules\nBe briefer.\n");
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual([]);
+      }),
+    );
+
+    it.effect("leaves a host file alone when it changed after the editor read it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "AGENTS.md", "# Rules from an agent\n");
+        const absolutePath = path.join(outsideDir, "AGENTS.md");
+
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: absolutePath,
+          contents: "# My edit\n",
+          expectedContents: "# Rules\n",
+        });
+
+        expect(result).toEqual({ relativePath: absolutePath, conflict: true });
+        expect(yield* fileSystem.readFileString(absolutePath)).toBe("# Rules from an agent\n");
       }),
     );
 

@@ -121,7 +121,7 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
-    /** Writes inside a known workspace only. */
+    /** Writes inside a known workspace, or replaces an existing host file whose contents match `expectedContents`. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
@@ -446,10 +446,71 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const inGitFolder = Effect.fn("WorkspaceFileSystem.inGitFolder")(function* (
+    input: ProjectWriteFileInput,
+    resolvedPath: string,
+    checkedPath: string,
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => isInGitFolder(checkedPath),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath,
+          operationPath: checkedPath,
+          operation: "stat",
+          cause,
+        }),
+    });
+  });
+
+  /**
+   * A host file is edited in place: it must already exist, and the write must
+   * name the contents it replaces, so an editor never creates files outside a
+   * workspace or overwrites contents it has not seen.
+   */
+  const resolveHostWriteTarget = Effect.fn("WorkspaceFileSystem.resolveHostWriteTarget")(function* (
+    input: ProjectWriteFileInput,
+  ) {
+    if (typeof input.expectedContents !== "string") {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    const target = yield* resolveReadTarget({
+      cwd: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const realTargetPath = target.realTargetPath;
+    if (realTargetPath === null) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    if (yield* inGitFolder(input, realTargetPath, realTargetPath)) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: input.cwd,
+        resolvedPath: realTargetPath,
+      });
+    }
+    return { relativePath: target.relativePath, realTargetPath, host: true };
+  });
+
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
     input: ProjectWriteFileInput,
   ) {
+    const requestedPath = input.relativePath.trim();
+    const hostPath = requestedPath.startsWith("~/")
+      ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+      : requestedPath;
+    if (path.isAbsolute(hostPath)) return yield* resolveHostWriteTarget(input);
+
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
@@ -499,24 +560,10 @@ export const make = Effect.gen(function* () {
     });
     // The path as named is checked too: a `.git/config` symlink resolves away the `.git`.
     const namedTargetPath = path.join(realWorkspaceRoot, ...segments);
-    const inGitFolder = Effect.fn("WorkspaceFileSystem.inGitFolder")((checkedPath: string) =>
-      Effect.tryPromise({
-        try: () => isInGitFolder(checkedPath),
-        catch: (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: realTargetPath,
-            operationPath: checkedPath,
-            operation: "stat",
-            cause,
-          }),
-      }),
-    );
     if (
       !isInsideRealRoot(realWorkspaceRoot, realTargetPath) ||
-      (yield* inGitFolder(realTargetPath)) ||
-      (yield* inGitFolder(namedTargetPath))
+      (yield* inGitFolder(input, realTargetPath, realTargetPath)) ||
+      (yield* inGitFolder(input, realTargetPath, namedTargetPath))
     ) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,
@@ -525,7 +572,7 @@ export const make = Effect.gen(function* () {
         resolvedPath: realTargetPath,
       });
     }
-    return { relativePath: target.relativePath, realTargetPath };
+    return { relativePath: target.relativePath, realTargetPath, host: false };
   });
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
@@ -584,7 +631,7 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         }).pipe(Effect.uninterruptible);
-        yield* workspaceEntries.refresh(input.cwd);
+        if (!target.host) yield* workspaceEntries.refresh(input.cwd);
         return { relativePath: target.relativePath };
       }),
     );
