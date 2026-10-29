@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/thread-state";
+import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/threads";
 import type {
   AcknowledgedThreadMessage,
   QueuedThreadMessage,

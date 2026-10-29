@@ -303,10 +303,6 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
-    "./state/thread-state": {
-      "types": "./src/state/threadState.ts",
-      "default": "./src/state/threadState.ts"
-    },
     "./state/subagent-display": {
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"
