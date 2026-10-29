@@ -227,119 +227,162 @@ it.effect.each([{}, { includeImage: false }])(
     ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each([
-  { mode: "default", input: {}, images: false },
-  { mode: "explicit image", input: { includeImage: true }, images: true },
-  { mode: "text only", input: { includeImage: false }, images: false },
-])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images }) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const server = yield* McpServer.McpServer;
-      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const connected = yield* Deferred.make<void>();
-      const png =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-      const page = {
-        url: "http://example.test/",
-        loading: false,
-        visibleText: "Save your changes",
-        interactiveElements: [
-          {
-            tag: "button",
-            role: "button",
-            name: "Save",
-            selector: "#save",
-            x: 0,
-            y: 0,
-            width: 20,
-            height: 10,
-          },
-        ],
-        accessibilityTree: { role: "document", name: "Example" },
-        consoleEntries: [],
-        networkEntries: [],
-        actionTimeline: [],
-      };
-      const screenshot = { mimeType: "image/png", width: 1, height: 1 };
-      let requests = 0;
-      const events = yield* broker.connect({ clientId: "mcp-image-option-client", environmentId });
-      yield* Stream.runForEach(events, (event) => {
-        if (event.type === "connected") return Deferred.succeed(connected, undefined);
-        requests += 1;
-        expect(event.request).toMatchObject({
-          operation: "snapshot",
-          tabId: alternateTabId,
-          threadId,
-        });
-        expect(event.request.input).toEqual({});
-        return broker.respond({
-          clientId: "mcp-image-option-client",
-          connectionId: event.connectionId,
-          requestId: event.request.requestId,
-          ok: true,
-          result: {
-            ...page,
-            title: `Snapshot ${requests}`,
-            screenshot: { ...screenshot, data: png },
-          },
-        });
-      }).pipe(Effect.forkScoped);
-      yield* Deferred.await(connected);
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+const PNG_8X8 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAD0lEQVR4nGP4jwMwDC0JALoev0Ewkwr8AAAAAElFTkSuQmCC";
 
-      for (const call of [1, 2, 3, 4, 5, 6]) {
-        const snapshot = yield* server
+it.effect.each([
+  { mode: "default", input: {}, images: false, png: PNG_8X8, width: 8, height: 8 },
+  {
+    mode: "explicit image",
+    input: { includeImage: true },
+    images: true,
+    png: PNG_8X8,
+    width: 8,
+    height: 8,
+  },
+  {
+    mode: "thin image",
+    input: { includeImage: true },
+    images: false,
+    png: PNG_1X1,
+    width: 1,
+    height: 1,
+  },
+  {
+    mode: "text only",
+    input: { includeImage: false },
+    images: false,
+    png: PNG_1X1,
+    width: 1,
+    height: 1,
+  },
+])(
+  "returns fresh $mode snapshots on repeated MCP calls",
+  ({ input, images, png, width, height, mode }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+        const connected = yield* Deferred.make<void>();
+        const page = {
+          url: "http://example.test/",
+          loading: false,
+          visibleText: "Save your changes",
+          interactiveElements: [
+            {
+              tag: "button",
+              role: "button",
+              name: "Save",
+              selector: "#save",
+              x: 0,
+              y: 0,
+              width: 20,
+              height: 10,
+            },
+          ],
+          accessibilityTree: { role: "document", name: "Example" },
+          consoleEntries: [],
+          networkEntries: [],
+          actionTimeline: [],
+        };
+        const size = { mimeType: "image/png" as const, width, height };
+        const imageRequested = "includeImage" in input && input.includeImage === true;
+        const thin = imageRequested && (width < 8 || height < 8);
+        const screenshot = thin
+          ? {
+              ...size,
+              omitted: `Not attached. It is ${width}x${height}, and a side under 8px makes the model provider reject the rest of this conversation.`,
+            }
+          : size;
+        let requests = 0;
+        const clientId = `mcp-image-option-${mode.replaceAll(" ", "-")}`;
+        const events = yield* broker.connect({ clientId, environmentId });
+        yield* Stream.runForEach(events, (event) => {
+          if (event.type === "connected") return Deferred.succeed(connected, undefined);
+          requests += 1;
+          expect(event.request).toMatchObject({
+            operation: "snapshot",
+            tabId: alternateTabId,
+            threadId,
+          });
+          expect(event.request.input).toEqual({});
+          return broker.respond({
+            clientId,
+            connectionId: event.connectionId,
+            requestId: event.request.requestId,
+            ok: true,
+            result: {
+              ...page,
+              title: `Snapshot ${requests}`,
+              screenshot: { ...size, data: png },
+            },
+          });
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(connected);
+
+        for (const call of [1, 2, 3, 4, 5, 6]) {
+          const snapshot = yield* server
+            .callTool({
+              name: "preview_snapshot",
+              arguments: { ...input, tabId: alternateTabId },
+            })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+              Effect.provideService(McpSchema.McpServerClient, client),
+            );
+          const metadata = { ...page, title: `Snapshot ${call}`, screenshot };
+          const { accessibilityTree: _tree, ...boundedMetadata } = metadata;
+          expect(snapshot.isError).toBe(false);
+          expect(snapshot.structuredContent).toEqual({
+            ...boundedMetadata,
+            omitted: ["accessibilityTree (use interactiveElements locators or preview_evaluate)"],
+          });
+          const [identity, text, ...rest] = snapshot.content;
+          expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
+            url: page.url,
+          });
+          expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual(boundedMetadata);
+          expect(rest).toEqual([
+            {
+              type: "text",
+              text: "Snapshot text was bounded. Omitted: accessibilityTree (use interactiveElements locators or preview_evaluate).",
+            },
+            ...(images
+              ? [
+                  {
+                    type: "image",
+                    mimeType: "image/png",
+                    data: new Uint8Array(Buffer.from(png, "base64")),
+                  },
+                ]
+              : []),
+          ]);
+        }
+
+        const nextDefault = yield* server
           .callTool({
             name: "preview_snapshot",
-            arguments: { ...input, tabId: alternateTabId },
+            arguments: { tabId: alternateTabId },
           })
           .pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
             Effect.provideService(McpSchema.McpServerClient, client),
           );
-        const metadata = { ...page, title: `Snapshot ${call}`, screenshot };
-        const { accessibilityTree: _tree, ...boundedMetadata } = metadata;
-        expect(snapshot.isError).toBe(false);
-        expect(snapshot.structuredContent).toEqual({
-          ...boundedMetadata,
-          omitted: ["accessibilityTree (use interactiveElements locators or preview_evaluate)"],
-        });
-        const [identity, text, ...rest] = snapshot.content;
-        expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
-          url: page.url,
-        });
-        expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual(boundedMetadata);
-        expect(rest).toEqual([
-          {
-            type: "text",
-            text: "Snapshot text was bounded. Omitted: accessibilityTree (use interactiveElements locators or preview_evaluate).",
-          },
-          ...(images
-            ? [
-                {
-                  type: "image",
-                  mimeType: "image/png",
-                  data: new Uint8Array(Buffer.from(png, "base64")),
-                },
-              ]
-            : []),
+        expect(nextDefault.content.map((content) => content.type)).toEqual([
+          "text",
+          "text",
+          "text",
         ]);
-      }
-
-      const nextDefault = yield* server
-        .callTool({
-          name: "preview_snapshot",
-          arguments: { tabId: alternateTabId },
-        })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "text"]);
-      expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
-      expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
-      expect(requests).toBe(7);
-    }),
-  ).pipe(Effect.provide(layerTest)),
+        expect(nextDefault.structuredContent).toMatchObject({
+          title: "Snapshot 7",
+          screenshot: size,
+        });
+        expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
+        expect(requests).toBe(7);
+      }),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("refuses preview tools to a client outside a thread before they run", () =>

@@ -22,6 +22,7 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -492,6 +493,44 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   }).pipe(Effect.as(result));
 });
 
+/**
+ * Grok rejects an image under 8px on either side, then refuses every later turn
+ * that still contains it. A 400x1 preview screenshot is enough to kill the thread.
+ */
+const MODEL_IMAGE_MIN_EDGE_PX = 8;
+
+const thinImageForModel = (png: Uint8Array) => {
+  const dimensions = readImageDimensions(png);
+  if (
+    dimensions === null ||
+    (dimensions.width >= MODEL_IMAGE_MIN_EDGE_PX && dimensions.height >= MODEL_IMAGE_MIN_EDGE_PX)
+  ) {
+    return null;
+  }
+  return dimensions;
+};
+
+const modelScreenshot = (
+  png: Uint8Array,
+  screenshot: { readonly mimeType: "image/png"; readonly width: number; readonly height: number },
+  requested: boolean,
+) => {
+  const thin = thinImageForModel(png);
+  return {
+    includeImage: requested && thin === null,
+    screenshot: {
+      mimeType: screenshot.mimeType,
+      width: screenshot.width,
+      height: screenshot.height,
+      ...(thin === null || !requested
+        ? {}
+        : {
+            omitted: `Not attached. It is ${thin.width}x${thin.height}, and a side under ${MODEL_IMAGE_MIN_EDGE_PX}px makes the model provider reject the rest of this conversation.`,
+          }),
+    },
+  };
+};
+
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -547,8 +586,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const screenshotPath =
                 payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
               // Providers replay images on later requests, and some reject them; include images only when requested.
-              const includeImage = payload?.includeImage === true;
-              if (screenshotPath !== undefined && !includeImage) {
+              const imageRequested = payload?.includeImage === true;
+              const modelImage = modelScreenshot(png, screenshot, imageRequested);
+              if (screenshotPath !== undefined && !imageRequested) {
                 const saved = {
                   url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
                   screenshotPath,
@@ -561,11 +601,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               }
               const metadata = {
                 ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
+                screenshot: modelImage.screenshot,
                 ...(screenshotPath === undefined ? {} : { screenshotPath }),
               };
               const bounded = boundSnapshotMetadata(metadata);
@@ -591,7 +627,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                           text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                         },
                       ]),
-                  ...(includeImage
+                  ...(modelImage.includeImage
                     ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
                     : []),
                 ],
@@ -712,38 +748,34 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
-            onSuccess: ({ encodedResult }) => {
+            onSuccess: Effect.fn("McpHttpServer.imageToolResult")(function* ({ encodedResult }) {
               const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const includeImage =
+              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
+              const requested =
                 (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
                 false;
+              const modelImage = modelScreenshot(png, screenshot, requested);
               const metadata = {
                 ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
+                screenshot: modelImage.screenshot,
               };
-              return Effect.succeed(
-                new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
-                  ],
-                }),
-              );
-            },
+              return new McpSchema.CallToolResult({
+                isError: false,
+                structuredContent: metadata,
+                content: [
+                  { type: "text", text: encodeJsonText(metadata) },
+                  ...(modelImage.includeImage
+                    ? [
+                        {
+                          type: "image" as const,
+                          data: png,
+                          mimeType: screenshot.mimeType,
+                        },
+                      ]
+                    : []),
+                ],
+              });
+            }),
           }),
         );
       }),
