@@ -34,6 +34,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { useUiStateStore } from "../../uiStateStore";
 import {
   filterSidebarV2VisibleThreads,
+  resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   useSnoozeWakeClock,
 } from "../Sidebar.logic";
@@ -147,7 +148,7 @@ export function AdhdModeView() {
     setSelectedKey(threadKeyOf(current));
   }
   const workingCount = threads.filter(
-    (thread) => thread.runtime?.status === "running" && thread.archivedAt === null,
+    (thread) => thread.archivedAt === null && resolveSidebarThreadStatus(thread) === "working",
   ).length;
 
   return (
@@ -464,9 +465,14 @@ function AdhdCard(props: {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     if (ignoresCardKeys(event.target)) return;
     const key = event.key.toLowerCase();
+    // Enter on a focused control activates that control, never the card's option.
+    if (key === "enter" && event.target instanceof Element && event.target.closest("button, a")) {
+      return;
+    }
     if (/^[1-9]$/.test(key)) props.onJump(Number(key) - 1);
-    else if (key === "arrowdown") setHighlight(Math.min(selected + 1, options.length - 1));
-    else if (key === "arrowup") setHighlight(Math.max(selected - 1, 0));
+    else if (key === "arrowdown" && options.length > 0)
+      setHighlight(Math.min(selected + 1, options.length - 1));
+    else if (key === "arrowup" && options.length > 0) setHighlight(Math.max(selected - 1, 0));
     else if (key === " " && question?.multiSelect) togglePick(selected);
     else if (key === "e" || key === "enter") accept(selected);
     else if (key === "r") {
@@ -543,7 +549,11 @@ function AdhdCard(props: {
         {wantsSuggestions ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <SparklesIcon className="size-3" />
-            {suggestions === null ? "Writing suggestions…" : "From your text generation model"}
+            {!canOperate
+              ? "Suggestions need permission to operate this environment."
+              : suggestions === null
+                ? "Writing suggestions…"
+                : "From your text generation model"}
           </p>
         ) : null}
       </div>

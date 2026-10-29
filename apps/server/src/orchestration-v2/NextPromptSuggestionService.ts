@@ -15,6 +15,8 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
+const MAX_FAILURE_CHARS = 1_000;
+
 export class NextPromptSuggestionService extends Context.Service<
   NextPromptSuggestionService,
   {
@@ -40,8 +42,16 @@ const make = Effect.gen(function* () {
       const records = yield* threads.getThreadRecords(input.threadId, ["messages", "runs"], {
         messageRoles: ["user", "assistant"],
       });
+      const rolledBack = records.runs.filter((run) => run.status === "rolled_back");
+      const rolledBackRunIds = new Set(rolledBack.map((run) => run.id));
+      const rolledBackMessageIds = new Set(rolledBack.map((run) => run.userMessageId));
       const context = formatThreadTitleContext(
-        records.messages.filter((message) => !message.streaming),
+        records.messages.filter(
+          (message) =>
+            !message.streaming &&
+            !rolledBackMessageIds.has(message.id) &&
+            (message.runId === null || !rolledBackRunIds.has(message.runId)),
+        ),
       );
       const project = yield* projects.get(records.thread.projectId);
       if (context.message.length === 0 || Option.isNone(project)) return { prompts: [] };
@@ -51,6 +61,13 @@ const make = Effect.gen(function* () {
           (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
           undefined,
         );
+      const failed = latestRun?.status === "failed";
+      const failure = failed
+        ? (yield* threads.getThreadRecords(input.threadId, ["turnItems"], {
+            turnItemRunId: latestRun.id,
+            turnItemTypes: ["error"],
+          })).turnItems.findLast((item) => item.type === "error")
+        : undefined;
       const settings = resolveProjectSettings(
         yield* serverSettings.getSettings,
         records.thread.projectId,
@@ -59,7 +76,10 @@ const make = Effect.gen(function* () {
         cwd: records.thread.worktreePath ?? project.value.workspaceRoot,
         title: records.thread.title,
         conversation: context.message,
-        failed: latestRun?.status === "failed",
+        failed,
+        ...(failure?.type === "error"
+          ? { failureMessage: failure.failure.message.slice(0, MAX_FAILURE_CHARS) }
+          : {}),
         modelSelection: settings.textGenerationModelSelection,
       });
       return { prompts: result.prompts };

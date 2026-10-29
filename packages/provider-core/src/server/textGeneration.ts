@@ -77,6 +77,8 @@ export interface NextPromptsGenerationInput {
   title: string;
   conversation: string;
   failed: boolean;
+  /** The latest failed run's provider error, when it recorded one. */
+  failureMessage?: string;
   modelSelection: ModelSelection;
 }
 

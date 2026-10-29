@@ -9,6 +9,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -492,7 +493,7 @@ describe("ThreadTitleRegenerationService", () => {
 });
 
 describe("NextPromptSuggestionService", () => {
-  it.effect("asks for next prompts from the conversation and flags a failed latest run", () =>
+  it.effect("asks for next prompts from retained work and passes the latest failure", () =>
     Effect.gen(function* () {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
@@ -520,6 +521,52 @@ describe("NextPromptSuggestionService", () => {
           assistant: "The migration broke 3 tests.",
           status: "failed",
         });
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("run:next-prompts:2:error"),
+              type: "turn-item.updated",
+              threadId,
+              runId: RunId.make("run:next-prompts:2"),
+              driver: adapter.driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("run:next-prompts:2:error"),
+                threadId,
+                runId: RunId.make("run:next-prompts:2"),
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "failed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "error",
+                failure: {
+                  class: "provider_error",
+                  message: "relation users_v2 already exists",
+                  code: null,
+                  retryable: false,
+                },
+              },
+            },
+          ],
+        });
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:next-prompts:3"),
+          ordinal: 3,
+          user: "Drop the users table",
+          assistant: "Dropped the users table.",
+          status: "rolled_back",
+        });
         const result = yield* suggestions.suggest({ threadId });
 
         assert.deepEqual(result.prompts, ["Open a PR"]);
@@ -527,7 +574,10 @@ describe("NextPromptSuggestionService", () => {
         assert.equal(call?.failed, true);
         assert.equal(call?.cwd, "/repo");
         assert.equal(call?.title, "Seed title");
+        assert.equal(call?.failureMessage, "relation users_v2 already exists");
         assert.include(call?.conversation, "ASSISTANT:\nThe migration broke 3 tests.");
+        assert.notInclude(call?.conversation, "Drop the users table");
+        assert.notInclude(call?.conversation, "Dropped the users table.");
       }).pipe(Effect.provide(harness.layer));
     }),
   );
