@@ -1,3 +1,4 @@
+import { userVisibleMessageText } from "@t3tools/client-runtime/user-message";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import type { Nodes } from "mdast";
 import remarkGfm from "remark-gfm";
@@ -26,7 +27,7 @@ export function deriveTimelineMinimapItems(
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: row.message.text,
+      userText: userVisibleMessageText(row.message.text),
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
     });
   }

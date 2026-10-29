@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { GuestMessageId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 
-import { resolveUserMessagePresentation } from "./userMessage.ts";
+import { resolveUserMessagePresentation, userVisibleMessageText } from "./userMessage.ts";
+
+describe("userVisibleMessageText", () => {
+  it.each([
+    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    applyClaudePromptEffortPrefix(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, "ultrathink"),
+  ])("hides an attachment-only prompt, including surrounding whitespace: %s", (text) => {
+    expect(userVisibleMessageText(text)).toBe("");
+    expect(userVisibleMessageText(` \n${text}\n\t`)).toBe("");
+    expect(resolveUserMessagePresentation({ role: "user", text }).text).toBe("");
+  });
+
+  it.each([
+    "",
+    " \n",
+    "  Check this image.\n",
+    "Ultrathink:\nCheck this image.\n",
+    `Explain ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+    `${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}\nCheck this image.`,
+    `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}\nCheck this image.`,
+  ])("preserves all other text exactly: %s", (text) => {
+    expect(userVisibleMessageText(text)).toBe(text);
+  });
+});
 
 describe("resolveUserMessagePresentation", () => {
   const legacyText = "[Triggered by schedule task: Daily audit]\n\nCheck for crashes.\n";
@@ -19,6 +44,12 @@ describe("resolveUserMessagePresentation", () => {
         scheduledTaskId: undefined,
       });
     }
+  });
+
+  it("hides the prompt sent for attachment-only messages", () => {
+    expect(
+      resolveUserMessagePresentation({ role: "user", text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT }),
+    ).toEqual({ text: "", attribution: null, scheduledTaskId: undefined });
   });
 
   it("shows a guest's own words and name, not the attributed text the agent reads", () => {

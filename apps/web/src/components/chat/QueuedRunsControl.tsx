@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import { userVisibleMessageText } from "@t3tools/client-runtime/user-message";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type {
@@ -146,7 +147,7 @@ export function QueuedRunsControl({
       runId: null,
       messageId: null,
       serverIndex: null,
-      text: message.text,
+      text: userVisibleMessageText(message.text),
       editable: true,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? [])
