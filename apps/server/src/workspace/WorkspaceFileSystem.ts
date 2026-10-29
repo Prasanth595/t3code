@@ -472,6 +472,7 @@ export const make = Effect.gen(function* () {
    */
   const resolveHostWriteTarget = Effect.fn("WorkspaceFileSystem.resolveHostWriteTarget")(function* (
     input: ProjectWriteFileInput,
+    hostPath: string,
   ) {
     if (typeof input.expectedContents !== "string") {
       return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
@@ -490,7 +491,10 @@ export const make = Effect.gen(function* () {
         relativePath: input.relativePath,
       });
     }
-    if (yield* inGitFolder(input, realTargetPath, realTargetPath)) {
+    if (
+      (yield* inGitFolder(input, realTargetPath, realTargetPath)) ||
+      (yield* inGitFolder(input, realTargetPath, path.resolve(hostPath)))
+    ) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
@@ -509,7 +513,7 @@ export const make = Effect.gen(function* () {
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
-    if (path.isAbsolute(hostPath)) return yield* resolveHostWriteTarget(input);
+    if (path.isAbsolute(hostPath)) return yield* resolveHostWriteTarget(input, hostPath);
 
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
@@ -586,9 +590,10 @@ export const make = Effect.gen(function* () {
       realTargetPath,
       Effect.gen(function* () {
         if (input.expectedContents !== undefined) {
+          // Compare the file this write replaces, not whatever the requested path names by now.
           const current = yield* readFile({
             cwd: input.cwd,
-            relativePath: input.relativePath,
+            relativePath: realTargetPath,
             allowMissing: true,
           });
           if (
@@ -598,29 +603,38 @@ export const make = Effect.gen(function* () {
             return { relativePath: target.relativePath, conflict: true };
           }
         }
-        yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: path.dirname(realTargetPath),
-                operation: "make-directory",
-                cause,
-              }),
-          ),
-        );
-        yield* Effect.tryPromise({
+        if (!target.host) {
+          yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: path.dirname(realTargetPath),
+                  operation: "make-directory",
+                  cause,
+                }),
+            ),
+          );
+        }
+        const written = yield* Effect.tryPromise({
           // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
+          // A host file is only replaced, so one deleted since the check is not recreated.
           try: () =>
             NodeFSP.writeFile(realTargetPath, input.contents, {
               flag:
                 NodeFS.constants.O_WRONLY |
-                NodeFS.constants.O_CREAT |
+                (target.host ? 0 : NodeFS.constants.O_CREAT) |
                 NodeFS.constants.O_TRUNC |
                 (NodeFS.constants.O_NOFOLLOW ?? 0),
-            }),
+            }).then(
+              () => true,
+              (cause: NodeJS.ErrnoException) => {
+                if (target.host && cause.code === "ENOENT") return false;
+                throw cause;
+              },
+            ),
           catch: (cause) =>
             new WorkspaceFileSystemOperationError({
               workspaceRoot: input.cwd,
@@ -631,6 +645,7 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         }).pipe(Effect.uninterruptible);
+        if (!written) return { relativePath: target.relativePath, conflict: true };
         if (!target.host) yield* workspaceEntries.refresh(input.cwd);
         return { relativePath: target.relativePath };
       }),

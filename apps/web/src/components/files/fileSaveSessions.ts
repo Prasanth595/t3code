@@ -14,8 +14,8 @@ import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
-  getPersistedProjectFileQueryData,
   getProjectFileQueryAtom,
+  getSavedProjectFileContents,
   getUnsavedProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -98,11 +98,11 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       },
       onConfirmed: (contents) => deps.confirm(target, contents),
       onSettled: () => {
+        if (coordinator.unconfirmedContents === null) bases.delete(key);
         if (!session.flushingOnRelease) return;
         session.flushingOnRelease = false;
         if (session.leases === 0) {
           if (sessions.get(key) === session) sessions.delete(key);
-          if (coordinator.unconfirmedContents === null) bases.delete(key);
           session.unsubscribeWritable();
         } else if (coordinator.unconfirmedContents !== null) {
           // A surface rejoined while the release flush failed; retry it once.
@@ -202,13 +202,10 @@ const fileSaveSessions = createFileSaveSessions({
     showSaveConflict(target);
     return AsyncResult.failure(Cause.fail(new Error(`${relativePath} changed on disk.`)));
   },
-  readBase: ({ environmentId, cwd, relativePath }) => {
-    if (!isHostPath(relativePath)) return undefined;
-    const file = getPersistedProjectFileQueryData(environmentId, cwd, relativePath);
-    return file?.supportsConditionalWrite && !file.truncated && file.exists !== false
-      ? file.contents
-      : undefined;
-  },
+  readBase: ({ environmentId, cwd, relativePath }) =>
+    isHostPath(relativePath)
+      ? getSavedProjectFileContents(environmentId, cwd, relativePath)
+      : undefined,
   confirm: ({ environmentId, cwd, relativePath }, contents) =>
     confirmProjectFileQueryData(environmentId, cwd, relativePath, contents),
   readUnsaved: ({ environmentId, cwd, relativePath }) =>

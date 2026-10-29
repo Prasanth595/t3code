@@ -94,30 +94,48 @@ describe("file save sessions", () => {
     ]);
   });
 
-  it("saves a draft against the contents it started from, not a later read", async () => {
+  it("saves each draft against the saved contents it started from", async () => {
     using h = setup();
     const conditionalWrites = () =>
       h.persist.mock.calls.map(([, contents, base]) => [contents, base]);
     h.state.base = "original";
     h.sessions.acquire(target, h.onPendingChange);
     h.sessions.change(target, "edit");
+    // The file query refetches while the draft is unsaved.
     h.state.base = "agent rewrite";
     await vi.advanceTimersByTimeAsync(500);
+    // A clean editor then shows an agent's newer contents.
+    h.state.base = "agent rewrite 2";
     h.sessions.change(target, "edit 2");
-    await vi.advanceTimersByTimeAsync(500);
-    h.persist.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("changed"))));
     h.sessions.change(target, "edit 3");
     await vi.advanceTimersByTimeAsync(500);
-    h.sessions.change(target, "edit 4");
+    expect(conditionalWrites()).toEqual([
+      ["edit", "original"],
+      ["edit 3", "agent rewrite 2"],
+    ]);
+  });
+
+  it("keeps refusing a conflicted draft until it is discarded", async () => {
+    using h = setup();
+    const conditionalWrites = () =>
+      h.persist.mock.calls.map(([, contents, base]) => [contents, base]);
+    h.state.base = "original";
+    h.sessions.acquire(target, h.onPendingChange);
+    const conflict = AsyncResult.failure(Cause.fail(new Error("changed")));
+    h.persist.mockResolvedValueOnce(conflict).mockResolvedValueOnce(conflict);
+    h.sessions.change(target, "edit");
     await vi.advanceTimersByTimeAsync(500);
+    h.state.base = "agent rewrite";
+    h.sessions.change(target, "edit 2");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
     h.sessions.discard(target);
+    expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
     h.sessions.change(target, "after reload");
     await vi.advanceTimersByTimeAsync(500);
     expect(conditionalWrites()).toEqual([
       ["edit", "original"],
-      ["edit 2", "edit"],
-      ["edit 3", "edit 2"],
-      ["edit 4", "edit 2"],
+      ["edit 2", "original"],
       ["after reload", "agent rewrite"],
     ]);
   });

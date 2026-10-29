@@ -774,8 +774,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const error = yield* workspaceFileSystem
             .writeFile({ cwd, relativePath: ".git/config", contents: "[core]\n\tfsmonitor = x\n" })
             .pipe(Effect.flip);
+          const hostError = yield* workspaceFileSystem
+            .writeFile({
+              cwd: yield* makeTempDir,
+              relativePath: path.join(cwd, ".git/config"),
+              contents: "[core]\n\tfsmonitor = x\n",
+              expectedContents: "[core]\n",
+            })
+            .pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+          expect(hostError).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
           expect(yield* fileSystem.readFileString(path.join(cwd, "shared/config"))).toBe(
             "[core]\n",
           );

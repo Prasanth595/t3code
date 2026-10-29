@@ -133,16 +133,23 @@ export function getUnsavedProjectFileQueryData(
   return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
 }
 
-export function getPersistedProjectFileQueryData(
+/**
+ * The saved contents the editor shows, which a conditional write may replace:
+ * a just-confirmed save until its refetch lands, otherwise the last read.
+ */
+export function getSavedProjectFileContents(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string,
-): ProjectReadFileResult | undefined {
-  return Option.getOrUndefined(
+): string | undefined {
+  const read = Option.getOrUndefined(
     AsyncResult.value(
       appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
     ),
   );
+  if (!read?.supportsConditionalWrite || read.truncated || read.exists === false) return undefined;
+  const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
+  return optimistic?.confirmedAgainst === undefined ? read.contents : optimistic.data.contents;
 }
 
 export function confirmProjectFileQueryData(
