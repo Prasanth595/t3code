@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeThreadFind } from "./ThreadFind.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
 import {
@@ -207,6 +208,34 @@ const setup = Effect.gen(function* () {
 });
 
 describe("V2 thread find", () => {
+  it.effect("searches threads whose stored row has no creation source", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      const sql = yield* SqlClient.SqlClient;
+      const message = item("legacy", 1, "legacy needle", "user_message");
+      yield* putItems([message]);
+      for (const relationship of [null, "subagent"] as const) {
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(json_remove(payload_json, '$.creationSource'),
+            '$.lineage.relationshipToParent', ${relationship})
+          WHERE thread_id = ${threadId}`;
+        const find = yield* makeThreadFind(() =>
+          Effect.succeed([
+            {
+              visibility: "local" as const,
+              sourceThreadId: threadId,
+              sourceItemId: message.id,
+              item: message,
+            },
+          ]),
+        );
+        const result = yield* find.searchThread({ threadId, query: "needle" });
+        assert.equal(result.totalMatches, 1);
+        assert.equal(result.match?.entryId, "legacy");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("finishes one snapshot while later searches include newly inserted matches", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

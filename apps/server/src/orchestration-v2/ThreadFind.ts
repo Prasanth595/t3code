@@ -330,11 +330,14 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
   });
   // Runs inside the snapshot: it decides whether the parent thread is a source of this scan.
   const openingOf = Effect.fn("ThreadFind.openingOf")(function* (
-    active: { readonly lineage: string; readonly creation_source: string },
+    active: { readonly lineage: string; readonly creation_source: string | null },
     payloads: readonly FindPayload[],
   ) {
+    const lineage = yield* decodeLineage(active.lineage);
+    if (lineage.relationshipToParent !== "subagent" || active.creation_source === null)
+      return undefined;
     const thread = {
-      lineage: yield* decodeLineage(active.lineage),
+      lineage,
       creationSource: yield* decodeCreationSource(active.creation_source),
     };
     // Only provider-native subagents can open with a workflow; skip decoding anyone else's message.
@@ -351,7 +354,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       const active = yield* sql<{
         cwd: string | null;
         lineage: string;
-        creation_source: string;
+        creation_source: string | null;
       }>`
       SELECT COALESCE(json_extract(t.payload_json, '$.worktreePath'), p.workspace_root) AS cwd,
         json_extract(t.payload_json, '$.lineage') AS lineage,
