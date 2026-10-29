@@ -165,7 +165,7 @@ it("keeps metadata identities stable across full-preview change types without me
   expect(keys[3]).not.toBe(keys[4]);
 });
 
-it("does not request bodies for a default-collapsed metadata list", () => {
+it("does not request bodies for a default-collapsed metadata list until find opens", () => {
   const source: ReviewDiffPreviewSource = {
     id: "working-tree",
     kind: "working-tree",
@@ -196,6 +196,7 @@ it("does not request bodies for a default-collapsed metadata list", () => {
   expect(reviewFileQueries(input)).toHaveLength(0);
   const expanded = reviewFileQueries({ ...input, collapsedFileKeys: new Set() });
   expect(expanded).toHaveLength(30);
+  expect(reviewFileQueries({ ...input, loadAll: true })).toHaveLength(30);
 
   const selected = source.files![20]!;
   const collapsedFileKeys = new Set(source.files!.map(reviewFileIdentityKey));

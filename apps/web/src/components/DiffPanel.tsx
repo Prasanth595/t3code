@@ -494,6 +494,7 @@ export default function DiffPanel({
     ...(baseRefQuery.trim().length === 0 ? [AUTOMATIC_BASE_REF] : []),
     ...matchingBaseRefChoices.map(valueForBaseRefChoice),
   ];
+  const [searchedFileScope, setSearchedFileScope] = useState<string | null>(null);
   const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
     collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
   );
@@ -515,6 +516,7 @@ export default function DiffPanel({
     preview: renderablePatch,
     collapsedFileKeys: storedCollapsedDiffFileKeys,
     defaultCollapsed: settings.diffFilesCollapsed,
+    searchedScope: searchedFileScope,
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
   const diffRefreshKey = `diff:${activeThreadRefreshKey ?? ""}`;
@@ -1120,6 +1122,17 @@ export default function DiffPanel({
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
                   className="min-h-0 min-w-0 flex-1"
+                  // The viewer opens find on this shortcut but reports no open event.
+                  onKeyDownCapture={(event) => {
+                    if (
+                      (event.metaKey || event.ctrlKey) &&
+                      !event.altKey &&
+                      !event.shiftKey &&
+                      (event.key.toLowerCase() === "f" || event.code === "KeyF")
+                    ) {
+                      setSearchedFileScope(filePatchScope);
+                    }
+                  }}
                   onClickCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
                     for (const node of composedPath) {

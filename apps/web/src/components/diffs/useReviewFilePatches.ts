@@ -35,6 +35,7 @@ export function useReviewFilePatches({
   preview,
   collapsedFileKeys,
   defaultCollapsed,
+  searchedScope,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -47,6 +48,8 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
   collapsedFileKeys: ReadonlySet<string> | undefined;
   defaultCollapsed: boolean;
+  /** Find only searches loaded lines, so every file loads once find opens in this scope. */
+  searchedScope: string | null;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -67,6 +70,7 @@ export function useReviewFilePatches({
     scope,
     collapsedFileKeys,
     defaultCollapsed,
+    loadAll: searchedScope === scope,
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
@@ -133,6 +137,7 @@ export function reviewFileQueries({
   scope,
   collapsedFileKeys,
   defaultCollapsed = false,
+  loadAll = false,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -143,6 +148,7 @@ export function reviewFileQueries({
   scope: string;
   collapsedFileKeys?: ReadonlySet<string> | undefined;
   defaultCollapsed?: boolean;
+  loadAll?: boolean;
 }) {
   const files = sortedReviewFiles(source);
   const fileKeys = reviewFileIdentityKeys(files);
@@ -151,7 +157,10 @@ export function reviewFileQueries({
       ? []
       : files
           .map((file, index) => ({ file, index }))
-          .filter(({ index }) => !(collapsedFileKeys?.has(fileKeys[index]!) ?? defaultCollapsed))
+          .filter(
+            ({ index }) =>
+              loadAll || !(collapsedFileKeys?.has(fileKeys[index]!) ?? defaultCollapsed),
+          )
           .map(({ file, index }) => {
             const target: ReviewPatchTarget = {
               environmentId,
