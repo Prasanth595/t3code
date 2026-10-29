@@ -11,7 +11,11 @@ import {
   type TrackedSpanReport,
   wrapTracer,
 } from "../observability/spanRegistry.ts";
-import { startStallDetector } from "../observability/stallDetector.ts";
+import {
+  type Stall,
+  type StallDetectorOptions,
+  startStallDetector,
+} from "../observability/stallDetector.ts";
 import { makeStallProfiler } from "../observability/stallProfiler.ts";
 
 const STALL_LOG_MAX_BYTES = 256 * 1024;
@@ -30,6 +34,13 @@ const listed = (label: string, spans: ReadonlyArray<TrackedSpanReport>) =>
         )
         .join(", ")}`;
 
+/**
+ * Busy: the loop's thread was computing for at least half the stall, so code held it. Starved:
+ * it was mostly descheduled or waiting on the machine (swap, load), so the cause is outside.
+ */
+export const stallKind = ({ cpuMs, stallMs }: Pick<Stall, "cpuMs" | "stallMs">) =>
+  cpuMs >= stallMs / 2 ? "busy" : "starved";
+
 export interface StallAttributionOptions {
   readonly intervalMs?: number;
   readonly thresholdMs?: number;
@@ -43,6 +54,11 @@ export interface StallAttributionOptions {
   /** Tests shorten these; the profiler's defaults are 5 s and 30 s. */
   readonly profileThresholdMs?: number;
   readonly profileDurationMs?: number;
+  /** Tests drive the detector's clock, which the span registry shares, and its usage readings. */
+  readonly detector?: Pick<
+    StallDetectorOptions,
+    "now" | "readUsage" | "readLoad1" | "checkUtilization"
+  >;
 }
 
 /**
@@ -76,7 +92,9 @@ const attributionLayer = (options: StallAttributionOptions) =>
       const logsDir = path.dirname(serverTracePath);
       const filePath = path.join(logsDir, "factory-event-loop-stalls.ndjson");
 
-      const registry = makeSpanRegistry();
+      const registry = makeSpanRegistry(
+        options.detector?.now === undefined ? {} : { now: options.detector.now },
+      );
       const sink = yield* Effect.try(
         () =>
           new RotatingFileSink({
@@ -116,7 +134,18 @@ const attributionLayer = (options: StallAttributionOptions) =>
           startStallDetector({
             intervalMs: options.intervalMs ?? 250,
             thresholdMs: options.thresholdMs ?? 2000,
-            onStall: ({ stallMs, windowStartMs, windowEndMs }) => {
+            ...options.detector,
+            onStall: (stall) => {
+              const {
+                stallMs,
+                windowStartMs,
+                windowEndMs,
+                cpuMs,
+                cpuSource,
+                majorPageFaults,
+                load1,
+              } = stall;
+              const kind = stallKind(stall);
               const spans = registry.active(windowStartMs, windowEndMs, REPORTED_SPANS);
               const oldestInFlight = registry.oldestInFlight(windowEndMs, REPORTED_SPANS);
               // Started first so the record can say whether this stall began a profile. The
@@ -125,7 +154,7 @@ const attributionLayer = (options: StallAttributionOptions) =>
               if (sink !== undefined) {
                 try {
                   sink.write(
-                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, profiled, spans, oldestInFlight })}\n`,
+                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, profiled, cpuMs, cpuSource, majorPageFaults, load1, kind, spans, oldestInFlight })}\n`,
                   );
                 } catch {
                   runFork(
@@ -135,8 +164,18 @@ const attributionLayer = (options: StallAttributionOptions) =>
               }
               runFork(
                 Effect.logWarning(
-                  `factory event loop stalled for ${stallMs} ms${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}`,
-                  { stallMs, profiled, spans, oldestInFlight },
+                  `factory event loop stalled for ${stallMs} ms${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}; kind: ${kind} (cpu ${cpuMs} ms, load ${load1}, major faults ${majorPageFaults})`,
+                  {
+                    stallMs,
+                    profiled,
+                    cpuMs,
+                    cpuSource,
+                    majorPageFaults,
+                    load1,
+                    kind,
+                    spans,
+                    oldestInFlight,
+                  },
                 ),
               );
             },
