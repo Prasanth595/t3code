@@ -1431,6 +1431,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
           const lastTurnId = lastTurnIdByThread.get(sourceThreadId);
           const forked = yield* client.request("thread/fork", {
             threadId: sourceThreadId,
+            excludeTurns: true,
             ...(lastTurnId === undefined ? {} : { lastTurnId }),
             ...threadRuntimeParams,
           });
