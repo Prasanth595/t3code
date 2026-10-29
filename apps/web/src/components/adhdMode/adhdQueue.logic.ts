@@ -30,7 +30,7 @@ function resolveCardKind(
   if (thread.hasPendingUserInput) return "input";
   // A subagent's request is answered in its own thread, which gets its own card.
   const status = resolveSidebarThreadStatus({ ...thread, pendingSubagentRequest: null });
-  if (status === "failed") return "failed";
+  if (status === "failed" || status === "limited") return "failed";
   if (status !== "ready") return null;
   const wokeAt = threadWokeAt(thread, { now });
   const woke = wokeAt !== null && (lastVisitedAt === undefined || lastVisitedAt < wokeAt);

@@ -476,8 +476,12 @@ function AdhdCard(props: {
     else if (key === " " && question?.multiSelect) togglePick(selected);
     else if (key === "e" || key === "enter") accept(selected);
     else if (key === "r") {
-      // A suggested prompt starts as the draft, so a small tweak is a small edit.
-      if (wantsSuggestions && reply === "") setReply(options[selected]?.label ?? "");
+      // A suggested prompt or the question's own default starts as the draft, so a tweak is a small edit.
+      if (reply === "") {
+        setReply(
+          question?.initialAnswer ?? (wantsSuggestions ? (options[selected]?.label ?? "") : ""),
+        );
+      }
       setReplying(true);
     } else if (key === "backspace") snooze();
     else if (key === "escape") dismiss();

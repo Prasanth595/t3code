@@ -68,6 +68,9 @@ describe("buildAdhdQueue", () => {
           latestRun: completedRun("2026-03-09T10:45:00.000Z"),
         }),
         thread("failed-a", "project-a", { runtime: failedRuntime }),
+        thread("limited-b", "project-b", {
+          runtime: { ...failedRuntime, lastErrorClass: "usage_limit" },
+        }),
         thread("input-a", "project-a", { hasPendingUserInput: true }),
       ]),
     ).toEqual([
@@ -76,6 +79,7 @@ describe("buildAdhdQueue", () => {
       "failed-a:failed",
       "done-a-older:done",
       "done-b:done",
+      "limited-b:failed",
     ]);
   });
 
