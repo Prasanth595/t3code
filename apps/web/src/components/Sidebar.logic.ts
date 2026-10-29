@@ -186,6 +186,22 @@ export function isSidebarEnvironmentDisconnected(phase: EnvironmentConnectionPha
   return phase !== "connected" && phase !== "connecting";
 }
 
+/** A collapsed shelf must not hide a thread whose environment stopped answering. */
+export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
+  thread: T,
+  input: {
+    readonly enabled: boolean;
+    readonly disconnectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+    readonly isWorking: (thread: T) => boolean;
+  },
+): boolean {
+  return (
+    input.enabled &&
+    !input.disconnectedEnvironmentIds.has(thread.environmentId) &&
+    input.isWorking(thread)
+  );
+}
+
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =

@@ -11,6 +11,7 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
+  belongsInSidebarWorkingShelf,
   isSidebarEnvironmentDisconnected,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -1093,6 +1094,21 @@ describe("Working shelf (beta)", () => {
     ["available", true],
   ] as const)("lists threads outside the shelf on a %s environment: %s", (phase, disconnected) => {
     expect(isSidebarEnvironmentDisconnected(phase)).toBe(disconnected);
+  });
+
+  it("lists a running thread outside the shelf while its environment is disconnected", () => {
+    const thread = { ...idle, runtime, environmentId: localEnvironmentId };
+    const shelve = (disconnected: ReadonlyArray<EnvironmentId>, enabled = true) =>
+      belongsInSidebarWorkingShelf(thread, {
+        enabled,
+        disconnectedEnvironmentIds: new Set(disconnected),
+        isWorking: isSidebarThreadWorking,
+      });
+
+    expect(shelve([])).toBe(true);
+    expect(shelve([localEnvironmentId])).toBe(false);
+    expect(shelve([EnvironmentId.make("environment-other")])).toBe(true);
+    expect(shelve([], false)).toBe(false);
   });
 
   describe("sortInboxThreadsByReturn", () => {
