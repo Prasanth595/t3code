@@ -44,6 +44,13 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     void this.persistLatest();
   }
 
+  /** Drops the unsaved draft without writing it. */
+  discard(): void {
+    this.clearTimer();
+    this.confirmedRevision = this.latestRevision;
+    this.options.onPendingChange(false);
+  }
+
   dispose(): void {
     this.disposed = true;
     this.clearTimer();

@@ -1033,6 +1033,9 @@ export default function FilePreviewPanel({
     relativePath,
     attachment === undefined && relativePath !== null,
   );
+  const canEditFile =
+    attachment === undefined &&
+    (relativePath === null || !isHostPath(relativePath) || file.supportsConditionalWrite);
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0);
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
   // Folder links fail file reads; retain mutation refresh to detect conversion to files. Host folders own
@@ -1314,7 +1317,7 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+      {relativePath && canEditFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
         </div>
@@ -1475,7 +1478,7 @@ export default function FilePreviewPanel({
                 threadRef={threadRef}
                 contents={file.data.contents}
                 workspaceMutationId={workspaceMutationId}
-                readOnly={isHostFile || !canWriteFiles}
+                readOnly={!canEditFile || !canWriteFiles}
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
@@ -1485,7 +1488,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : file.data.truncated || !canEditFile || !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

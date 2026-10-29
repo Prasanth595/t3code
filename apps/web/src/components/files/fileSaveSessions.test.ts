@@ -20,6 +20,7 @@ function setup() {
   const state = {
     writable: true,
     unsaved: null as string | null,
+    base: undefined as string | undefined,
     onWritable: [] as Array<() => void>,
   };
   const persist = vi.fn<FileSaveSessionDeps["persist"]>(async () => AsyncResult.success(undefined));
@@ -37,6 +38,7 @@ function setup() {
     persist,
     confirm,
     readUnsaved: () => state.unsaved,
+    readBase: () => state.base,
   });
   const writes = () => persist.mock.calls.map(([written, contents]) => [written, contents]);
   return {
@@ -89,6 +91,34 @@ describe("file save sessions", () => {
     expect(h.writes()).toEqual([
       [target, "old file edit"],
       [other, "new file edit"],
+    ]);
+  });
+
+  it("saves a draft against the contents it started from, not a later read", async () => {
+    using h = setup();
+    const conditionalWrites = () =>
+      h.persist.mock.calls.map(([, contents, base]) => [contents, base]);
+    h.state.base = "original";
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "edit");
+    h.state.base = "agent rewrite";
+    await vi.advanceTimersByTimeAsync(500);
+    h.sessions.change(target, "edit 2");
+    await vi.advanceTimersByTimeAsync(500);
+    h.persist.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("changed"))));
+    h.sessions.change(target, "edit 3");
+    await vi.advanceTimersByTimeAsync(500);
+    h.sessions.change(target, "edit 4");
+    await vi.advanceTimersByTimeAsync(500);
+    h.sessions.discard(target);
+    h.sessions.change(target, "after reload");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(conditionalWrites()).toEqual([
+      ["edit", "original"],
+      ["edit 2", "edit"],
+      ["edit 3", "edit 2"],
+      ["edit 4", "edit 2"],
+      ["after reload", "agent rewrite"],
     ]);
   });
 

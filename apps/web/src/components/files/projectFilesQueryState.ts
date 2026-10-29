@@ -53,6 +53,8 @@ interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult>
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
   readonly isFile: boolean;
+  /** The server can save this file only if it is unchanged since this read. */
+  readonly supportsConditionalWrite: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -129,6 +131,18 @@ export function getUnsavedProjectFileQueryData(
 ): ProjectReadFileResult | null {
   const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
   return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
+}
+
+export function getPersistedProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | undefined {
+  return Option.getOrUndefined(
+    AsyncResult.value(
+      appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+    ),
+  );
 }
 
 export function confirmProjectFileQueryData(
@@ -289,6 +303,7 @@ export function useProjectFileQuery(
     isNotFile,
     // A folder error overrides cached contents retained across failed refreshes.
     isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
+    supportsConditionalWrite: readData?.supportsConditionalWrite === true,
     refresh,
   };
 }

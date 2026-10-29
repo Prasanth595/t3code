@@ -1,14 +1,21 @@
 import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { type AtomCommandResult, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { isHostPath } from "@t3tools/shared/path";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect } from "react";
 
+import { toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "~/state/session";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
+  clearProjectFileQueryData,
   confirmProjectFileQueryData,
+  getPersistedProjectFileQueryData,
+  getProjectFileQueryAtom,
   getUnsavedProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -28,7 +35,10 @@ export interface FileSaveSessionDeps {
   readonly persist: (
     target: FileSaveTarget,
     contents: string,
+    expectedContents: string | undefined,
   ) => Promise<AtomCommandResult<unknown, unknown>>;
+  /** The contents a save must replace, or undefined when saves to this file are unconditional. */
+  readonly readBase: (target: FileSaveTarget) => string | undefined;
   readonly confirm: (target: FileSaveTarget, contents: string) => boolean;
   readonly readUnsaved: (target: FileSaveTarget) => string | null;
 }
@@ -51,11 +61,21 @@ interface FileSaveSession {
  */
 export function createFileSaveSessions(deps: FileSaveSessionDeps) {
   const sessions = new Map<string, FileSaveSession>();
+  // The contents a draft was started from, pinned at its first edit: the file
+  // query refetches after every workspace mutation, so it can already hold
+  // someone else's newer contents by the time the draft saves.
+  const bases = new Map<string, string | undefined>();
+
+  const pinBase = (key: string, target: FileSaveTarget) => {
+    if (!bases.has(key)) bases.set(key, deps.readBase(target));
+  };
 
   const recover = (target: FileSaveTarget, coordinator: FileSaveCoordinator) => {
     if (!deps.canPersist(target)) return;
     const unsaved = deps.readUnsaved(target);
-    if (unsaved !== null) coordinator.change(unsaved);
+    if (unsaved === null) return;
+    pinBase(fileSaveKey(target), target);
+    coordinator.change(unsaved);
   };
 
   const create = (key: string, target: FileSaveTarget): FileSaveSession => {
@@ -68,13 +88,21 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       onPendingChange: (pending) => {
         for (const listener of listeners.keys()) listener(target.relativePath, pending);
       },
-      persist: (contents) => deps.persist(target, contents),
+      persist: async (contents) => {
+        const base = bases.get(key);
+        const result = await deps.persist(target, contents, base);
+        if (result._tag === "Success" && base !== undefined && bases.has(key)) {
+          bases.set(key, contents);
+        }
+        return result;
+      },
       onConfirmed: (contents) => deps.confirm(target, contents),
       onSettled: () => {
         if (!session.flushingOnRelease) return;
         session.flushingOnRelease = false;
         if (session.leases === 0) {
           if (sessions.get(key) === session) sessions.delete(key);
+          if (coordinator.unconfirmedContents === null) bases.delete(key);
           session.unsubscribeWritable();
         } else if (coordinator.unconfirmedContents !== null) {
           // A surface rejoined while the release flush failed; retry it once.
@@ -126,8 +154,17 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
     acquire,
     /** Edits for a file nobody holds open are dropped, so retired editors stay inert. */
     change(target: FileSaveTarget, contents: string): void {
-      const session = sessions.get(fileSaveKey(target));
-      if (session && session.leases > 0) session.coordinator.change(contents);
+      const key = fileSaveKey(target);
+      const session = sessions.get(key);
+      if (!session || session.leases === 0) return;
+      pinBase(key, target);
+      session.coordinator.change(contents);
+    },
+    /** Drops the unsaved draft; the next edit starts from the file as read then. */
+    discard(target: FileSaveTarget): void {
+      const key = fileSaveKey(target);
+      bases.delete(key);
+      sessions.get(key)?.coordinator.discard();
     },
   };
 }
@@ -150,16 +187,59 @@ const fileSaveSessions = createFileSaveSessions({
       },
     );
   },
-  persist: ({ environmentId, cwd, relativePath }, contents) =>
-    runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
+  persist: async (target, contents, expectedContents) => {
+    const { environmentId, cwd, relativePath } = target;
+    const result = await runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
       environmentId,
-      input: { cwd, relativePath, contents },
-    }),
+      input: {
+        cwd,
+        relativePath,
+        contents,
+        ...(expectedContents === undefined ? {} : { expectedContents }),
+      },
+    });
+    if (result._tag !== "Success" || result.value.conflict !== true) return result;
+    showSaveConflict(target);
+    return AsyncResult.failure(Cause.fail(new Error(`${relativePath} changed on disk.`)));
+  },
+  readBase: ({ environmentId, cwd, relativePath }) => {
+    if (!isHostPath(relativePath)) return undefined;
+    const file = getPersistedProjectFileQueryData(environmentId, cwd, relativePath);
+    return file?.supportsConditionalWrite && !file.truncated && file.exists !== false
+      ? file.contents
+      : undefined;
+  },
   confirm: ({ environmentId, cwd, relativePath }, contents) =>
     confirmProjectFileQueryData(environmentId, cwd, relativePath, contents),
   readUnsaved: ({ environmentId, cwd, relativePath }) =>
     getUnsavedProjectFileQueryData(environmentId, cwd, relativePath)?.contents ?? null,
 });
+
+const conflictToasts = new Map<string, ReturnType<typeof toastManager.add>>();
+
+function showSaveConflict(target: FileSaveTarget): void {
+  const key = fileSaveKey(target);
+  const previous = conflictToasts.get(key);
+  if (previous !== undefined) toastManager.close(previous);
+  const id = toastManager.add({
+    type: "error",
+    title: `${target.relativePath.split(/[\\/]/).pop()} changed on disk`,
+    description: "Your edits were not saved. Reload to see the current file and discard them.",
+    actionProps: {
+      children: "Reload",
+      onClick: () => {
+        toastManager.close(id);
+        conflictToasts.delete(key);
+        fileSaveSessions.discard(target);
+        clearProjectFileQueryData(target.environmentId, target.cwd, target.relativePath);
+        appAtomRegistry.refresh(
+          getProjectFileQueryAtom(target.environmentId, target.cwd, target.relativePath),
+        );
+      },
+    },
+  });
+  conflictToasts.set(key, id);
+}
 
 /** Holds the file's save session while the surface is mounted; the last surface to leave flushes. */
 export function useFileSaveSession(
