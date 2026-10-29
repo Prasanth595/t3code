@@ -297,7 +297,10 @@ const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test
 const READER_POOL_SIZE = 4;
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
-const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
+const makeReader = Effect.fnUntraced(function* (
+  options: SqliteClientConfig,
+  pool: { unavailable: boolean },
+) {
   let current:
     | {
         readonly worker: NodeWorkerThreads.Worker;
@@ -305,7 +308,6 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         readonly started: Promise<ReaderStartup>;
       }
     | undefined;
-  let unavailable = false;
   let nextRequestId = 0;
 
   const start = () => {
@@ -442,8 +444,8 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         void reader.worker.terminate();
       }
       // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-      if (unavailable) return Effect.succeed(undefined);
-      unavailable = true;
+      if (pool.unavailable) return Effect.succeed(undefined);
+      pool.unavailable = true;
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
         reason,
       }).pipe(Effect.as(undefined));
@@ -451,7 +453,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-    if (unavailable) return Effect.succeed(undefined);
+    if (pool.unavailable) return Effect.succeed(undefined);
     let reader: NonNullable<typeof current>;
     try {
       reader = current ?? start();
@@ -470,7 +472,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
       }),
       (startup): Effect.Effect<Connection | undefined> =>
         // A late ready event must not hand out a worker retired by another acquire timeout.
-        unavailable || current !== reader
+        pool.unavailable || current !== reader
           ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
             Effect.succeed(undefined)
           : Option.isSome(startup) && startup.value.type === "ready"
@@ -1076,14 +1078,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
 
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
+  // A reader that cannot start turns off the whole pool, so routing never picks a dead slot.
+  const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
       ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
-          Effect.map(Effect.all([makeReader(options), Semaphore.make(1)]), ([acquire, lock]) => ({
-            acquire,
-            lock,
-            claims: 0,
-          })),
+          Effect.map(
+            Effect.all([makeReader(options, readerPool), Semaphore.make(1)]),
+            ([acquire, lock]) => ({
+              acquire,
+              lock,
+              claims: 0,
+            }),
+          ),
         )
       : [];
 
@@ -1092,7 +1099,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   // Callers must run route uninterruptibly and pass `claimed` a finalizer that runs `release` once.
   const route = (claimed: (release: Effect.Effect<void>) => Effect.Effect<void>) =>
     Effect.withFiber((fiber) => {
-      if (readers.length === 0 || !Context.get(fiber.context, ReadOnly)) {
+      if (readers.length === 0 || readerPool.unavailable || !Context.get(fiber.context, ReadOnly)) {
         return Effect.succeed(writer);
       }
       // Least claimed wins and ties go to the lowest slot, so idle slots never start a worker.

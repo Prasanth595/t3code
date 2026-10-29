@@ -354,6 +354,25 @@ it.effect("uses the writer when the reader cannot open the database", () =>
 
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+
+      // A read beside an open read transaction must not start a worker on the next slot.
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(held, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(held);
+      const other = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      assert.equal(yield* Fiber.join(other), 1);
       assert.equal(startedWorkers.length, startedBefore + 1);
     }),
   ),
