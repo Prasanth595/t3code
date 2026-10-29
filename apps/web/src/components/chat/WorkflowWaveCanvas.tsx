@@ -35,7 +35,10 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "../ui/popover";
-import { scrollFadeStyle } from "./scrollFade";
+import {
+  getVirtualizedScrollFadeClassName,
+  getHorizontalVirtualizedScrollFadeClassName,
+} from "../ui/scroll-area";
 import {
   WAVE_CARD_BORDER,
   type WaveBox,
@@ -179,13 +182,17 @@ export function WorkflowWaveCanvas(props: {
   return (
     <div
       ref={scrollRef}
-      className="max-h-120 overflow-auto px-1 pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      style={scrollFadeStyle({
-        left: viewport !== null && viewport.left > 1,
-        top: viewport !== null && viewport.top > 1,
-        right: viewport !== null && viewport.left + viewport.width < layout.width - 1,
-        bottom: viewport !== null && viewport.top + viewport.height < layout.height - 1,
-      })}
+      className={cn(
+        "max-h-120 overflow-auto px-1 pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        getVirtualizedScrollFadeClassName({
+          top: viewport !== null && viewport.top > 1,
+          bottom: viewport !== null && viewport.top + viewport.height < layout.height - 1,
+        }),
+        getHorizontalVirtualizedScrollFadeClassName({
+          left: viewport !== null && viewport.left > 1,
+          right: viewport !== null && viewport.left + viewport.width < layout.width - 1,
+        }),
+      )}
       data-workflow-waves
       role="region"
       aria-label="Workflow graph"

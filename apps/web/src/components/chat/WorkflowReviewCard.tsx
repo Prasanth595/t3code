@@ -10,12 +10,13 @@ import {
 } from "@t3tools/client-runtime/state/workflowReview";
 import { WorkflowIcon } from "lucide-react";
 
-import { useRef } from "react";
+import { useState } from "react";
 
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
-import { scrollFadeStyle, useScrollEdges } from "./scrollFade";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 
 const STATUS_TONE: Record<WorkflowReviewStatus, string> = {
   ready: "border-warning/30 bg-warning/8 text-warning-foreground",
@@ -53,8 +54,16 @@ export function WorkflowReviewCard(props: {
   const title = review.name ?? "Workflow plan";
   const steps = workflowReviewSteps(review);
   const pending = presentation.status === "approving" || presentation.status === "dismissing";
-  const tasksRef = useRef<HTMLOListElement>(null);
-  const taskEdges = useScrollEdges(tasksRef);
+  const [taskEdges, setTaskEdges] = useState({ top: false, bottom: false });
+  const updateTaskEdges = (element: HTMLElement) => {
+    const top = element.scrollTop > 1;
+    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
+    setTaskEdges((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
+    );
+  };
+  const observeTaskEdges = (element: HTMLOListElement | null) =>
+    element ? observeResize(element, () => updateTaskEdges(element)) : undefined;
   // A stale plan is out of date, not broken: its note shares the pill's amber warning.
   const noteTone =
     presentation.note === null
@@ -119,16 +128,15 @@ export function WorkflowReviewCard(props: {
       ) : null}
       {steps.length > 0 ? (
         <ol
-          ref={tasksRef}
-          style={scrollFadeStyle({
-            top: taskEdges.top === true,
-            right: false,
-            bottom: taskEdges.bottom,
-          })}
+          ref={observeTaskEdges}
+          onScroll={(event) => updateTaskEdges(event.currentTarget)}
           aria-label="Tasks"
           // A long graph scrolls inside the card, so the decision buttons stay near the plan.
           tabIndex={0}
-          className="m-0 flex max-h-[28rem] list-none flex-col gap-2 overflow-y-auto p-0 focus-visible:outline-2 focus-visible:outline-ring"
+          className={cn(
+            "m-0 flex max-h-[28rem] list-none flex-col gap-2 overflow-y-auto p-0 focus-visible:outline-2 focus-visible:outline-ring",
+            getVirtualizedScrollFadeClassName(taskEdges),
+          )}
         >
           {steps.map(({ step, nodes }) => (
             <li key={step} aria-label={`Step ${step}`}>

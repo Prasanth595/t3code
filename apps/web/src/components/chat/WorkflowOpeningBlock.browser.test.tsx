@@ -276,10 +276,21 @@ it("grows a card only by its checker rows and keeps the canvas stable while scro
   const far = element.querySelector('[data-workflow-node="14-9"]')!;
   expect(far.hasAttribute("data-workflow-node-placeholder")).toBe(true);
   expect(far.getAttribute("aria-label")).toContain("Audit 14-9");
+  await vi.waitFor(() => {
+    const mask = getComputedStyle(element).maskImage;
+    expect(mask).toContain("linear-gradient(to right, rgb(0, 0, 0)");
+    expect(mask).toContain("linear-gradient(rgb(0, 0, 0) calc(");
+  });
   element.scrollTo({ top: element.scrollHeight, left: element.scrollWidth });
   expect(element.scrollLeft).toBeGreaterThan(0);
   expect(element.scrollTop).toBeGreaterThan(0);
   expect(element.getBoundingClientRect().height).toBe(height);
+  await vi.waitFor(() => {
+    const mask = getComputedStyle(element).maskImage;
+    expect(mask).toContain("linear-gradient(to right, rgba(0, 0, 0, 0)");
+    expect(mask).toContain("linear-gradient(rgba(0, 0, 0, 0)");
+    expect(mask.split("rgba(0, 0, 0, 0)")).toHaveLength(3);
+  });
   await expect
     .poll(() =>
       element

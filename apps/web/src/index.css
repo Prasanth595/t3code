@@ -523,6 +523,39 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
+@utility horizontal-virtualized-scroll-fade {
+  -webkit-mask-image: var(--horizontal-virtualized-scroll-fade-mask), linear-gradient(black, black);
+  mask-image: var(--horizontal-virtualized-scroll-fade-mask), linear-gradient(black, black);
+  -webkit-mask-position: top, bottom;
+  mask-position: top, bottom;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size:
+    100% calc(100% - var(--app-scrollbar-width)),
+    100% var(--app-scrollbar-width);
+  mask-size:
+    100% calc(100% - var(--app-scrollbar-width)),
+    100% var(--app-scrollbar-width);
+
+  /* Preserve both scrollbar lanes when a canvas overflows on both axes. */
+  &.virtualized-scroll-fade {
+    mask-image:
+      linear-gradient(black, black), linear-gradient(black, black),
+      var(--virtualized-scroll-fade-mask), var(--horizontal-virtualized-scroll-fade-mask);
+    mask-position:
+      right,
+      bottom,
+      left top,
+      left top;
+    mask-size:
+      var(--app-scrollbar-width) 100%,
+      100% var(--app-scrollbar-width),
+      100% 100%,
+      100% 100%;
+    mask-composite: add, add, intersect;
+  }
+}
+
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {

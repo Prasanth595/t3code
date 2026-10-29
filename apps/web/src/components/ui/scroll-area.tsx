@@ -19,6 +19,29 @@ function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bott
   );
 }
 
+function getHorizontalVirtualizedScrollFadeClassName({
+  left,
+  right,
+}: {
+  left: boolean;
+  right: boolean;
+}) {
+  if (!left && !right) return undefined;
+
+  return cn(
+    "horizontal-virtualized-scroll-fade [--fade-size:1.5rem]",
+    left &&
+      right &&
+      "[--horizontal-virtualized-scroll-fade-mask:linear-gradient(to_right,transparent,black_var(--fade-size),black_calc(100%-var(--fade-size)),transparent)]",
+    left &&
+      !right &&
+      "[--horizontal-virtualized-scroll-fade-mask:linear-gradient(to_right,transparent,black_var(--fade-size))]",
+    !left &&
+      right &&
+      "[--horizontal-virtualized-scroll-fade-mask:linear-gradient(to_right,black_calc(100%-var(--fade-size)),transparent)]",
+  );
+}
+
 function ScrollArea({
   className,
   children,
@@ -99,4 +122,9 @@ function ScrollBar({
   );
 }
 
-export { getVirtualizedScrollFadeClassName, ScrollArea, ScrollBar };
+export {
+  getVirtualizedScrollFadeClassName,
+  getHorizontalVirtualizedScrollFadeClassName,
+  ScrollArea,
+  ScrollBar,
+};

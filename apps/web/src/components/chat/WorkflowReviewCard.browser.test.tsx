@@ -455,6 +455,16 @@ describe("workflow review card in the chat timeline", () => {
     expect(card(screen.container)!.dataset.workflowReviewStatus).toBe("ready");
     expect(card(screen.container)!.textContent).toContain("400 tasks in 1 step");
     expect(card(screen.container)!.textContent).toContain("280 more tasks not listed here.");
+    const tasks = screen.getByRole("list", { name: "Tasks", exact: true }).element();
+    await vi.waitFor(() =>
+      expect(getComputedStyle(tasks).maskImage).toContain("linear-gradient(rgb(0, 0, 0) calc("),
+    );
+    tasks.scrollTo({ top: tasks.scrollHeight });
+    await vi.waitFor(() => {
+      const mask = getComputedStyle(tasks).maskImage;
+      expect(mask).toContain("linear-gradient(rgba(0, 0, 0, 0)");
+      expect(mask.split("rgba(0, 0, 0, 0)")).toHaveLength(2);
+    });
     expect(button(screen.container, "Approve & run").disabled).toBe(false);
     await click(button(screen.container, "Approve & run"));
     expect(app.approve).toHaveBeenCalledTimes(1);
