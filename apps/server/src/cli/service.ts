@@ -267,77 +267,81 @@ const serviceProtectCommand = Command.make("protect", {
     "Protect the T3 Code server from agents under memory pressure (Linux with systemd). Asks for sudo.",
   ),
   Command.withHandler((flags) =>
-    runServiceCommand(
-      flags,
-      Effect.gen(function* () {
-        const unsupported = "Service protection needs Linux with systemd.";
-        if ((yield* HostProcess.Platform) !== "linux") return yield* Console.log(unsupported);
-        const uid = yield* HostProcess.UserId;
-        if (uid === 0) {
-          return yield* Console.log(
-            "Run `t3 service protect` as the user that runs T3 Code, without sudo. It asks for sudo when it needs root.",
-          );
-        }
-        const remote = yield* ServiceProtection.detectRemoteAccessUnits;
-        const { unitPath } = yield* (yield* BootService.BootService).status;
-        if (uid === undefined || remote === undefined || unitPath === "") {
-          return yield* Console.log(unsupported);
-        }
-        const userUnitDir = (yield* Path.Path).dirname(unitPath);
-
-        if (flags.undo) {
-          const installed = yield* ServiceProtection.installedProtection(
-            ServiceProtection.protectionPlan({
-              uid,
-              userUnitDir,
-              remoteAccessUnits: ServiceProtection.REMOTE_ACCESS_UNITS,
-            }),
-          );
-          if (installed === undefined) {
-            return yield* Console.log("T3 Code service protection is not set up.");
+    Effect.gen(function* () {
+      const unsupported = "Service protection needs Linux with systemd.";
+      if ((yield* HostProcess.Platform) !== "linux") return yield* Console.log(unsupported);
+      // Before resolving config, which creates T3 directories that root would then own.
+      if ((yield* HostProcess.UserId) === 0) {
+        return yield* Console.log(
+          "Run `t3 service protect` as the user that runs T3 Code, without sudo. It asks for sudo when it needs root.",
+        );
+      }
+      return yield* runServiceCommand(
+        flags,
+        Effect.gen(function* () {
+          const uid = yield* HostProcess.UserId;
+          const remote = yield* ServiceProtection.detectRemoteAccessUnits;
+          const { unitPath } = yield* (yield* BootService.BootService).status;
+          if (uid === undefined || remote === undefined || unitPath === "") {
+            return yield* Console.log(unsupported);
           }
+          const userUnitDir = (yield* Path.Path).dirname(unitPath);
+
+          if (flags.undo) {
+            const installed = yield* ServiceProtection.installedProtection(
+              ServiceProtection.protectionPlan({
+                uid,
+                userUnitDir,
+                remoteAccessUnits: ServiceProtection.REMOTE_ACCESS_UNITS,
+              }),
+            );
+            if (installed === undefined) {
+              return yield* Console.log("T3 Code service protection is not set up.");
+            }
+            yield* Console.log(
+              [
+                "Removes:",
+                ...[...installed.system, ...installed.user, installed.managerDefaults].map(
+                  ({ path, shared }) =>
+                    `  ${path}${shared === true ? " (kept while another user is protected)" : ""}`,
+                ),
+              ].join("\n"),
+            );
+            if (!(yield* confirm(flags.yes, "Remove T3 Code service protection?"))) return;
+            yield* ServiceProtection.removeProtection(installed);
+            return yield* Console.log(
+              "Removed T3 Code service protection. The server's OOM score returns to normal after `t3 service restart`.",
+            );
+          }
+
+          const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
+          const protectRemote =
+            remote.length > 0 &&
+            (yield* confirm(
+              flags.yes,
+              `Also protect ${names} so you can still reach this machine under memory pressure?`,
+            ));
+          const plan = ServiceProtection.protectionPlan({
+            uid,
+            userUnitDir,
+            remoteAccessUnits: protectRemote ? remote : [],
+          });
           yield* Console.log(
             [
-              "Removes:",
-              ...[...installed.system, ...installed.user, installed.managerDefaults].map(
-                ({ path }) => `  ${path}`,
-              ),
+              "As root, through sudo:",
+              ...formatDropIns(plan.system),
+              "As you:",
+              ...formatDropIns([plan.managerDefaults, ...plan.user]),
             ].join("\n"),
           );
-          if (!(yield* confirm(flags.yes, "Remove T3 Code service protection?"))) return;
-          yield* ServiceProtection.removeProtection(installed);
-          return yield* Console.log(
-            "Removed T3 Code service protection. The server's OOM score returns to normal after `t3 service restart`.",
+          if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
+          yield* ServiceProtection.applyProtection(plan);
+          yield* Console.log(
+            "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
           );
-        }
-
-        const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
-        const protectRemote =
-          remote.length > 0 &&
-          (yield* confirm(
-            flags.yes,
-            `Also protect ${names} so you can still reach this machine under memory pressure?`,
-          ));
-        const plan = ServiceProtection.protectionPlan({
-          uid,
-          userUnitDir,
-          remoteAccessUnits: protectRemote ? remote : [],
-        });
-        yield* Console.log(
-          [
-            "As root, through sudo:",
-            ...formatDropIns(plan.system),
-            "As you:",
-            ...formatDropIns([plan.managerDefaults, ...plan.user]),
-          ].join("\n"),
-        );
-        if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
-        yield* ServiceProtection.applyProtection(plan);
-        yield* Console.log(
-          "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
-        );
-      }).pipe(Effect.provide(ProcessRunner.layer)),
-    ),
+        }).pipe(Effect.provide(ProcessRunner.layer)),
+      );
+    }),
   ),
 );
 

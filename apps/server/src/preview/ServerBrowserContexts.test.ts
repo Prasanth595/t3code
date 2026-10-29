@@ -55,6 +55,17 @@ const options = () => ({
   env: {},
 });
 
+const withLauncher = () => {
+  const release = vi.fn(async () => {});
+  return {
+    release,
+    configuration: {
+      ...options(),
+      launcher: vi.fn(async (executable: string) => ({ path: `${executable}-launcher`, release })),
+    },
+  };
+};
+
 beforeEach(() => {
   launches.launch.mockReset();
   launches.persistent.mockReset();
@@ -67,18 +78,24 @@ describe("ServerBrowserContexts", () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();
     launches.launch.mockReturnValue(launch.promise);
-    const configuration = options();
+    const { configuration, release } = withLauncher();
     const pool = new ServerBrowserContexts(configuration);
     expect(configuration.executable).not.toHaveBeenCalled();
     const first = pool.contextFor("default", "agent-a");
     const again = pool.contextFor("default", "agent-a");
     const second = pool.contextFor("default", "agent-b");
     const incognito = pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID);
+    await vi.waitFor(() => expect(launches.launch).toHaveBeenCalled());
+    // Playwright may retry the same path until the launch settles.
+    expect(release).not.toHaveBeenCalled();
     launch.resolve(browser as unknown as Browser);
     const [a, reused, b, privateContext] = await Promise.all([first, again, second, incognito]);
+    expect(release).toHaveBeenCalledTimes(1);
     expect(a).toBe(reused);
     expect(new Set([a, b, privateContext]).size).toBe(3);
-    expect(launches.launch).toHaveBeenCalledTimes(1);
+    expect(launches.launch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ executablePath: "/test/chromium-launcher" }),
+    );
     expect(launches.persistent).not.toHaveBeenCalled();
     expect(browser.newContext).toHaveBeenCalledWith({
       viewport: { width: 1280, height: 800 },
@@ -94,14 +111,16 @@ describe("ServerBrowserContexts", () => {
     const browser = makeBrowser();
     launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
     launches.launch.mockResolvedValue(browser as unknown as Browser);
-    const pool = new ServerBrowserContexts(options());
+    const { configuration, release } = withLauncher();
+    const pool = new ServerBrowserContexts(configuration);
     const persistent = await pool.contextFor("work/team");
     expect(await pool.contextFor("work/team")).toBe(persistent);
     expect(await pool.contextFor("work/team", "agent")).not.toBe(persistent);
     expect(launches.persistent).toHaveBeenCalledExactlyOnceWith(
       "/test/profiles/work%2Fteam",
-      expect.objectContaining({ chromiumSandbox: true, executablePath: "/test/chromium" }),
+      expect.objectContaining({ chromiumSandbox: true, executablePath: "/test/chromium-launcher" }),
     );
+    expect(release).toHaveBeenCalledTimes(2);
     expect(launches.mkdir).toHaveBeenCalledWith("/test/profiles/work%2Fteam", { recursive: true });
     await pool.close();
     expect(human.close).toHaveBeenCalledTimes(1);

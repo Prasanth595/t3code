@@ -76,13 +76,10 @@ export interface AgentSystemdScope {
 
 const quoteShell = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
-/**
- * An executable file for launchers that take a path, not a command line,
- * such as Playwright. It deletes itself, then appends the caller's arguments.
- */
+/** An executable file for launchers that take a path, not a command line, such as Playwright. */
 export function agentScopeLauncherScript(launch: AgentScopeCommand): string {
   const command = [launch.command, ...launch.args].map(quoteShell).join(" ");
-  return `#!/bin/sh\nrm -f -- "$0"\nexec ${command} "$@"\n`;
+  return `#!/bin/sh\nexec ${command} "$@"\n`;
 }
 
 /** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */

@@ -22,9 +22,12 @@ export interface DropIn {
   readonly unit: string;
   readonly path: string;
   readonly contents: string;
+  /** Host-wide, so undo keeps it while another user's protection remains. */
+  readonly shared?: boolean;
 }
 
 export interface ProtectionPlan {
+  readonly systemUnitDir: string;
   /** Written through sudo. */
   readonly system: ReadonlyArray<DropIn>;
   /**
@@ -42,10 +45,12 @@ const dropIn = (
   unit: string,
   section: string,
   properties: ReadonlyArray<string>,
+  shared = false,
 ): DropIn => ({
   unit,
   path: `${directory}/${unit}.d/${PROTECT_DROP_IN}`,
   contents: [`[${section}]`, ...properties, ""].join("\n"),
+  ...(shared ? { shared } : {}),
 });
 
 /**
@@ -56,20 +61,25 @@ export function protectionPlan(input: {
   readonly uid: number;
   readonly userUnitDir: string;
   readonly remoteAccessUnits: ReadonlyArray<string>;
+  readonly systemUnitDir?: string;
 }): ProtectionPlan {
   const manager = `user@${input.uid}.service`;
   const remote = input.remoteAccessUnits;
+  const systemUnitDir = input.systemUnitDir ?? SYSTEM_UNIT_DIR;
   const system = (unit: string, section: string, properties: ReadonlyArray<string>) =>
-    dropIn(SYSTEM_UNIT_DIR, unit, section, properties);
+    dropIn(systemUnitDir, unit, section, properties);
+  const shared = (unit: string, section: string, properties: ReadonlyArray<string>) =>
+    dropIn(systemUnitDir, unit, section, properties, true);
   const user = (unit: string, section: string, properties: ReadonlyArray<string>) =>
     dropIn(input.userUnitDir, unit, section, properties);
   return {
+    systemUnitDir,
     system: [
-      system("user.slice", "Slice", [USER_CHAIN_LOW]),
+      shared("user.slice", "Slice", [USER_CHAIN_LOW]),
       system(`user-${input.uid}.slice`, "Slice", [USER_CHAIN_LOW]),
       system(manager, "Service", [USER_CHAIN_LOW, PROTECTED_OOM_SCORE]),
-      ...(remote.length > 0 ? [system("system.slice", "Slice", ["MemoryLow=512M"])] : []),
-      ...remote.map((unit) => system(unit, "Service", ["MemoryLow=256M", PROTECTED_OOM_SCORE])),
+      ...(remote.length > 0 ? [shared("system.slice", "Slice", ["MemoryLow=512M"])] : []),
+      ...remote.map((unit) => shared(unit, "Service", ["MemoryLow=256M", PROTECTED_OOM_SCORE])),
     ],
     managerDefaults: {
       unit: "user.conf",
@@ -90,18 +100,32 @@ const directoryOf = (file: string) => file.slice(0, file.lastIndexOf("/"));
 
 export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "undo"): string {
   const lines = ["set -e"];
-  for (const { path, contents } of plan.system) {
-    const directory = quoteShell(directoryOf(path));
-    if (mode === "apply") {
+  const remove = (dropIns: ReadonlyArray<DropIn>, indent = "") => {
+    for (const { path } of dropIns) {
       lines.push(
-        `mkdir -p ${directory}`,
+        `${indent}rm -f ${quoteShell(path)}`,
+        `${indent}rmdir ${quoteShell(directoryOf(path))} 2>/dev/null || true`,
+      );
+    }
+  };
+  if (mode === "apply") {
+    for (const { path, contents } of plan.system) {
+      lines.push(
+        `mkdir -p ${quoteShell(directoryOf(path))}`,
         `cat >${quoteShell(path)} <<'T3CODE_PROTECT'`,
         contents.trimEnd(),
         "T3CODE_PROTECT",
       );
-    } else {
-      lines.push(`rm -f ${quoteShell(path)}`, `rmdir ${directory} 2>/dev/null || true`);
     }
+  } else {
+    remove(plan.system.filter((dropIn) => dropIn.shared !== true));
+    const otherUsers = `${quoteShell(plan.systemUnitDir)}/user@*.service.d/${PROTECT_DROP_IN}`;
+    lines.push(`set -- ${otherUsers}`, 'if [ ! -e "$1" ]; then');
+    remove(
+      plan.system.filter((dropIn) => dropIn.shared === true),
+      "  ",
+    );
+    lines.push("fi");
   }
   lines.push(
     "systemctl daemon-reload",
@@ -119,10 +143,16 @@ export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "un
 
 export class ServiceProtectionError extends Schema.TaggedError<ServiceProtectionError>()(
   "ServiceProtectionError",
-  { step: Schema.String, detail: Schema.String },
+  {
+    step: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
-    return `Could not ${this.step}: ${this.detail}`;
+    return this.exitCode === undefined
+      ? `Could not ${this.step}.`
+      : `Could not ${this.step} (exit code ${this.exitCode}).`;
   }
 }
 
@@ -158,18 +188,15 @@ const run = Effect.fn("ServiceProtection.run")(function* (
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({ command, args, timeout: "30 seconds" })
-    .pipe(Effect.mapError((cause) => new ServiceProtectionError({ step, detail: String(cause) })));
+    .pipe(Effect.mapError((cause) => new ServiceProtectionError({ step, cause })));
   if (result.code !== 0) {
-    return yield* new ServiceProtectionError({
-      step,
-      detail: result.stderr.trim() || `${command} exited with ${result.code}`,
-    });
+    return yield* new ServiceProtectionError({ step, exitCode: Number(result.code) });
   }
   return result.stdout;
 });
 
-const userSettingsError = (cause: { readonly message: string }) =>
-  new ServiceProtectionError({ step: "change systemd user settings", detail: cause.message });
+const userSettingsError = (cause: unknown) =>
+  new ServiceProtectionError({ step: "change systemd user settings", cause });
 
 /** Undefined when there is no systemd system manager to ask. */
 export const detectRemoteAccessUnits = run("list remote-access services", "systemctl", [
@@ -219,9 +246,9 @@ const runPrivileged = Effect.fn("ServiceProtection.runPrivileged")(function* (sc
         stderr: "inherit",
       }),
     )
-    .pipe(Effect.mapError((cause) => new ServiceProtectionError({ step, detail: String(cause) })));
+    .pipe(Effect.mapError((cause) => new ServiceProtectionError({ step, cause })));
   if (exitCode !== 0) {
-    return yield* new ServiceProtectionError({ step, detail: `sudo exited with ${exitCode}` });
+    return yield* new ServiceProtectionError({ step, exitCode: Number(exitCode) });
   }
 });
 
@@ -285,11 +312,12 @@ export const readProtection = Effect.fn("ServiceProtection.read")(function* (use
       Effect.orElseSucceed(() => ""),
     );
   let unprotected: string | undefined;
+  const grants = (value: string) => value !== "" && value !== "0";
   for (let depth = 1; depth <= controlGroup.length && unprotected === undefined; depth++) {
-    const low = yield* read(
-      path.join("/sys/fs/cgroup", ...controlGroup.slice(0, depth), "memory.low"),
-    );
-    if (low === "" || low === "0") unprotected = controlGroup[depth - 1];
+    const directory = path.join("/sys/fs/cgroup", ...controlGroup.slice(0, depth));
+    const low = yield* read(path.join(directory, "memory.low"));
+    const min = yield* read(path.join(directory, "memory.min"));
+    if (!grants(low) && !grants(min)) unprotected = controlGroup[depth - 1];
   }
   const pid = Number(values.get("MainPID") ?? 0);
   const score = pid > 0 ? yield* read(`/proc/${pid}/oom_score_adj`) : "";

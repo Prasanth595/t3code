@@ -481,11 +481,11 @@ const make = Effect.gen(function* () {
       const launch = await runPromise(
         agentScope.wrap({ command: executable, args: [], name: "preview-browser" }),
       );
-      if (launch.command === executable) return executable;
+      if (launch.command === executable) return undefined;
       await NodeFSP.mkdir(launchersDir, { recursive: true });
       const launcher = NodePath.join(launchersDir, NodeCrypto.randomUUID());
       await NodeFSP.writeFile(launcher, agentScopeLauncherScript(launch), { mode: 0o700 });
-      return launcher;
+      return { path: launcher, release: () => NodeFSP.rm(launcher, { force: true }) };
     },
     // Playwright's launch error drops Chrome's own output; its sandbox note survives.
     diagnose: (executable, cause) =>

@@ -40,7 +40,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
       expect(Number(launchedPid)).toBe(launched.pid);
       expect(Number(launchedScore)).toBe(AGENT_OOM_SCORE_ADJ);
       expect(launchedArgs).toEqual(["a b", "$HOME", "--flag", "it's"]);
-      expect(NodeFS.existsSync(launcher)).toBe(false);
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
