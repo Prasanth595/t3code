@@ -258,13 +258,11 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
         // An empty folder is the harness's placeholder from a launch without the link.
+        // rmdir refuses a non-empty folder, so content added meanwhile is never deleted.
         Effect.catch((error) =>
-          fs.readDirectory(link).pipe(
-            Effect.flatMap((entries) =>
-              entries.length === 0
-                ? fs.remove(link, { recursive: true }).pipe(Effect.as(undefined))
-                : Effect.fail(error),
-            ),
+          Effect.tryPromise(() => NodeFSP.rmdir(link)).pipe(
+            Effect.as(undefined),
+            Effect.mapError(() => error),
           ),
         ),
       );
