@@ -17,6 +17,7 @@ export function WorkspaceListToolbarRow(props: {
   readonly onCloseSearch: () => void;
   readonly onOpenSearch: () => void;
   readonly searchAccessibilityLabel: string;
+  readonly screenTitle: string;
   readonly onOpenEnvironments: () => void;
   /** Stays trailing while searching, so it never moves and still narrows the results. */
   readonly filter: ReactNode;
@@ -40,7 +41,7 @@ export function WorkspaceListToolbarRow(props: {
             <WorkspaceConnectionTitle
               grow
               onPress={props.onOpenEnvironments}
-              brand={<HeaderStageBadge allowFontScaling={false} />}
+              brand={<HeaderStageBadge allowFontScaling={false} screenTitle={props.screenTitle} />}
             />
           </View>
           <AndroidHeaderIconButton

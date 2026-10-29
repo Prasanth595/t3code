@@ -172,7 +172,7 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
     ...getStageBadgeHeaderOptions(opts.fallbackTitleStyle),
     headerTitle: () => (
       <WorkspaceConnectionTitle
-        brand={<HeaderStageBadge />}
+        brand={<HeaderStageBadge screenTitle="Threads" />}
         maxWidth={maxWidth}
         onPress={opts.onOpenEnvironments}
         statusOffset={headerTitleOffset()}

@@ -111,6 +111,7 @@ export function ThreadListToolbar(props: {
         searchField={searchField}
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
+        screenTitle="Threads"
         searchAccessibilityLabel="Search threads"
         onOpenEnvironments={props.onOpenEnvironments}
         filter={filterButton}

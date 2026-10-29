@@ -53,11 +53,18 @@ function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
+  const { state, settingsOpen } = useWorkspaceTabs()!;
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
+  const enabled = useEnabledNavigationTabs();
+  const tabTitle = settingsOpen
+    ? "Settings"
+    : enabled.length
+      ? TAB_TITLES[state.selectedTab]
+      : "Navigation";
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={<HeaderStageBadge />}
+        brand={<HeaderStageBadge screenTitle={tabTitle} />}
         maxWidth={maxWidth}
         onPress={props.onOpenEnvironments}
       />

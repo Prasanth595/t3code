@@ -73,6 +73,7 @@ export function PullRequestToolbar(props: {
         }
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
+        screenTitle="Pull requests"
         searchAccessibilityLabel="Search pull requests"
         onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         filter={
