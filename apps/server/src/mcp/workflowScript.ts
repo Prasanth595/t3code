@@ -58,9 +58,10 @@ const PRELUDE = `
   const RealDate = Date;
   const WorkflowDate = function Date(...values) {
     if (values.length === 0) throw new Error("new Date() without a value is unavailable in workflows.");
-    return new.target ? new RealDate(...values) : RealDate(...values);
+    return new.target ? new RealDate(...values) : new RealDate(...values).toString();
   };
   WorkflowDate.prototype = RealDate.prototype;
+  Object.defineProperty(WorkflowDate.prototype, "constructor", { value: WorkflowDate, writable: true, configurable: true });
   WorkflowDate.UTC = RealDate.UTC;
   WorkflowDate.parse = RealDate.parse;
   WorkflowDate.now = unavailable("Date.now()");

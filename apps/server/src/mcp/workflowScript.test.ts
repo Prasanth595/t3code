@@ -90,6 +90,28 @@ return { scanned, reviewed }`,
     );
   });
 
+  it("keeps Date arguments deterministic through calls and prototype constructors", async () => {
+    expect(await run("return Date(0) === new Date(0).toString()", host())).toBe(true);
+    expect(
+      await run(
+        "return [new Date(0).getTime(), Date.UTC(1970, 0, 1), Date.parse('1970-01-01T00:00:00Z')]",
+        host(),
+      ),
+    ).toEqual([0, 0, 0]);
+    for (const constructor of [
+      "Date",
+      "new Date(0).constructor",
+      "Object.getPrototypeOf(new Date(0)).constructor",
+      "Date.prototype.constructor",
+    ]) {
+      await expect(run(`return (${constructor})()`, host())).rejects.toThrow("without a value");
+      await expect(run(`return (${constructor}).now()`, host())).rejects.toThrow(
+        "Date.now() is unavailable",
+      );
+      expect(await run(`return (${constructor}) === Date`, host())).toBe(true);
+    }
+  });
+
   it("has no host access", async () => {
     expect(
       await run(
