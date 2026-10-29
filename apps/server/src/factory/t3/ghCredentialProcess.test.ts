@@ -356,7 +356,9 @@ describe("ghCredentialProcess in the server graph", () => {
     },
   );
 
-  // server.ts cannot be built in a test, so its provision is pinned by source.
+  // server.ts cannot be built in a test, so its provision is pinned by source. Its position is
+  // pinned by the typecheck: with no other provider, a consumer the line does not reach leaves
+  // VcsProcess unsatisfied and binCli.ts fails to compile.
   it("is the only VcsProcess the server provides, apart from workspace entries' own", () => {
     const srcRoot = NodePath.resolve(import.meta.dirname, "../..");
     const server = NodeFS.readFileSync(NodePath.join(srcRoot, "server.ts"), "utf8");
