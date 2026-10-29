@@ -2,10 +2,12 @@ import {
   ComposerContextId,
   type ComposerContextRecord,
   EnvironmentId,
+  MessageId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   collectComposerContextReferences,
   formatComposerContextHref,
@@ -154,6 +156,37 @@ describe("provider projection", () => {
     expect(projected).toContain("  selector: #pay");
     expect(projected).toContain("  source: Pay.tsx:3");
     expect(projected).toContain("- font-size: 12px → 20px");
+  });
+
+  it("withholds quoted text of thinking-derived messages but keeps the comment and other quotes", () => {
+    const quote = {
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      text: "private plan",
+      start: 0,
+      end: 12,
+      prefix: "before ",
+      suffix: " after",
+    } as const;
+    const thinking = serializeAssistantCitation({
+      ...quote,
+      messageId: MessageId.make("message:provider:claudeAgent:native-item:msg_01%3Athinking%3A1"),
+      comment: "fix this?",
+    });
+    const reply = serializeAssistantCitation({
+      ...quote,
+      text: "plain reply",
+      messageId: MessageId.make("msg_02"),
+    });
+    const projected = projectComposerContextForProvider({
+      text: `${thinking} and ${reply}`,
+      records: [],
+    });
+    expect(projected).toBe(
+      `[Quote of one of your earlier updates, text withheld. User comment: fix this?] and ${reply}`,
+    );
+    expect(projected).not.toContain("private");
   });
 
   it("uses the payload kind when a reference disagrees with its record", () => {
