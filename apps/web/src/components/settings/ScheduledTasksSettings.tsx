@@ -82,6 +82,7 @@ import {
   scheduledTaskDefaultModel,
   taskToDraft,
   withDefaultWebhookPrompt,
+  withoutUltrathinkPrefix,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
@@ -256,7 +257,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string | undefined;
+  hint?: string;
   htmlFor?: string;
   children: ReactNode;
 }) {
@@ -1454,57 +1455,67 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          {/* A run on a bound thread follows that thread's model and reasoning, so the stored choice has no effect. */}
-          <Field label="Model" hint={boundToThread ? "set by the bound thread" : undefined}>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected || boundToThread}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) => {
-                  // Options belong to one model, so a new model starts from its own defaults.
-                  if (activeSelection?.instanceId === instanceId && activeSelection.model === model)
-                    return;
-                  setDraft((current) => ({
-                    ...current,
-                    modelSelection: createModelSelection(instanceId, model),
-                  }));
-                }}
-              />
-              {activeSelection && activeEntry ? (
-                <TraitsPicker
-                  provider={activeEntry.driverKind}
-                  instanceId={activeSelection.instanceId}
-                  models={activeEntry.models}
-                  model={activeSelection.model}
-                  modelOptions={activeSelection.options ?? []}
-                  // Ultrathink is a prompt prefix, not a stored option, so it edits the task prompt.
-                  promptUltrathink={readPromptUltrathink(draft.prompt)}
-                  onPromptEdit={(edit) =>
-                    setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
-                  }
-                  planModeEnabled={settings.planModeEnabled}
-                  disabled={saving || !connected || boundToThread}
+          <Field label="Model">
+            {/* A run on a bound thread follows that thread's model, so the stored choice has no effect. */}
+            {boundToThread ? (
+              <p className="text-sm text-muted-foreground">
+                Runs with the bound thread's current model and reasoning.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  onModelOptionsChange={(options) =>
+                  onInstanceModelChange={(instanceId, model) => {
+                    // Options and the Ultrathink prefix belong to one model, so a new model starts from its own defaults.
+                    if (
+                      activeSelection?.instanceId === instanceId &&
+                      activeSelection.model === model
+                    )
+                      return;
                     setDraft((current) => ({
                       ...current,
-                      modelSelection: createModelSelection(
-                        activeSelection.instanceId,
-                        activeSelection.model,
-                        options,
-                      ),
-                    }))
-                  }
+                      prompt: withoutUltrathinkPrefix(current.prompt),
+                      modelSelection: createModelSelection(instanceId, model),
+                    }));
+                  }}
                 />
-              ) : null}
-            </div>
+                {activeSelection && activeEntry ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    instanceId={activeSelection.instanceId}
+                    models={activeEntry.models}
+                    model={activeSelection.model}
+                    modelOptions={activeSelection.options ?? []}
+                    // Ultrathink is a prompt prefix, not a stored option, so it edits the task prompt.
+                    promptUltrathink={readPromptUltrathink(draft.prompt)}
+                    onPromptEdit={(edit) =>
+                      setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
+                    }
+                    planModeEnabled={settings.planModeEnabled}
+                    disabled={saving || !connected}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDraft((current) => ({
+                        ...current,
+                        modelSelection: createModelSelection(
+                          activeSelection.instanceId,
+                          activeSelection.model,
+                          options,
+                        ),
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            )}
           </Field>
 
           <div className="space-y-3">

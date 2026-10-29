@@ -31,9 +31,14 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 
 const ULTRATHINK_PREFIX_PATTERN = /^\s*Ultrathink:\s*/i;
 
-/** The prompt the user wrote, without the Ultrathink prefix the reasoning picker adds. */
+/** Removes the Ultrathink prefix the reasoning picker adds, and keeps the user's text. */
+export function withoutUltrathinkPrefix(prompt: string): string {
+  return prompt.replace(ULTRATHINK_PREFIX_PATTERN, "");
+}
+
+/** The prompt the user wrote, without the Ultrathink prefix. */
 export function promptBody(prompt: string): string {
-  return prompt.replace(ULTRATHINK_PREFIX_PATTERN, "").trim();
+  return withoutUltrathinkPrefix(prompt).trim();
 }
 
 /** Fills a prompt with no body with the webhook default, and keeps a chosen Ultrathink prefix. */

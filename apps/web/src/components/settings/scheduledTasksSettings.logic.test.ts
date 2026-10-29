@@ -24,6 +24,7 @@ import {
   scheduleFromDraft,
   taskToDraft,
   withDefaultWebhookPrompt,
+  withoutUltrathinkPrefix,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -341,6 +342,13 @@ describe("scheduled task prompt", () => {
   it("does not count the Ultrathink prefix as a prompt", () => {
     expect(promptBody("Ultrathink:\n")).toBe("");
     expect(promptBody("Ultrathink:\nRun tests")).toBe("Run tests");
+  });
+
+  it("drops only the picker prefix when the model changes", () => {
+    expect(withoutUltrathinkPrefix("Ultrathink:\nRun tests")).toBe("Run tests");
+    expect(withoutUltrathinkPrefix("Run tests, then ultrathink")).toBe(
+      "Run tests, then ultrathink",
+    );
   });
 
   it("fills an empty webhook prompt and keeps the Ultrathink prefix", () => {
