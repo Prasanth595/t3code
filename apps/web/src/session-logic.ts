@@ -905,29 +905,23 @@ export function isStreamingTurnItemTextUpdate(
 
 /**
  * A changed tool or work item maps to exactly one entry with the item's id.
- * Messages and question answers take part in cross-entry dedupe, so they rebuild.
+ * Messages and question answers take part in cross-entry dedupe, and anchored
+ * messages are placed by createdAt, so those changes rebuild.
  */
-function rederivedNonMessageEntry(
+function canRederiveInPlace(
   input: TimelineEntriesInput,
   previousItem: OrchestrationV2ProjectedTurnItem,
   item: OrchestrationV2ProjectedTurnItem,
-): TimelineEntry | null {
-  if (
-    item.item.id !== previousItem.item.id ||
-    item.item.type !== previousItem.item.type ||
-    item.item.type === "user_message" ||
-    item.item.type === "assistant_message" ||
-    item.item.type === "user_input_request"
-  ) {
-    return null;
-  }
-  const entries = deriveTimelineEntriesFromVisibleTurnItems({
-    ...input,
-    visibleTurnItems: [item],
-    optimisticMessages: [],
-    anchoredMessages: [],
-  });
-  return entries.length === 1 && entries[0]!.id === item.item.id ? entries[0]! : null;
+): boolean {
+  return (
+    item.item.id === previousItem.item.id &&
+    item.item.type === previousItem.item.type &&
+    item.item.type !== "user_message" &&
+    item.item.type !== "assistant_message" &&
+    item.item.type !== "user_input_request" &&
+    ((input.anchoredMessages?.length ?? 0) === 0 ||
+      projectedItemCreatedAt(item) === projectedItemCreatedAt(previousItem))
+  );
 }
 
 function reuseTimelineEntries(
@@ -970,7 +964,7 @@ function reuseTimelineEntries(
     OrchestrationV2ProjectedTurnItem,
     OrchestrationV2ProjectedTurnItem
   >();
-  const rederivedEntries = new Map<string, TimelineEntry>();
+  const changedItems: OrchestrationV2ProjectedTurnItem[] = [];
   for (let index = 0; index < before.visibleTurnItems.length; index += 1) {
     const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
@@ -979,19 +973,35 @@ function reuseTimelineEntries(
       replacements.set(previousItem, item);
       continue;
     }
-    const entry = rederivedNonMessageEntry(input, previousItem, item);
-    if (entry === null) return null;
-    rederivedEntries.set(entry.id, entry);
+    if (!canRederiveInPlace(input, previousItem, item)) return null;
+    changedItems.push(item);
   }
+  // One batch keeps the attempt/node/plan lookups to a single build.
+  const rederived =
+    changedItems.length === 0
+      ? []
+      : deriveTimelineEntriesFromVisibleTurnItems({
+          ...input,
+          visibleTurnItems: changedItems,
+          optimisticMessages: [],
+          anchoredMessages: [],
+        });
+  if (
+    rederived.length !== changedItems.length ||
+    rederived.some((entry, index) => entry.id !== changedItems[index]!.item.id)
+  ) {
+    return null;
+  }
+  const rederivedEntries = new Map(rederived.map((entry) => [entry.id, entry]));
   if (replacements.size === 0 && rederivedEntries.size === 0 && !appended) {
     return previous.entries;
   }
   let rederivedCount = 0;
   const entries = previous.entries.map((entry): TimelineEntry => {
-    const rederived = rederivedEntries.get(entry.id);
-    if (rederived !== undefined) {
+    const rederivedEntry = rederivedEntries.get(entry.id);
+    if (rederivedEntry !== undefined) {
       rederivedCount += 1;
-      return rederived;
+      return rederivedEntry;
     }
     const row =
       entry.kind === "message" && entry.projectedItem !== undefined

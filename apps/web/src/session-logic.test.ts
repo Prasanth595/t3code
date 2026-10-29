@@ -1488,6 +1488,33 @@ describe("incremental v2 timeline entries", () => {
       if (entry.id === "live-work") expect(next.entries[index]).not.toBe(entry);
       else expect(next.entries[index]).toBe(entry);
     }
+
+    const anchoredInput = {
+      ...nextInput,
+      anchoredMessages: [
+        {
+          id: MessageId.make("feedback"),
+          runId: null,
+          role: "assistant" as const,
+          text: "Feedback received",
+          streaming: false,
+          createdAt: fixture.time(6),
+          updatedAt: fixture.time(6),
+        },
+      ],
+    };
+    const anchored = deriveTimelineEntriesFromVisibleTurnItemsWithState(anchoredInput);
+    const movedInput = {
+      ...anchoredInput,
+      visibleTurnItems: anchoredInput.visibleTurnItems.map((row) =>
+        row.item.id === "live-work"
+          ? { ...row, item: { ...row.item, startedAt: DateTime.makeUnsafe(fixture.time(8)) } }
+          : row,
+      ),
+    };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(movedInput, anchored).entries,
+    ).toEqual(deriveTimelineEntriesFromVisibleTurnItems(movedInput));
   });
 
   it.each(["completion", "provenance", "ordering", "attachment", "run"] as const)(
