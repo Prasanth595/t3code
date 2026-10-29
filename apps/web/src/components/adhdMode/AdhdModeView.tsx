@@ -44,8 +44,10 @@ import { Kbd } from "../ui/kbd";
 import { SidebarInset } from "../ui/sidebar";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { buildAdhdQueue, type AdhdCardKind, type AdhdQueueEntry } from "./adhdQueue.logic";
+import type { AdhdCardKind, AdhdQueueEntry } from "@t3tools/client-runtime/state/adhd-queue";
+import { buildAdhdQueue } from "./adhdQueue.logic";
 
 const SNOOZE_MS = 15 * 60_000;
 const RECOMMENDED_LABEL = /\(recommended\)/i;
@@ -187,9 +189,9 @@ export function AdhdModeView() {
         ) : (
           <div className="flex w-full max-w-2xl flex-col gap-4">
             <QueuePips
-              total={queue.length}
+              queue={queue}
               currentIndex={currentIndex}
-              urgentCount={queue.filter((entry) => entry.urgent).length}
+              onJump={(index) => setSelectedKey(threadKeyOf(queue[index]!))}
             />
             <AdhdCard
               key={threadKeyOf(current)}
@@ -210,20 +212,40 @@ export function AdhdModeView() {
   );
 }
 
-function QueuePips(props: { total: number; currentIndex: number; urgentCount: number }) {
+function QueuePips(props: {
+  queue: ReadonlyArray<AdhdQueueEntry>;
+  currentIndex: number;
+  onJump: (index: number) => void;
+}) {
   return (
-    <div className="flex items-center justify-center gap-1" aria-hidden>
-      {Array.from({ length: props.total }, (_, index) => (
-        <span
-          key={index}
-          className={cn(
-            "h-0.5 w-4 rounded-full bg-foreground/15",
-            index < props.urgentCount && "bg-destructive/50",
-            index === props.currentIndex && "bg-foreground",
-          )}
-        />
+    <nav className="flex items-center justify-center" aria-label="Cards">
+      {props.queue.map((entry, index) => (
+        <Tooltip key={threadKeyOf(entry)}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`${index + 1}. ${entry.thread.title}`}
+                aria-current={index === props.currentIndex ? "true" : undefined}
+                onClick={() => props.onJump(index)}
+                className="px-0.5 py-2"
+              >
+                <span
+                  className={cn(
+                    "block h-0.5 w-4 rounded-full bg-foreground/15",
+                    entry.urgent && "bg-destructive/50",
+                    index === props.currentIndex && "bg-foreground",
+                  )}
+                />
+              </button>
+            }
+          />
+          <TooltipPopup side="top">
+            {index + 1}. {entry.thread.title}
+          </TooltipPopup>
+        </Tooltip>
       ))}
-    </div>
+    </nav>
   );
 }
 
@@ -662,15 +684,27 @@ function AdhdCard(props: {
         <span className="flex items-center gap-1">
           <Kbd>R</Kbd> reply
         </span>
-        <span className="flex items-center gap-1">
+        <button
+          type="button"
+          className="flex items-center gap-1 hover:text-foreground"
+          onClick={snooze}
+        >
           <Kbd>⌫</Kbd> snooze 15m
-        </span>
-        <span className="flex items-center gap-1">
+        </button>
+        <button
+          type="button"
+          className="flex items-center gap-1 hover:text-foreground"
+          onClick={dismiss}
+        >
           <Kbd>Esc</Kbd> dismiss
-        </span>
-        <span className="flex items-center gap-1">
+        </button>
+        <button
+          type="button"
+          className="flex items-center gap-1 hover:text-foreground"
+          onClick={openThread}
+        >
           <Kbd>O</Kbd> open thread
-        </span>
+        </button>
       </footer>
     </section>
   );

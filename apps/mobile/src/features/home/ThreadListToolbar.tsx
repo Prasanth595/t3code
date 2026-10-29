@@ -14,6 +14,7 @@ import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { Menu } from "../../components/ui/Menu";
 import { SearchField } from "../../components/ui/SearchField";
+import { useAdhdModeEnabled } from "../adhd/useAdhdModeEnabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceConnectionState } from "../../state/workspace";
@@ -38,6 +39,7 @@ export function ThreadListToolbar(props: {
     homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
   const { paddingTop, paddingBottom } = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
+  const adhdModeEnabled = useAdhdModeEnabled();
   const { onRequestVisibility, onSearchQueryChange } = props;
   const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -114,7 +116,18 @@ export function ThreadListToolbar(props: {
         searchAccessibilityLabel="Search threads"
         titleAccessibilityLabel="T3 Code, Threads"
         onOpenEnvironments={props.onOpenEnvironments}
-        filter={filterButton}
+        filter={
+          <>
+            {adhdModeEnabled ? (
+              <AndroidHeaderIconButton
+                accessibilityLabel="ADHD mode"
+                icon="bell.badge"
+                onPress={() => navigation.navigate("AdhdMode")}
+              />
+            ) : null}
+            {filterButton}
+          </>
+        }
       />
     </View>
   );

@@ -45,6 +45,7 @@ import {
   RenderFailureView,
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
+import { AdhdModeRouteScreen } from "./features/adhd/AdhdModeRouteScreen";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
@@ -622,6 +623,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
+    }),
+    AdhdMode: createNativeStackScreen({
+      screen: AdhdModeRouteScreen,
+      linking: "adhd",
+      options: { ...GLASS_HEADER_OPTIONS, title: "ADHD mode" },
     }),
     PullRequest: createNativeStackScreen({
       screen: PullRequestRouteScreen,

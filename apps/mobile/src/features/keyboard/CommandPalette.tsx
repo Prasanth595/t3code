@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useAdhdModeEnabled } from "../adhd/useAdhdModeEnabled";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -283,6 +284,7 @@ export function CommandPalette(props: {
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     triageEnvironmentId !== null &&
     serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
+  const adhdModeEnabled = useAdhdModeEnabled();
   const contentMatchByKey = new Map(
     search.matches
       .filter((match) => match.source === "user" || match.source === "assistant")
@@ -347,6 +349,15 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (adhdModeEnabled) {
+      actions.push({
+        key: "adhdMode",
+        kind: "action",
+        title: "Open ADHD mode",
+        searchTerms: ["adhd", "focus", "queue", "inbox", "triage", "needs you", "cards"],
+        run: () => navigation.navigate("AdhdMode"),
+      });
+    }
     if (canTriage) {
       actions.push({
         key: "triage",
@@ -460,6 +471,7 @@ export function CommandPalette(props: {
     );
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    adhdModeEnabled,
     selectTab,
     activeThread,
     activeThreadRef,

@@ -359,6 +359,10 @@
       "types": "./src/state/threadUndo.ts",
       "default": "./src/state/threadUndo.ts"
     },
+    "./state/adhd-queue": {
+      "types": "./src/state/adhdQueue.ts",
+      "default": "./src/state/adhdQueue.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"

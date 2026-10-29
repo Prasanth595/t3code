@@ -166,6 +166,9 @@ starts from the suggestion). `Backspace` snoozes the thread for 15 minutes, `Esc
 `1` to `9` jump to a card, and `O` opens the thread. A thread can't be snoozed while its agent
 is waiting on you.
 
+On mobile, turn on **Settings → Labs → ADHD mode** and tap the bell in the thread list toolbar.
+Tap an option to answer, or use the buttons to snooze, settle, or open the thread.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

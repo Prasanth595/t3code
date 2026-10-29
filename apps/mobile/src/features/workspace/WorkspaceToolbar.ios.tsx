@@ -1,6 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { isDuoDevice } from "../../lib/device-type";
@@ -13,6 +13,7 @@ import {
   NativePrimaryColumnContext,
   NativeWorkspaceTabActivityContext,
 } from "../../native/v5-workspace-context";
+import { useAdhdModeEnabled } from "../adhd/useAdhdModeEnabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -43,6 +44,8 @@ export function WorkspaceToolbar(props: {
     !workspace.settingsOpen &&
     workspace.state.selectedTab === "threads" &&
     activeNewTask === null;
+  const navigation = useNavigation();
+  const adhdModeEnabled = useAdhdModeEnabled();
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
@@ -184,6 +187,14 @@ export function WorkspaceToolbar(props: {
           header's own items, so an empty one would hide the Settings scope filter. */}
       {workspace.settingsOpen && !foldedSearch ? null : (
         <Toolbar placement="right">
+          {adhdModeEnabled && selectedTab === "threads" ? (
+            <Toolbar.Button
+              identifier="workspace-adhd-mode"
+              accessibilityLabel="ADHD mode"
+              icon="bell.badge"
+              onPress={() => navigation.navigate("AdhdMode")}
+            />
+          ) : null}
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {composeButton}

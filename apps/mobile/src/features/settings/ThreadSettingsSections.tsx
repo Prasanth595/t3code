@@ -35,6 +35,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <BetaSettingsSection />
+        <AdhdModeSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
     </SettingsScreen>
@@ -249,6 +250,29 @@ function BetaSettingsSection() {
       <Text className="px-2 text-sm text-foreground-muted">
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
         machine. While it is off, nothing new starts over a link; tasks already running finish.
+      </Text>
+    </View>
+  );
+}
+
+function AdhdModeSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const adhdModeEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.adhdModeEnabled === true;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: ADHD mode">
+        <SettingsSwitchRow
+          icon="bell.badge"
+          label="ADHD mode"
+          value={adhdModeEnabled}
+          onValueChange={(value) => savePreferences({ adhdModeEnabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Answer agents one card at a time. Open it from the thread list toolbar.
       </Text>
     </View>
   );
