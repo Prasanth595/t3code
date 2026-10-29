@@ -336,7 +336,10 @@ const dependencies = Layer.mergeAll(
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
-        Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
+        Effect.sync(() => {
+          releasedDesktopTabs.push(key.tabId);
+          desktopDetaches.emit("release", key.tabId);
+        }),
       ),
     pointer: () => Effect.void,
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
@@ -1325,6 +1328,14 @@ it.live("a full server takes back the slot of the longest idle agent tab, even a
         opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
       }
 
+      now.mockReturnValue(100);
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-observer"),
+        operation: "status",
+        tabId: PreviewTabId.make(opened[0]!),
+        input: {},
+      });
+
       // Inside the idle window every desktop tab keeps its slot.
       now.mockReturnValue(29 * 60 * 1000);
       expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
@@ -1334,12 +1345,24 @@ it.live("a full server takes back the slot of the longest idle agent tab, even a
       // A session at its own limit couldn't use a freed slot, so nothing closes for it.
       expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
       expect(releasedDesktopTabs).toEqual([]);
+      const events = yield* manager.subscribeEvents;
+      const releases = yield* Queue.unbounded<string>();
+      const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
+      desktopDetaches.on("release", recordRelease);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => desktopDetaches.off("release", recordRelease)),
+      );
       const fresh = yield* open("agent-new");
       expect(fresh.tabId).toBeDefined();
-      expect(releasedDesktopTabs).toEqual([opened[0]]);
+      expect(yield* Queue.take(releases)).toBe(opened[1]);
+      yield* Stream.fromSubscription(events).pipe(
+        Stream.filter((event) => event.type === "closed" && event.tabId === opened[1]),
+        Stream.runHead,
+      );
+      expect(releasedDesktopTabs).toEqual([opened[1]]);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
-        [...opened.slice(1), fresh.tabId!].toSorted(),
+        [...opened.filter((tabId) => tabId !== opened[1]), fresh.tabId!].toSorted(),
       );
     }),
   ).pipe(Effect.provide(layer)),
