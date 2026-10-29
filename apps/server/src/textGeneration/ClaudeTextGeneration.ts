@@ -169,7 +169,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const ultracode =
-      ultracodeDescriptor?.type === "boolean" ? ultracodeDescriptor.currentValue : undefined;
+      ultracodeDescriptor?.type === "boolean"
+        ? ultracodeDescriptor.currentValue
+        : resolvedEffort === "ultracode";
     const settings = {
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),

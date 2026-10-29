@@ -45,10 +45,13 @@ export function compileClaudeModelSelection(
     selections: selection.options,
   }).find((descriptor) => descriptor.id === "ultracode");
   // Explicit when supported, so an Off toggle overrides Ultracode set in the user's settings.json.
+  // Custom models may still offer Ultracode as an effort choice.
   const ultracode =
     ultracodeDescriptor?.type === "boolean"
       ? (ultracodeDescriptor.currentValue ?? false)
-      : undefined;
+      : resolvedEffort === "ultracode"
+        ? true
+        : undefined;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),

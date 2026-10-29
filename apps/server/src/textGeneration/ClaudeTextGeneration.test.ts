@@ -236,6 +236,50 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("keeps Ultracode on for custom models that offer it as an effort choice", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Title", body: "Body" } }),
+        argsMustContain: `"ultracode":true}`,
+        claudeConfig: {
+          customModels: [
+            {
+              slug: "custom-ultracode",
+              name: "Custom Ultracode",
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "high", label: "High", isDefault: true },
+                      { id: "ultracode", label: "Ultracode" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      (textGeneration) =>
+        textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/ultracode",
+          commitSummary: "Change",
+          diffSummary: "1 file changed",
+          diffPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "custom-ultracode",
+            [{ id: "effort", value: "ultracode" }],
+          ),
+        }),
+    ),
+  );
+
   it.effect(
     "generates thread titles outside the project with tools, skills, and hooks disabled",
     () =>

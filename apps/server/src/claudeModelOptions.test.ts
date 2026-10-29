@@ -3,6 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  scopeClaudeModelCatalog,
+} from "./provider/ClaudeModelCatalog.ts";
 
 const selection = (
   model: string,
@@ -66,6 +70,33 @@ describe("compileClaudeModelSelection", () => {
         selection("claude-sonnet-4-6", [{ id: "ultracode", value: true }]),
       ).settings,
     ).not.toHaveProperty("ultracode");
+  });
+  it("keeps Ultracode on for custom models that offer it as an effort choice", () => {
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      {
+        slug: "custom-ultracode",
+        name: "Custom Ultracode",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "high", label: "High", isDefault: true },
+                { id: "ultracode", label: "Ultracode" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(
+      compileClaudeModelSelection(
+        selection("custom-ultracode", [{ id: "effort", value: "ultracode" }]),
+        catalog,
+      ).settings,
+    ).toEqual({ ultracode: true });
   });
   it("keeps a saved Ultracode effort at xhigh with Ultracode on", () => {
     expect(
