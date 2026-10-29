@@ -90,11 +90,11 @@ tool, which refuses skills reserved for manual invocation.
 ## Questions
 
 When Claude asks you something, it keeps working instead of waiting. Answer in
-the thread's question panel. The answer becomes a new message: it reaches the
-active turn, or starts another turn if Claude has finished. A message you or
-another agent send meanwhile no longer cancels the question, and unanswered
-questions survive reconnects. Dismiss a question you do not want to answer;
-nothing is sent to Claude.
+the thread's question panel. The answer becomes a new message: it waits for
+Claude's current turn to end, or starts another turn if Claude has finished. A
+message you or another agent send meanwhile no longer cancels the question, and
+unanswered questions survive reconnects. Dismiss a question you do not want to
+answer; nothing is sent to Claude.
 
 ## Task lists
 
