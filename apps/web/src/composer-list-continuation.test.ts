@@ -88,7 +88,7 @@ describe("composer list indentation", () => {
     expect(applyEdit(value, edit)).toBe("1. parent\n   1. first\n   2. second");
   });
 
-  it.each(["- parent\n- child", "1. parent\n2. child", "- child"])(
+  it.each(["- parent\n- child", "1. parent\n2. child", "  7. child"])(
     "undoes Tab on %j with Shift+Tab and keeps the caret on its text",
     (value) => {
       const cursor = value.lastIndexOf("child") + 2;

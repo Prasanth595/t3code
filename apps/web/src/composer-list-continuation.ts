@@ -316,8 +316,9 @@ export function listOutdentForTab(
   if (isInsideInlineToken(tokens, start)) return null;
   const { marker } = parsed;
   const parent = parentMarker(value, line.start, marker, tokens);
-  const indent = parent?.indent ?? "";
-  const number = nestedNumber(marker, parent ?? undefined);
+  // With no parent above, undo one step of Tab's two-space fallback.
+  const indent = parent?.indent ?? marker.indent.replace(/^(?:\t| {1,2})/, "");
+  const number = parent ? nestedNumber(marker, parent) : { replacedLength: 0, text: "" };
   const replacedEnd = line.start + marker.indent.length + number.replacedLength;
   const replacement = indent + number.text;
   const cursorAfter =
