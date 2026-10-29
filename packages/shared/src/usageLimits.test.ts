@@ -677,6 +677,51 @@ describe("pools", () => {
     ]);
   });
 
+  it("names an account reported by two hubs after the hub it shows as its source", () => {
+    const hub = (id: string, label: string) => ({
+      ...source,
+      id: UsageLimitSourceId.make(id),
+      label,
+      accounts: [
+        {
+          id: "claude-same@example.com.json",
+          driver: claude,
+          email: "same@example.com",
+          usageLimits: { checkedAt, windows: [window] },
+        },
+      ],
+    });
+    const hubsOnly = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hub("personal", "Personal hub"), hub("work", "Work hub")],
+          },
+        },
+      ],
+    ]);
+    const [hubOnly] = collectLimitAccounts(hubsOnly);
+    expect(hubOnly).toMatchObject({ displayName: "Personal hub", sourceLabel: "Personal hub" });
+    const signedIn = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const desktop = {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [signedIn] },
+    };
+    const [withInstance] = collectLimitAccounts(
+      new Map([...hubsOnly, [EnvironmentId.make("env-b"), desktop]]),
+    );
+    expect(withInstance).toMatchObject({ displayName: "Personal hub", sourceLabel: null });
+  });
+
   it("pools Codex windows by kind, whichever slot reported them", () => {
     const codexAccount = (id: string, slots: readonly string[]) => ({
       id,
