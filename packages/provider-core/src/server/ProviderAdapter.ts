@@ -505,6 +505,8 @@ export interface ProviderAdapterV2HistoricalContext {
 
 export interface ProviderAdapterV2McpTool {
   readonly name: string;
+  /** Original name used by the originating app, when the provider qualifies tool names. */
+  readonly appToolName?: string;
   readonly _meta?: unknown;
   readonly annotations?: unknown;
 }
@@ -520,6 +522,7 @@ export interface ProviderAdapterV2McpApps {
   readonly listTools: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
+    readonly sourceTool: string;
   }) => Effect.Effect<ReadonlyArray<ProviderAdapterV2McpTool>, ProviderAdapterV2Error>;
   readonly callTool: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
