@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
+import { HeaderStageBadge } from "../../components/HeaderStageBadge";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 
@@ -17,7 +17,7 @@ export function WorkspaceListToolbarRow(props: {
   readonly onCloseSearch: () => void;
   readonly onOpenSearch: () => void;
   readonly searchAccessibilityLabel: string;
-  readonly titleAccessibilityLabel: string;
+  readonly screenTitle: string;
   readonly onOpenEnvironments: () => void;
   /** Stays trailing while searching, so it never moves and still narrows the results. */
   readonly filter: ReactNode;
@@ -41,13 +41,7 @@ export function WorkspaceListToolbarRow(props: {
             <WorkspaceConnectionTitle
               grow
               onPress={props.onOpenEnvironments}
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel={props.titleAccessibilityLabel}
-                  fit
-                />
-              }
+              brand={<HeaderStageBadge allowFontScaling={false} screenTitle={props.screenTitle} />}
             />
           </View>
           <AndroidHeaderIconButton

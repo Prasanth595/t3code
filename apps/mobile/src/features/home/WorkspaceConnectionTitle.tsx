@@ -7,10 +7,10 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
-  brandTitleOffset,
-  CompactBrandTitle,
-  getCompactBrandHeaderOptions,
-} from "../../components/CompactBrandTitle";
+  getStageBadgeHeaderOptions,
+  HeaderStageBadge,
+  headerTitleOffset,
+} from "../../components/HeaderStageBadge";
 import { useDeadlinePassed } from "../../lib/clock";
 import { useWorkspaceState } from "../../state/workspace";
 import {
@@ -169,13 +169,13 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
   const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
 
   return {
-    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
+    ...getStageBadgeHeaderOptions(opts.fallbackTitleStyle),
     headerTitle: () => (
       <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle />}
+        brand={<HeaderStageBadge screenTitle="Threads" />}
         maxWidth={maxWidth}
         onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset()}
+        statusOffset={headerTitleOffset()}
       />
     ),
   };
