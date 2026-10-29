@@ -140,6 +140,28 @@ describe("file save sessions", () => {
     ]);
   });
 
+  it("keeps a cached draft's base across read-only reopens", async () => {
+    using h = setup();
+    const conditionalWrites = () =>
+      h.persist.mock.calls.map(([, contents, base]) => [contents, base]);
+    h.state.base = "original";
+    h.state.writable = false;
+    h.sessions.acquire(target, h.onPendingChange)();
+    h.state.unsaved = "edit";
+    h.sessions.change(target, "edit");
+    const releaseFirst = h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "edit");
+    releaseFirst();
+    await vi.runAllTimersAsync();
+    h.sessions.acquire(target, h.onPendingChange)();
+    await vi.runAllTimersAsync();
+    h.state.base = "agent rewrite";
+    h.state.writable = true;
+    h.sessions.acquire(target, h.onPendingChange);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(conditionalWrites()).toEqual([["edit", "original"]]);
+  });
+
   it("resumes an unsaved draft when a session is created", async () => {
     using h = setup();
     h.state.unsaved = "pending draft";

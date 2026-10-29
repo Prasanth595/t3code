@@ -99,7 +99,10 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       },
       onConfirmed: (contents) => deps.confirm(target, contents),
       onSettled: () => {
-        if (coordinator.unconfirmedContents === null) bases.delete(key);
+        // A draft cached while unwritable still needs its base when write access returns.
+        if (coordinator.unconfirmedContents === null && deps.readUnsaved(target) === null) {
+          bases.delete(key);
+        }
         if (!session.flushingOnRelease) return;
         session.flushingOnRelease = false;
         if (session.leases === 0) {
