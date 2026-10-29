@@ -839,8 +839,9 @@ const make = Effect.gen(function* () {
             ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
             : `settled for ${settledDays} days`;
         if (
-          settings.worktreeRequireIntegrated ||
-          (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge))
+          eligible
+            ? settings.worktreeRequireIntegrated
+            : settings.worktreeUnchanged || settings.worktreeOnMerge
         ) {
           const landed = yield* integration({
             repositoryCwd: path.resolve(project.workspaceRoot),

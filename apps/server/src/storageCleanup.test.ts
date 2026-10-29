@@ -1868,6 +1868,31 @@ describe("settled worktree rechecks", () => {
 });
 
 describe("worktree cleanup that requires landed work", () => {
+  it.effect("keeps a not-yet-eligible worktree without checking whether its work landed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: 60,
+        worktreeSettledAfterDays: null,
+        worktreeRequireIntegrated: true,
+        worktreeUnchanged: false,
+        worktreeOnMerge: false,
+      });
+
+      const report = yield* fixture.service.runNow;
+      expect(report.entries.filter((entry) => entry.kind === "worktree")).toMatchObject([
+        {
+          outcome: "kept",
+          reason: "Inactive for 30 of 60 days",
+          path: fixture.worktree,
+        },
+      ]);
+      expect(report.entries.some((entry) => entry.outcome === "failed")).toBe(false);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
   const triggers = {
     settled: {
       settings: { worktreeSettledAfterDays: 0 },
