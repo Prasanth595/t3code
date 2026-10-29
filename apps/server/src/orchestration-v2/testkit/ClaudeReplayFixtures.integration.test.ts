@@ -1,3 +1,4 @@
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -40,7 +41,55 @@ function readClaudeTranscriptFixture(path: string) {
 }
 
 function runClaudeReplayFixture(input: ReplayFixtureCase) {
-  return runReplayFixture({ ...input, harness: ClaudeOrchestratorReplayHarness });
+  if (input.fixtureName !== "message_steering")
+    return runReplayFixture({ ...input, harness: ClaudeOrchestratorReplayHarness });
+  return runReplayFixture({
+    ...input,
+    harness: ClaudeOrchestratorReplayHarness,
+    transformTranscript: (recorded) => {
+      const transcript = input.transformTranscript?.(recorded) ?? recorded;
+      const steerIndex = transcript.entries.findIndex(
+        (entry) => entry.type === "expect_outbound" && entry.label === "prompt.offer:2",
+      );
+      const initIndex = transcript.entries.findIndex((entry) => {
+        if (entry.type !== "emit_inbound") return false;
+        const message = entry.frame as SDKMessage;
+        return message.type === "system" && message.subtype === "init";
+      });
+      const reply = transcript.entries
+        .flatMap((entry) => (entry.type === "emit_inbound" ? [entry.frame as SDKMessage] : []))
+        .find((message) => message.type === "assistant" && message.parent_tool_use_id === null);
+      assert.ok(
+        steerIndex >= 0 && initIndex > steerIndex && reply?.type === "assistant",
+        "The recorded steering fixture has no opening sequence.",
+      );
+      // The recording steers before initialization; replay an established root stream instead.
+      // Startup holding is covered separately in the adapter tests; keep the capture unchanged.
+      return {
+        ...transcript,
+        entries: [
+          ...transcript.entries.slice(0, steerIndex),
+          ...transcript.entries.slice(steerIndex + 1, initIndex + 1),
+          {
+            type: "emit_inbound",
+            label: "opening-message-start",
+            frame: {
+              type: "stream_event",
+              uuid: "00000000-0000-4000-8000-000000000001",
+              session_id: reply.session_id,
+              parent_tool_use_id: null,
+              event: {
+                type: "message_start",
+                message: { ...reply.message, content: [] },
+              },
+            },
+          },
+          transcript.entries[steerIndex]!,
+          ...transcript.entries.slice(initIndex + 1),
+        ],
+      };
+    },
+  });
 }
 
 describe("Claude Agent SDK replay fixtures", () => {

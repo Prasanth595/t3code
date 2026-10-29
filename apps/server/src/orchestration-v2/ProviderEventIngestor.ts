@@ -21,6 +21,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,6 +37,7 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as EventSink from "./EventSink.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -540,11 +542,109 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    const settleSteer = Effect.fn("ProviderEventIngestor.settleSteer")(function* (
+      input: ProviderEventIngestInput,
+      outcome: Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "steer.settled" }>,
+    ) {
+      const projection = yield* projections.getThreadRecords(
+        input.threadId,
+        ["messages", "runs", "attempts", "providerTurns"],
+        { messageIds: [outcome.messageId] },
+      );
+      const message = projection.messages.find((row) => row.id === outcome.messageId);
+      const run = projection.runs.find((row) => row.id === outcome.runId);
+      const turn = projection.providerTurns.find((row) => row.id === outcome.providerTurnId);
+      const item = yield* projections.getTurnItem({
+        threadId: input.threadId,
+        itemId: idAllocator.derive.userTurnItem({ messageId: outcome.messageId }),
+      });
+      const events: Array<OrchestrationV2DomainEvent> = [];
+      const effects: Array<PendingOrchestrationEffectV2> = [];
+      if (
+        message?.runId !== outcome.runId ||
+        run === undefined ||
+        !projection.attempts.some(
+          (attempt) => attempt.id === outcome.attemptId && attempt.runId === run.id,
+        ) ||
+        turn?.runAttemptId !== outcome.attemptId ||
+        item?.runId !== outcome.runId ||
+        item.providerTurnId !== outcome.providerTurnId ||
+        item.status !== "pending" ||
+        (item.type !== "user_message" && item.type !== "notification")
+      ) {
+        return { events, effects };
+      }
+      const now = yield* DateTime.now;
+      events.push(
+        yield* makeDomainEvent(input, {
+          type: "turn-item.updated",
+          payload: {
+            ...item,
+            status:
+              outcome.outcome === "offered"
+                ? "completed"
+                : outcome.outcome === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            updatedAt: now,
+            completedAt: now,
+          },
+        }),
+      );
+      if (outcome.outcome !== "offered") {
+        events.push(
+          yield* makeDomainEvent(input, {
+            type: "turn-item.updated",
+            payload: {
+              type: "system_notice",
+              id: TurnItemId.make(`${item.id}:steer-outcome`),
+              threadId: item.threadId,
+              runId: item.runId,
+              nodeId: item.nodeId,
+              providerThreadId: item.providerThreadId ?? null,
+              providerTurnId: item.providerTurnId ?? null,
+              nativeItemRef: null,
+              parentItemId: item.id,
+              ordinal: yield* projections.getNextTurnItemOrdinal(item.threadId),
+              status: "completed",
+              title: "Steering input not sent",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              message:
+                outcome.outcome === "completed"
+                  ? `Input ${outcome.messageId} was not sent before the turn ended. T3 will check whether it can continue.`
+                  : outcome.outcome === "cancelled"
+                    ? `Input ${outcome.messageId} was cancelled before it reached Claude.`
+                    : `Input ${outcome.messageId} could not be sent to Claude.`,
+            },
+          }),
+        );
+      }
+      if (
+        outcome.outcome === "completed" ||
+        (message.delegatedCompletion !== undefined && outcome.outcome !== "cancelled")
+      ) {
+        const { type: _type, driver: _driver, threadId: _threadId, ...owner } = outcome;
+        effects.push({
+          id: `effect:steer-settle:${outcome.providerTurnId}:${outcome.messageId}`,
+          commandId: CommandId.make(
+            `command:steer-outcome:${outcome.providerTurnId}:${outcome.messageId}`,
+          ),
+          threadId: input.threadId,
+          request: { type: "message.steer.settle", ...owner },
+        });
+      }
+      return { events, effects };
+    });
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
         function* (input) {
           switch (input.event.type) {
+            case "steer.settled":
+              return (yield* settleSteer(input, input.event)).events;
             case "app_thread.created": {
               const offered = input.event.appThread;
               const existing = yield* projections.getThread(offered.id).pipe(
@@ -755,6 +855,107 @@ export const layer: Layer.Layer<
         /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
         Effect.fnUntraced(
           function* (input) {
+            if (
+              input.event.type === "turn.terminal" &&
+              input.event.driver === "claudeAgent" &&
+              input.writeIfRunCurrent === undefined &&
+              input.writeIfProviderThreadOwner === undefined
+            ) {
+              const terminal = input.event;
+              return yield* threadCommands
+                .withLock(
+                  input.threadId,
+                  Effect.gen(function* () {
+                    const projection = yield* projections.getThreadRecords(
+                      input.threadId,
+                      ["messages", "runs", "attempts", "providerTurns", "turnItems"],
+                      {
+                        turnItemStatuses: ["pending"],
+                        turnItemTypes: ["user_message", "notification"],
+                        messageRoles: ["user"],
+                        ...(input.runId === undefined
+                          ? {}
+                          : { messageRunIds: [input.runId], runIds: [input.runId] }),
+                      },
+                    );
+                    const turn = projection.providerTurns.find(
+                      (row) => row.id === terminal.providerTurnId,
+                    );
+                    const stored: Array<OrchestrationV2StoredEvent> = [];
+                    if (turn?.runAttemptId != null) {
+                      for (const message of projection.messages) {
+                        const run = projection.runs.find(
+                          (row) =>
+                            row.id === message.runId &&
+                            projection.attempts.some(
+                              (attempt) =>
+                                attempt.id === turn.runAttemptId && attempt.runId === row.id,
+                            ),
+                        );
+                        if (
+                          run === undefined ||
+                          !projection.turnItems.some(
+                            (item) =>
+                              item.id ===
+                                idAllocator.derive.userTurnItem({ messageId: message.id }) &&
+                              item.providerTurnId === turn.id,
+                          )
+                        )
+                          continue;
+                        const settlement = yield* settleSteer(input, {
+                          type: "steer.settled",
+                          driver: terminal.driver,
+                          threadId: input.threadId,
+                          messageId: message.id,
+                          runId: run.id,
+                          attemptId: turn.runAttemptId,
+                          providerTurnId: turn.id,
+                          outcome:
+                            terminal.status === "completed"
+                              ? "completed"
+                              : terminal.status === "failed"
+                                ? "failed"
+                                : "cancelled",
+                        });
+                        stored.push(...(yield* eventSink.writeWithEffects(settlement)));
+                      }
+                    }
+                    stored.push(...(yield* eventSink.write({ events: yield* normalize(input) })));
+                    return stored;
+                  }),
+                )
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderEventPublishError({
+                        providerSessionId: input.providerSessionId,
+                        eventCount: 1,
+                        cause,
+                      }),
+                  ),
+                );
+            }
+            if (input.event.type === "steer.settled") {
+              const outcome = input.event;
+              return yield* threadCommands
+                .withLock(
+                  input.threadId,
+                  Effect.gen(function* () {
+                    const settlement = yield* settleSteer(input, outcome);
+                    return yield* eventSink.writeWithEffects(settlement);
+                  }),
+                )
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderEventPublishError({
+                        providerSessionId: input.providerSessionId,
+                        eventCount: 1,
+                        cause,
+                      }),
+                  ),
+                );
+            }
             const events = yield* normalize(input);
             if (events.length === 0) {
               return [];

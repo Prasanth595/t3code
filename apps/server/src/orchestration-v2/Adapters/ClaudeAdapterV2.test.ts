@@ -1623,6 +1623,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           let failOffer = false;
           let cancelAfterQueue = false;
           const queued = yield* Deferred.make<void>();
+          const releaseLog = yield* Deferred.make<void>();
           const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: claudeHome },
@@ -1646,7 +1647,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   const messages = yield* Queue.unbounded<SDKMessage>();
                   return {
                     messages: Stream.fromQueue(messages),
-                    offer: (message, onQueued) =>
+                    offer: (message, onQueued, beforeAdmission) =>
                       Effect.suspend(() => {
                         if (failOffer) {
                           failOffer = false;
@@ -1658,13 +1659,38 @@ describe("ClaudeAdapterV2 attachments", () => {
                           );
                         }
                         return Effect.sync(() => {
+                          if (beforeAdmission?.() === false) return false;
                           offeredMessages.push(message);
                           onQueued?.();
+                          if (message.priority !== "now")
+                            Queue.offerUnsafe(messages, {
+                              type: "assistant",
+                              parent_tool_use_id: null,
+                              session_id: "native-thread-claude-attachments",
+                              uuid: "00000000-0000-4000-8000-000000000900",
+                              user_message_uuid: message.uuid,
+                              message: {
+                                id: "opening",
+                                type: "message",
+                                role: "assistant",
+                                model: "claude-sonnet-4-6",
+                                content: [{ type: "text", text: "Reading." }],
+                                stop_reason: null,
+                                stop_sequence: null,
+                                usage: {
+                                  input_tokens: 1,
+                                  output_tokens: 1,
+                                  cache_creation_input_tokens: 0,
+                                  cache_read_input_tokens: 0,
+                                },
+                              },
+                            } as unknown as SDKMessage);
+                          return true;
                         }).pipe(
                           Effect.andThen(() =>
                             cancelAfterQueue
                               ? Deferred.succeed(queued, undefined).pipe(
-                                  Effect.andThen(Effect.never),
+                                  Effect.andThen(Deferred.await(releaseLog)),
                                 )
                               : Effect.void,
                           ),
@@ -1691,6 +1717,30 @@ describe("ClaudeAdapterV2 attachments", () => {
             providerSessionId,
             modelSelection,
             runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          let nextSteer = 0;
+          const steerOutcomes =
+            yield* Queue.unbounded<
+              Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "steer.settled" }>
+            >();
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              event.type === "steer.settled" ? Queue.offer(steerOutcomes, event) : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          const deliverSteer = Effect.fn("test.deliverAttachmentSteer")(function* (
+            input: ProviderAdapter.ProviderAdapterV2SteerInput,
+          ) {
+            const messageId = MessageId.make(`${input.message.messageId}:${nextSteer++}`);
+            yield* runtime.steerTurn({ ...input, message: { ...input.message, messageId } });
+            let result = yield* Queue.take(steerOutcomes);
+            while (result.messageId !== messageId) result = yield* Queue.take(steerOutcomes);
+            if (result.outcome !== "offered")
+              return yield* new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                method: "offer",
+                cause: "Attachment steer was not offered.",
+              });
           });
           const providerThread = yield* runtime.ensureThread({
             threadId,
@@ -1761,7 +1811,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             const deliver =
               budget === "cancelled-send"
                 ? runtime.startTurn({ ...turnInput, message })
-                : runtime.steerTurn({
+                : deliverSteer({
                     threadId,
                     runId: turnInput.runId,
                     providerThread,
@@ -1775,6 +1825,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             const delivering = yield* deliver.pipe(Effect.forkChild);
             yield* Deferred.await(queued);
             yield* Fiber.interrupt(delivering);
+            yield* Deferred.succeed(releaseLog, undefined);
             const delivered = offeredMessages.at(-1)!.message.content;
             assert.include(JSON.stringify(delivered), '"type":"document"');
             cancelAfterQueue = false;
@@ -1840,9 +1891,9 @@ describe("ClaudeAdapterV2 attachments", () => {
                 budget === "partial-images" ? 1 : 0,
               );
               assert.include(JSON.stringify(sent), imagePath);
-              yield* runtime.steerTurn({
+              yield* deliverSteer({
                 threadId,
-                runId: RunId.make("run-claude-attachments"),
+                runId: turnInput.runId,
                 providerThread,
                 providerTurnId: idAllocator.derive.providerTurn({
                   driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
@@ -1900,9 +1951,9 @@ describe("ClaudeAdapterV2 attachments", () => {
             ]);
             const documentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
             yield* fileSystem.writeFile(documentPath, largePdf);
-            yield* runtime.steerTurn({
+            yield* deliverSteer({
               threadId,
-              runId: RunId.make("run-claude-attachments"),
+              runId: turnInput.runId,
               providerThread,
               providerTurnId,
               message: {
@@ -1978,9 +2029,9 @@ describe("ClaudeAdapterV2 attachments", () => {
             driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
             nativeTurnId: `turn:${attemptId}`,
           });
-          yield* runtime.steerTurn({
+          yield* deliverSteer({
             threadId,
-            runId: RunId.make("run-claude-attachments"),
+            runId: turnInput.runId,
             providerThread,
             providerTurnId,
             message: {
@@ -2106,7 +2157,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             }
             const steering = {
               threadId,
-              runId: RunId.make("run-claude-attachments"),
+              runId: turnInput.runId,
               providerThread,
               providerTurnId,
               message: {
@@ -2119,9 +2170,9 @@ describe("ClaudeAdapterV2 attachments", () => {
             } satisfies ProviderAdapter.ProviderAdapterV2SteerInput;
             if (scenario === "delivery-failure") {
               failOffer = true;
-              assert.isTrue(Exit.isFailure(yield* runtime.steerTurn(steering).pipe(Effect.exit)));
+              assert.isTrue(Exit.isFailure(yield* deliverSteer(steering).pipe(Effect.exit)));
             }
-            yield* runtime.steerTurn(steering);
+            yield* deliverSteer(steering);
 
             const sent = offeredMessages.at(-1)!.message.content;
             const documents =
@@ -2750,6 +2801,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
   const makeWakeHarnessWithOptions = (options?: {
+    readonly afterQueued?: (
+      message: SDKUserMessage,
+    ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
@@ -2889,10 +2943,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
-                offer: (message) =>
+                offer: (message, onQueued, beforeAdmission) =>
                   Effect.sync(() => {
+                    if (beforeAdmission?.() === false) return false;
                     offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
+                    onQueued?.();
+                    return true;
+                  }).pipe(
+                    Effect.tap(changes.notify),
+                    Effect.tap((admitted) =>
+                      admitted ? (options?.afterQueued?.(message) ?? Effect.void) : Effect.void,
+                    ),
+                  ),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -3003,6 +3065,594 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  const startSteerFixture = Effect.fn("test.startSteerFixture")(function* (
+    options?: Parameters<typeof makeWakeHarnessWithOptions>[0],
+  ) {
+    const harness = yield* makeWakeHarnessWithOptions(options);
+    const input = makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread: harness.providerThread,
+      now: yield* DateTime.now,
+      attemptId: RunAttemptId.make("steer-gates"),
+      text: "Opening prompt",
+      attachments: [],
+    });
+    yield* harness.runtime.startTurn(input);
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const providerTurnId = idAllocator.derive.providerTurn({
+      driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+      nativeTurnId: `turn:${input.attemptId}`,
+    });
+    let frameId = 920;
+    const frame = (properties: Record<string, unknown>) =>
+      claudeSdkFrame({
+        uuid: `00000000-0000-4000-8000-${String(frameId++).padStart(12, "0")}`,
+        session_id: WAKE_NATIVE_SESSION,
+        ...properties,
+      });
+    const root = (stamp = true) =>
+      harness.offerAndWait(
+        frame({
+          ...makeAssistantTextFrame({ uuid: `root-${frameId++}`, text: "Working." }),
+          ...(stamp ? { user_message_uuid: harness.promptUuid(0) } : {}),
+        }),
+      );
+    const status = (status: string | null, result?: "failed" | "success") =>
+      harness.offerAndWait(
+        frame({
+          type: "system",
+          subtype: "status",
+          status,
+          ...(result === undefined ? {} : { compact_result: result }),
+        }),
+      );
+    const steer = (text: string) =>
+      harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make(`steer-${text}`),
+          text,
+          attachments: [],
+        },
+      });
+    const outcomes = () => harness.events.filter((event) => event.type === "steer.settled");
+    return { ...harness, input, providerTurnId, frame, root, status, steer, outcomes };
+  });
+
+  it.effect.each(["success", "failed", "null"] as const)(
+    "releases bound compaction steers after %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const h = yield* startSteerFixture();
+        yield* h.root();
+        yield* h.status("compacting");
+        assert.deepEqual(yield* h.steer("A"), { deferred: true });
+        yield* h.steer("B");
+        yield* h.status(null, ending === "null" ? undefined : ending);
+        if (ending !== "success") {
+          yield* h.status("requesting");
+          assert.lengthOf(h.offeredMessages, 1);
+          yield* h.offerAndWait(
+            h.frame({
+              ...makeAssistantTextFrame({ uuid: "foreign", text: "Foreign" }),
+              user_message_uuid: "foreign-prompt",
+            }),
+          );
+          assert.lengthOf(h.offeredMessages, 1);
+          yield* h.root(false);
+        }
+        yield* h.until(() => h.outcomes().length === 2);
+        assert.deepEqual(
+          h.offeredMessages.slice(1).map((message) => message.message.content),
+          ["Ultrathink:\nA", "Ultrathink:\nB"],
+        );
+        assert.deepEqual(
+          h.outcomes().map((event) => event.type === "steer.settled" && event.outcome),
+          ["offered", "offered"],
+        );
+        assert.lengthOf(h.terminalEvents(), 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("holds startup success through foreign, child, synthetic and housekeeping frames", () =>
+    Effect.gen(function* () {
+      const h = yield* startSteerFixture();
+      yield* h.status("compacting");
+      yield* h.steer("A");
+      yield* h.status(null, "success");
+      const assistant = makeAssistantTextFrame({ uuid: "startup", text: "Not opening" });
+      if (assistant.type !== "assistant") throw new Error("Expected assistant fixture");
+      for (const message of [
+        h.frame({ ...assistant, user_message_uuid: "foreign-prompt" }),
+        h.frame({
+          ...assistant,
+          parent_tool_use_id: "child-tool",
+          user_message_uuid: h.promptUuid(0),
+        }),
+        h.frame({
+          ...assistant,
+          message: { ...assistant.message, model: "<synthetic>" },
+          user_message_uuid: h.promptUuid(0),
+        }),
+        h.frame({ type: "system", subtype: "status", status: "requesting" }),
+      ]) {
+        yield* h.offerAndWait(message);
+        assert.lengthOf(h.offeredMessages, 1);
+      }
+      yield* h.root();
+      yield* h.until(() => h.outcomes().length === 1);
+      assert.lengthOf(h.offeredMessages, 2);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([false, true])(
+    "keeps C behind the last in-flight offer with recompaction=%s",
+    (recompact) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const h = yield* startSteerFixture({
+          afterQueued: (message) =>
+            message.message.content === "Ultrathink:\nB"
+              ? Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(
+                    Effect.fail(
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "log",
+                        cause: "log unavailable",
+                      }),
+                    ),
+                  ),
+                )
+              : Effect.void,
+        });
+        yield* h.root();
+        yield* h.status("compacting");
+        yield* h.steer("A");
+        yield* h.steer("B");
+        yield* h.status(null, "success");
+        yield* Deferred.await(entered);
+        yield* h.steer("C");
+        assert.lengthOf(h.offeredMessages, 3);
+        if (recompact) yield* h.status("compacting");
+        yield* Deferred.succeed(release, undefined);
+        if (recompact) {
+          yield* h.until(() => h.outcomes().length === 2);
+          assert.lengthOf(h.offeredMessages, 3);
+          yield* h.status(null, "success");
+        }
+        yield* h.until(() => h.outcomes().length === 3);
+        yield* h.steer("B");
+        assert.deepEqual(
+          h.offeredMessages.slice(1).map((message) => message.message.content),
+          ["Ultrathink:\nA", "Ultrathink:\nB", "Ultrathink:\nC"],
+        );
+        assert.isTrue(
+          h
+            .outcomes()
+            .every((event) => event.type === "steer.settled" && event.outcome === "offered"),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each(["result", "query-exit", "interrupt"] as const)(
+    "preserves admitted input when post-admission work is interrupted by %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+        const h = yield* startSteerFixture({
+          close: Queue.shutdown,
+          afterQueued: (message) =>
+            message.priority === "now"
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const pdf = Buffer.from(
+          `%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Count 60 >> endobj\n${Array.from({ length: 60 }, (_, i) => `${i + 3} 0 obj << /Type /Page /Parent 2 0 R >> endobj`).join("\n")}\n%%EOF`,
+        );
+        const document = ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make("admitted-before-interruption"),
+          name: "admitted.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: pdf.length,
+        });
+        yield* fs.writeFile(path.join(h.attachmentsDir, attachmentRelativePath(document)!), pdf);
+        yield* h.root();
+        yield* h.status("compacting");
+        for (const text of ["A", "B"]) {
+          yield* h.runtime.steerTurn({
+            threadId: h.threadId,
+            runId: h.input.runId,
+            providerThread: h.providerThread,
+            providerTurnId: h.providerTurnId,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`admitted-${text}`),
+              text,
+              attachments: [document],
+            },
+          });
+        }
+        yield* h.status(null, "success");
+        yield* Deferred.await(entered);
+        assert.lengthOf(h.offeredMessages, 2);
+        if (ending === "result") {
+          yield* h.offerAndWait(makeResultFrame({ uuid: "terminal-during-log", result: "Done." }));
+        } else if (ending === "query-exit") {
+          yield* Queue.shutdown(h.sdkMessages);
+        } else {
+          yield* h.runtime.interruptTurn({
+            providerThread: h.providerThread,
+            providerTurnId: h.providerTurnId,
+          });
+        }
+        yield* h.awaitTerminal(1);
+        assert.deepEqual(
+          h.outcomes().map(({ messageId, outcome }) => ({ messageId, outcome })),
+          [
+            { messageId: MessageId.make("admitted-A"), outcome: "offered" },
+            {
+              messageId: MessageId.make("admitted-B"),
+              outcome:
+                ending === "result"
+                  ? "completed"
+                  : ending === "query-exit"
+                    ? "failed"
+                    : "cancelled",
+            },
+          ],
+        );
+        const persisted = h.events
+          .flatMap((event) =>
+            event.type === "provider_thread.updated" ? [event.providerThread] : [],
+          )
+          .at(-1);
+        assert.equal(persisted?.nativeMetadata?.claudeAttachmentBudget?.pagesUsed, 60);
+        assert.lengthOf(h.offeredMessages, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("cancels registered held inputs without offering them after Stop", () =>
+    Effect.gen(function* () {
+      const h = yield* startSteerFixture({ close: Queue.shutdown });
+      yield* h.root();
+      yield* h.status("compacting");
+      const registered = yield* Deferred.make<void>();
+      const registering = yield* h
+        .steer("A")
+        .pipe(
+          Effect.andThen(Deferred.succeed(registered, undefined)),
+          Effect.andThen(Effect.never),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(registered);
+      yield* Fiber.interrupt(registering);
+      yield* h.steer("A");
+      yield* h.steer("B");
+      yield* h.runtime.interruptTurn({
+        providerThread: h.providerThread,
+        providerTurnId: h.providerTurnId,
+      });
+      yield* h.awaitTerminal(1);
+      assert.lengthOf(h.offeredMessages, 1);
+      assert.deepEqual(
+        h.outcomes().map((event) => event.type === "steer.settled" && event.outcome),
+        ["cancelled", "cancelled"],
+      );
+      const terminal = h.events.findIndex((event) => event.type === "turn.terminal");
+      const outcome = h.events.findIndex((event) => event.type === "steer.settled");
+      const turn = h.events.findLastIndex((event) => event.type === "provider_turn.updated");
+      assert.isBelow(turn, outcome);
+      assert.isBelow(outcome, terminal);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["compatibility", "early", "native"] as const)(
+    "attributes the opening gate for %s input",
+    (mode) =>
+      Effect.gen(function* () {
+        const h = yield* startSteerFixture();
+        if (mode === "compatibility") {
+          yield* h.steer("A");
+          assert.lengthOf(h.offeredMessages, 1);
+          yield* h.root(false);
+          yield* h.until(() => h.outcomes().length === 1);
+          assert.lengthOf(h.offeredMessages, 2);
+          return;
+        }
+        yield* h.root();
+        if (mode === "native") yield* h.offerAndWait(wakeTaskStarted);
+        yield* h.offerAndWait(makeResultFrame({ uuid: "opening-terminal", result: "Done." }));
+        yield* h.awaitTerminal(1);
+        if (mode === "native") yield* h.offerAndWait(wakeAssistant);
+        const next = makeClaudeTestTurnInput({
+          threadId: h.threadId,
+          providerThread: h.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("next-opening"),
+          text: "Continue",
+          attachments: [],
+          nativeThreadHasTurns: true,
+          providerTurnOrdinal: 2,
+          ...(mode === "native"
+            ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+            : {}),
+        });
+        yield* h.runtime.startTurn(next);
+        yield* h.status("compacting");
+        yield* h.runtime.steerTurn({
+          threadId: h.threadId,
+          runId: next.runId,
+          providerThread: h.providerThread,
+          providerTurnId: IdAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${next.attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("next-steer"),
+            text: "A",
+            attachments: [],
+          },
+        });
+        yield* h.status(null, "success");
+        if (mode === "early") {
+          yield* h.root(false);
+          assert.lengthOf(h.offeredMessages, 2);
+          yield* h.offerAndWait(
+            h.frame({
+              ...makeAssistantTextFrame({ uuid: "foreign-next", text: "Foreign" }),
+              user_message_uuid: h.promptUuid(0),
+            }),
+          );
+          assert.lengthOf(h.offeredMessages, 2);
+          yield* h.offerAndWait(
+            h.frame({
+              ...makeAssistantTextFrame({ uuid: "matching-next", text: "Working" }),
+              user_message_uuid: h.promptUuid(1),
+            }),
+          );
+        }
+        yield* h.until(() => h.outcomes().length === 1);
+        assert.lengthOf(h.offeredMessages, mode === "native" ? 2 : 3);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("does not let held-only input suppress an abort or enter a replacement turn", () =>
+    Effect.gen(function* () {
+      const h = yield* startSteerFixture();
+      yield* h.root();
+      yield* h.status("compacting");
+      yield* h.steer("A");
+      yield* h.offerAndWait(
+        makeResultFrame({ uuid: "held-abort", result: "", terminalReason: "aborted_streaming" }),
+      );
+      yield* h.awaitTerminal(1);
+      assert.equal(h.terminalEvents()[0]?.status, "interrupted");
+      assert.equal(
+        h.outcomes()[0]?.type === "steer.settled" && h.outcomes()[0]?.outcome,
+        "cancelled",
+      );
+      yield* h.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: h.threadId,
+          providerThread: h.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("replacement-turn"),
+          text: "New prompt",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          nativeThreadHasTurns: true,
+        }),
+      );
+      yield* h.offerAndWait(
+        h.frame({
+          ...makeAssistantTextFrame({ uuid: "replacement-output", text: "Working" }),
+          user_message_uuid: h.promptUuid(1),
+        }),
+      );
+      yield* h.status(null, "success");
+      assert.lengthOf(h.offeredMessages, 2);
+      assert.lengthOf(h.outcomes(), 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("releases an unoffered attachment reservation when Stop interrupts preparation", () =>
+    Effect.gen(function* () {
+      const preparing = yield* Deferred.make<void>();
+      const h = yield* startSteerFixture({
+        close: Queue.shutdown,
+        freshQueueOnReopen: true,
+        backgroundTasks: () =>
+          Deferred.succeed(preparing, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const pdf = Buffer.from(
+        `%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Count 60 >> endobj\n${Array.from({ length: 60 }, (_, i) => `${i + 3} 0 obj << /Type /Page /Parent 2 0 R >> endobj`).join("\n")}\n%%EOF`,
+      );
+      const document = ChatFileAttachment.make({
+        type: "file",
+        id: ChatAttachmentId.make("stopped-preparation"),
+        name: "pending.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: pdf.length,
+      });
+      yield* fs.writeFile(path.join(h.attachmentsDir, attachmentRelativePath(document)!), pdf);
+      yield* h.root();
+      yield* h.offerAndWait(
+        h.frame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "preparing-task",
+          tool_use_id: "preparing-tool",
+          description: "Audit",
+          subagent_type: "general-purpose",
+          is_backgrounded: false,
+          task_type: "local_agent",
+          prompt: "Audit.",
+        }),
+      );
+      yield* h.runtime.steerTurn({
+        threadId: h.threadId,
+        runId: h.input.runId,
+        providerThread: h.providerThread,
+        providerTurnId: h.providerTurnId,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("preparing-input"),
+          text: "Read",
+          attachments: [document],
+        },
+      });
+      yield* Deferred.await(preparing);
+      assert.lengthOf(h.offeredMessages, 1);
+      yield* h.runtime.interruptTurn({
+        providerThread: h.providerThread,
+        providerTurnId: h.providerTurnId,
+      });
+      yield* h.awaitTerminal(1);
+      assert.deepEqual(
+        h.outcomes().map((event) => event.outcome),
+        ["cancelled"],
+      );
+      yield* h.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: h.threadId,
+          providerThread: h.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("after-stopped-preparation"),
+          text: "Read",
+          attachments: [document],
+          providerTurnOrdinal: 2,
+          nativeThreadHasTurns: true,
+        }),
+      );
+      const content = h.offeredMessages[1]?.message.content;
+      assert.isTrue(Array.isArray(content) && content.some((block) => block.type === "document"));
+      assert.lengthOf(h.offeredMessages, 2);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("holds compaction steers until success after matching root output", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("compaction-fifo"),
+        text: "Opening prompt",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          ...makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000901",
+            text: "Working",
+          }),
+          user_message_uuid: harness.promptUuid(0),
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: "00000000-0000-4000-8000-000000000902",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      for (const text of ["A", "B"]) {
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`compaction-${text}`),
+            text,
+            attachments: [],
+          },
+        });
+      }
+      assert.lengthOf(harness.offeredMessages, 1);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: null,
+          compact_result: "success",
+          uuid: "00000000-0000-4000-8000-000000000903",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() => harness.offeredMessages.length === 3);
+      assert.deepEqual(
+        harness.offeredMessages.slice(1).map((message) => message.message.content),
+        ["Ultrathink:\nA", "Ultrathink:\nB"],
+      );
+      assert.lengthOf(harness.terminalEvents(), 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
     (outcome) =>
@@ -3013,6 +3663,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const backgrounding = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const harness = yield* makeWakeHarnessWithOptions({
+          close: (messages) => Queue.shutdown(messages),
           backgroundTasks: () =>
             Deferred.succeed(backgrounding, undefined).pipe(
               Effect.andThen(Deferred.await(release)),
@@ -3046,6 +3697,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         });
         yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000810",
+              text: "Reading.",
+            }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -3103,16 +3763,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         if (outcome === "cancel-after") {
-          yield* Fiber.interrupt(pending);
-          assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(pending)));
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${input.attemptId}`,
+            }),
+          });
         } else if (outcome === "release-after") {
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(pending);
         }
-        // Flush the budget update through the event stream before trying again.
-        yield* harness.offerAndWait(
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000814", result: "Read." }),
-        );
+        if (outcome === "release-after" || outcome === "release-before") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              compact_result: "success",
+              uuid: "00000000-0000-4000-8000-000000000815",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === 2);
+        }
+        if (outcome !== "cancel-after")
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000814", result: "Read." }),
+          );
         yield* Queue.take(harness.terminalReceipts);
         const updates = harness.events.flatMap((event) =>
           event.type === "provider_thread.updated" ? [event.providerThread] : [],
@@ -4205,6 +4883,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
         });
         yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000910",
+              text: "Working.",
+            }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
 
         const leadingText = `Ultrathink:\n/interrogate [The user invoked this skill. Follow the instructions at: ${path.join(homePath, "skills", "interrogate", "SKILL.md")}] then /review then /implement the fixes`;
         assert.deepEqual(harness.offeredMessages[0]?.message.content, [
@@ -4236,6 +4923,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [attachment],
           },
         });
+        yield* harness.until(() => harness.offeredMessages.length === 2);
         const attachmentNote = `\n\n[Attached file "requirements.pdf" is saved at: ${path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!)}]`;
         assert.equal(harness.offeredMessages[1]?.priority, "now");
         assert.deepEqual(harness.offeredMessages[1]?.message.content, [
@@ -4669,6 +5357,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         yield* harness.runtime.startTurn(input);
         if (steered) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000910",
+                text: "Working.",
+              }),
+              user_message_uuid: harness.promptUuid(0),
+            }),
+          );
           yield* harness.runtime.steerTurn({
             threadId: harness.threadId,
             runId: input.runId,
@@ -4685,6 +5382,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attachments: [],
             },
           });
+          yield* harness.until(() => harness.offeredMessages.length === 2);
           assert.equal(harness.offeredMessages[1]?.priority, "now");
         }
         yield* Queue.offer(

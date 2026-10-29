@@ -1,3 +1,4 @@
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -644,6 +645,37 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 ) {}
 
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
+
+export function pendingClaudeSteers(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "turnItems" | "messages" | "runs" | "attempts" | "providerTurns" | "providerThreads"
+  >,
+) {
+  return (projection.messages ?? []).flatMap((message) => {
+    if (message.role !== "user" || message.runId === null) return [];
+    const run = projection.runs.find((row) => row.id === message.runId);
+    if (run === undefined || run.status === "rolled_back") return [];
+    const item = projection.turnItems.find(
+      (row) => row.id === IdAllocator.derive.userTurnItem({ messageId: message.id }),
+    );
+    if (
+      item?.status !== "pending" ||
+      item.runId !== run.id ||
+      (item.type !== "user_message" && item.type !== "notification")
+    )
+      return [];
+    const turn = projection.providerTurns.find((row) => row.id === item.providerTurnId);
+    const provider = projection.providerThreads.find((row) => row.id === item.providerThreadId);
+    return turn !== undefined &&
+      provider?.driver === "claudeAgent" &&
+      projection.attempts.some(
+        (attempt) => attempt.id === turn.runAttemptId && attempt.runId === run.id,
+      )
+      ? [{ item, message, run, turn }]
+      : [];
+  });
+}
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -3844,8 +3876,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    const readPendingClaudeSteers = Effect.fn("ProjectionStore.readPendingClaudeSteers")(function* (
+      threadId?: ThreadId,
+    ) {
+      const rows = yield* sql<{
+        readonly thread_id: string;
+        readonly item_id: string;
+        readonly message_id: string;
+        readonly item: string;
+        readonly message: string;
+        readonly run: string;
+        readonly attempt: string;
+        readonly turn: string;
+        readonly provider_thread: string;
+      }>`
+        SELECT item.thread_id, item.turn_item_id AS item_id, message.message_id,
+          item.payload_json AS item, message.payload_json AS message, run.payload_json AS run,
+          attempt.payload_json AS attempt, turn.payload_json AS turn, provider.payload_json AS provider_thread
+        FROM orchestration_v2_projection_turn_items AS item
+        JOIN orchestration_v2_projection_messages AS message ON message.run_id = item.run_id AND message.thread_id = item.thread_id
+        JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
+        JOIN orchestration_v2_projection_provider_turns AS turn ON turn.provider_turn_id = item.provider_turn_id
+        JOIN orchestration_v2_projection_run_attempts AS attempt ON attempt.attempt_id = turn.run_attempt_id
+        JOIN orchestration_v2_projection_provider_threads AS provider ON provider.provider_thread_id = item.provider_thread_id
+        WHERE item.status = 'pending' AND item.type IN ('user_message', 'notification')
+          AND message.role = 'user' AND provider.driver = 'claudeAgent' AND run.status <> 'rolled_back'
+          AND attempt.run_id = run.run_id
+          ${threadId === undefined ? sql`` : sql`AND item.thread_id = ${threadId}`}
+      `;
+      // IDs encode arbitrary message ids, including colons; correlate after the bounded pending-item query.
+      return rows.filter(
+        (row) =>
+          row.item_id ===
+          IdAllocator.derive.userTurnItem({ messageId: MessageId.make(row.message_id) }),
+      );
+    });
+
     const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
       function* (kind: ProjectionRecoveryKind) {
+        const pendingSteers = kind === "runtime" ? yield* readPendingClaudeSteers() : [];
+        const pendingThreads = [...new Set(pendingSteers.map((row) => row.thread_id))];
         const candidates = (() => {
           switch (kind) {
             case "queued-runs":
@@ -3977,7 +4047,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<{ readonly thread_id: string }>`
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL
-            AND thread_id IN (${candidates})
+            AND (thread_id IN (${candidates}) ${pendingThreads.length === 0 ? sql`` : sql`OR ${sql.in("thread_id", pendingThreads)}`})
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
@@ -4580,6 +4650,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             decodeRows(decodeMessagePayload, threadId)(messageRows),
             decodeRows(decodeTurnItemPayload, threadId)(turnItemRows),
           ]);
+          for (const row of yield* readPendingClaudeSteers(threadId)) {
+            const merge = <T extends { readonly id: string }>(target: Array<T>, value: T) => {
+              if (!target.some((existing) => existing.id === value.id)) target.push(value);
+            };
+            merge(runs, yield* decodeRunPayload(row.run));
+            merge(attempts, yield* decodeRunAttemptPayload(row.attempt));
+            merge(providerThreads, yield* decodeProviderThreadPayload(row.provider_thread));
+            merge(providerTurns, yield* decodeProviderTurnPayload(row.turn));
+            merge(messages, yield* decodeMessagePayload(row.message));
+            merge(turnItems, yield* decodeTurnItemPayload(row.item));
+          }
           return {
             thread,
             runs,

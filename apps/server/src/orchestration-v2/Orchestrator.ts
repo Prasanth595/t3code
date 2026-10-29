@@ -491,6 +491,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "message.steer.settle":
     case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
@@ -1214,9 +1215,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
+  const hasUnsettledSteerAdmission = Effect.fn("Orchestrator.hasUnsettledSteerAdmission")(
+    function* (
+      threadId: ThreadId,
+      messageId: MessageId,
+      pendingItems?: ReadonlyArray<OrchestrationV2TurnItem>,
+    ) {
+      const itemId = idAllocator.derive.userTurnItem({ messageId });
+      const item =
+        pendingItems?.find((row) => row.id === itemId) ??
+        (yield* projectionStore.getTurnItem({ threadId, itemId }));
+      if (item?.status === "pending") return true;
+      if (item?.providerTurnId == null || item.status !== "completed") return false;
+      const effect = yield* effectOutbox.get(
+        `effect:steer-settle:${item.providerTurnId}:${messageId}`,
+      );
+      return (
+        Option.isSome(effect) &&
+        effect.value.request.type === "message.steer.settle" &&
+        effect.value.request.outcome === "offered"
+      );
+    },
+    (effect, threadId) =>
+      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+  );
+
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
-    Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId) {
+    Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      parentRunId: RunId,
+      expected?: Pick<OrchestrationV2DelegatedCompletionDelivery, "generation" | "messageId">,
+    ) {
       const projection = yield* projectionStore.getThreadRecords(
         threadId,
         ["runs", "messages", "providerTurns", "providerThreads"],
@@ -1231,10 +1261,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery === null ||
         delivery === undefined ||
         delivery.taskIds.length === 0 ||
+        (expected !== undefined &&
+          (delivery.generation !== expected.generation ||
+            delivery.messageId !== expected.messageId)) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         (completionDeliveryMessage(projection, delivery) !== undefined &&
-          !isUndeliveredMailboxSteer(projection, delivery.messageId))
+          (!isUndeliveredMailboxSteer(projection, delivery.messageId) ||
+            (yield* hasUnsettledSteerAdmission(threadId, delivery.messageId))))
       ) {
         return;
       }
@@ -4463,10 +4497,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nativeItemRef: null,
           parentItemId: null,
           ordinal: yield* nextTurnItemOrdinal(input.projection),
-          status: "completed",
+          status:
+            providerThread.driver === "claudeAgent" && steeringPolicy === "active_steering"
+              ? "pending"
+              : "completed",
           title: null,
           startedAt: now,
-          completedAt: now,
+          completedAt:
+            providerThread.driver === "claudeAgent" && steeringPolicy === "active_steering"
+              ? null
+              : now,
           updatedAt: now,
           type: "user_message",
           messageId: input.messageId,
@@ -5291,7 +5331,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery.generation !== requestedCompletion.generation ||
         delivery.messageId !== command.messageId ||
         (projection.messages.some((candidate) => candidate.id === command.messageId) &&
-          !isUndeliveredMailboxSteer(projection, command.messageId))
+          (!isUndeliveredMailboxSteer(projection, command.messageId) ||
+            (yield* hasUnsettledSteerAdmission(
+              command.threadId,
+              command.messageId,
+              projection.turnItems,
+            ))))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -12347,6 +12392,272 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return parentRun.id;
   });
 
+  const dispatchMessageIntake = Effect.fn("Orchestrator.dispatchMessageIntake")(function* (
+    command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (isProviderNativeSubagentThread(thread)) {
+      return yield* new OrchestratorSubagentThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+      });
+    }
+    const guestSend =
+      command.guestMessageId === undefined
+        ? undefined
+        : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+    const dispatched =
+      guestSend === undefined
+        ? withoutGuestAttribution(command)
+        : {
+            ...command,
+            text: guestSend.text,
+            context: { version: 1 as const, records: [], guest: guestSend.guest },
+          };
+    const cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
+    yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+    return cancelUnsettledEffects;
+  });
+
+  const dispatchSteerSettlement = Effect.fn("Orchestrator.dispatchSteerSettlement")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { type: "message.steer.settle" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const message = projection.messages.find((row) => row.id === command.messageId);
+    const run = projection.runs.find((row) => row.id === command.runId);
+    const turn = projection.providerTurns.find((row) => row.id === command.providerTurnId);
+    const item = yield* projectionStore.getTurnItem({
+      threadId: command.threadId,
+      itemId: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+    });
+    if (
+      message?.runId !== command.runId ||
+      run === undefined ||
+      !projection.attempts.some(
+        (attempt) => attempt.id === command.attemptId && attempt.runId === run.id,
+      ) ||
+      turn?.runAttemptId !== command.attemptId ||
+      item?.runId !== command.runId ||
+      item.providerTurnId !== command.providerTurnId
+    )
+      return;
+    const stopped = yield* stopReachedRun(command, command.threadId, run.id);
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    if (item.status === "pending") {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          status:
+            command.outcome === "offered"
+              ? "completed"
+              : stopped || command.outcome === "cancelled"
+                ? "cancelled"
+                : "failed",
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+      if (command.outcome !== "offered") {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            type: "system_notice",
+            id: TurnItemId.make(`${item.id}:steer-outcome`),
+            threadId: item.threadId,
+            runId: item.runId,
+            nodeId: item.nodeId,
+            providerThreadId: item.providerThreadId ?? null,
+            providerTurnId: item.providerTurnId ?? null,
+            nativeItemRef: null,
+            parentItemId: item.id,
+            ordinal: yield* nextTurnItemOrdinal(projection),
+            status: "completed",
+            title: "Steering input not sent",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            message: `Input ${message.id} was not sent to the original turn.`,
+          },
+        });
+      }
+    }
+    if (stopped || command.outcome === "cancelled") return;
+    const ownership = message.delegatedCompletion;
+    if (ownership !== undefined) {
+      const cohort = projection.runs.find(
+        (row) => row.id === ownership.parentRunId,
+      )?.delegatedCompletion;
+      if (
+        cohort?.disposition !== "open" ||
+        cohort.delivery?.messageId !== message.id ||
+        cohort.delivery.generation !== ownership.generation
+      )
+        return;
+    }
+    if (command.outcome === "offered") {
+      if (ownership === undefined) return;
+      // Like a direct acceptance, commit only the cohort so a concurrent terminal keeps the run status.
+      const updateDelegatedCompletionOnlyRunId = yield* dispatchNotificationAccepted(
+        {
+          type: "notification.delivery.accept",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: command.messageId,
+        },
+        events,
+      );
+      return { updateDelegatedCompletionOnlyRunId };
+    }
+    if (run.activeAttemptId !== command.attemptId || turn.status !== "completed") return;
+    const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId);
+    if (parentThreadId !== undefined) {
+      const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
+      const task = parent.subagents.find(
+        (row) =>
+          row.id === run.delegatedTaskId ||
+          (projection.thread.forkedFrom?.type === "node" &&
+            row.id === projection.thread.forkedFrom.nodeId),
+      );
+      if (task?.runId != null && (yield* stopReachedRun(command, parentThreadId, task.runId)))
+        return;
+    }
+    const selection =
+      ownership === undefined ? projection.thread.modelSelection : run.modelSelection;
+    const settings = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
+    if (
+      !resolveProjectProviderInstanceEnabled(
+        settings,
+        projection.thread.projectId,
+        selection.instanceId,
+      )
+    ) {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          type: "system_notice",
+          id: TurnItemId.make(`${item.id}:steer-disabled`),
+          threadId: item.threadId,
+          runId: item.runId,
+          nodeId: item.nodeId,
+          providerThreadId: item.providerThreadId ?? null,
+          providerTurnId: item.providerTurnId ?? null,
+          nativeItemRef: null,
+          parentItemId: item.id,
+          ordinal: yield* nextTurnItemOrdinal(projection),
+          status: "completed",
+          title: "Steering follow-up unavailable",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          message: `Input ${message.id} cannot continue because the selected provider is disabled.`,
+        },
+      });
+      return;
+    }
+    const cancelUnsettledEffects = yield* dispatchMessageIntake(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: message.id,
+        text: message.text,
+        attachments: message.attachments,
+        ...(message.context === undefined ? {} : { context: message.context }),
+        ...(ownership === undefined
+          ? {}
+          : { modelSelection: run.modelSelection, delegatedCompletion: ownership }),
+        ...(message.notification === undefined ? {} : { notification: message.notification }),
+        ...(message.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+        ...(message.scheduledTaskId === undefined
+          ? {}
+          : { scheduledTaskId: message.scheduledTaskId }),
+        createdBy: message.createdBy,
+        creationSource: message.creationSource,
+        dispatchMode: {
+          type: ownership === undefined ? "start_immediately" : "queue_after_active",
+        },
+      },
+      events,
+      effects,
+    );
+    return { cancelUnsettledEffects };
+  });
+
+  const offerSteerSettlementContinuation = Effect.fn(
+    "Orchestrator.offerSteerSettlementContinuation",
+  )(function* (
+    command: Extract<OrchestrationV2ServerCommand, { type: "message.steer.settle" }>,
+    storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>,
+  ) {
+    const projection = yield* projectionStore.getThreadRecords(
+      command.threadId,
+      ["messages", "runs", "providerTurns"],
+      { messageIds: [command.messageId] },
+    );
+    const message = projection.messages.find((row) => row.id === command.messageId);
+    const ownership = message?.delegatedCompletion;
+    if (ownership === undefined) return;
+    if (command.outcome === "offered") {
+      const accepted = storedEvents.find(
+        (stored) =>
+          stored.event.type === "run.updated" && stored.event.payload.id === ownership.parentRunId,
+      );
+      const successor =
+        accepted?.event.type === "run.updated"
+          ? accepted.event.payload.delegatedCompletion?.delivery
+          : undefined;
+      if (successor != null && successor.messageId !== command.messageId) {
+        yield* offerDelegatedCompletionDelivery(command.threadId, ownership.parentRunId, successor);
+      }
+      return;
+    }
+    if (
+      command.outcome === "cancelled" ||
+      message?.runId !== command.runId ||
+      !projection.runs.some(
+        (run) => run.id === command.runId && run.activeAttemptId === command.attemptId,
+      ) ||
+      !projection.providerTurns.some(
+        (turn) => turn.id === command.providerTurnId && turn.runAttemptId === command.attemptId,
+      )
+    )
+      return;
+    const item = yield* projectionStore.getTurnItem({
+      threadId: command.threadId,
+      itemId: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+    });
+    if (item?.status !== "failed" || item.providerTurnId !== command.providerTurnId) return;
+    yield* offerDelegatedCompletionDelivery(command.threadId, ownership.parentRunId, {
+      generation: ownership.generation,
+      messageId: message.id,
+    });
+  });
+
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -12487,35 +12798,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
-      case "message.dispatch": {
-        // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(
-            Effect.mapError(
-              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-            ),
-          );
-        if (isProviderNativeSubagentThread(thread)) {
-          return yield* new OrchestratorSubagentThreadReadOnlyError({
-            commandId: command.commandId,
-            threadId: command.threadId,
-          });
-        }
-        const guestSend =
-          command.guestMessageId === undefined
-            ? undefined
-            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
-        const dispatched =
-          guestSend === undefined
-            ? withoutGuestAttribution(command)
-            : {
-                ...command,
-                text: guestSend.text,
-                context: { version: 1 as const, records: [], guest: guestSend.guest },
-              };
-        cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
-        yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+      case "message.dispatch":
+        cancelUnsettledEffects = yield* dispatchMessageIntake(command, events, effects);
+        break;
+      case "message.steer.settle": {
+        const settlement = yield* dispatchSteerSettlement(command, events, effects).pipe(
+          mapDispatchError(command),
+        );
+        cancelUnsettledEffects = settlement?.cancelUnsettledEffects;
+        updateDelegatedCompletionOnlyRunId = settlement?.updateDelegatedCompletionOnlyRunId;
         break;
       }
       case "notification.delivery.accept":
@@ -12788,6 +13079,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       }
+      if (command.type === "message.steer.settle") {
+        yield* mapDispatchError(command)(offerSteerSettlementContinuation(command, storedEvents));
+      } else if (command.type === "notification.delivery.accept") {
+        yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
+      }
       return {
         sequence: receipt.resultSequence,
         storedEvents,
@@ -12811,6 +13107,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (planned) =>
           planned.events.length > 0 ||
           command.type === "thread.background-work.settle" ||
+          command.type === "message.steer.settle" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
@@ -12885,6 +13182,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      if (command.type === "message.steer.settle") {
+        yield* mapDispatchError(command)(offerSteerSettlementContinuation(command, []));
+      }
       return {
         sequence: resultSequence,
         storedEvents: [],
@@ -12933,7 +13233,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    if (command.type === "notification.delivery.accept") {
+    if (command.type === "message.steer.settle") {
+      yield* mapDispatchError(command)(
+        offerSteerSettlementContinuation(command, committed.storedEvents),
+      );
+    } else if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
     if (
@@ -12956,9 +13260,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    // Answering a message-mode question can also start a follow-up.
+    // Answering a message-mode question or settling a held steer can also start a follow-up.
     if (
       command.type !== "runtime-request.respond" &&
+      command.type !== "message.steer.settle" &&
       (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
     )
       return yield* dispatch;
@@ -12984,7 +13289,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (delegatedTaskTerminalStatus(run.status) !== null) {
         yield* threadDispatch.withLock(
           threadId,
-          finalizeDelegatedCompletionDelivery(threadId, run.id),
+          Effect.gen(function* () {
+            yield* finalizeDelegatedCompletionDelivery(threadId, run.id);
+            const projection = yield* projectionStore.getThreadRecords(
+              threadId,
+              ["runs", "messages", "providerTurns"],
+              {
+                runIds: [run.id],
+                messageRunIds: [run.id],
+                messageRoles: ["user"],
+              },
+            );
+            const current = projection.runs.find((row) => row.id === run.id);
+            if (
+              current?.activeAttemptId !== run.activeAttemptId ||
+              delegatedTaskTerminalStatus(current.status) === null
+            )
+              return;
+            for (const message of projection.messages) {
+              const ownership = message.delegatedCompletion;
+              if (message.id === run.userMessageId || ownership === undefined) continue;
+              const item = yield* projectionStore.getTurnItem({
+                threadId,
+                itemId: idAllocator.derive.userTurnItem({ messageId: message.id }),
+              });
+              if (
+                item?.runId !== run.id ||
+                item.status !== "failed" ||
+                !projection.providerTurns.some(
+                  (turn) =>
+                    turn.id === item.providerTurnId && turn.runAttemptId === run.activeAttemptId,
+                )
+              )
+                continue;
+              yield* offerDelegatedCompletionDelivery(threadId, ownership.parentRunId, {
+                messageId: message.id,
+                generation: ownership.generation,
+              });
+            }
+          }),
         );
         yield* threadDispatch
           .withLock(

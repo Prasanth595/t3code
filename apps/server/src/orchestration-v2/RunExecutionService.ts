@@ -374,6 +374,14 @@ export function routeProviderEvent(
   });
 
   switch (event.type) {
+    case "steer.settled":
+      return [
+        event.threadId === input.threadId &&
+          event.runId === input.runId &&
+          event.attemptId === input.attemptId &&
+          event.providerTurnId === state.rootProviderTurnId,
+        state,
+      ];
     case "provider_session.updated":
       return [false, state];
     case "app_thread.created": {
