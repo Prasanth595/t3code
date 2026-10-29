@@ -72,14 +72,16 @@ interface CardOption {
 const threadKeyOf = (entry: AdhdQueueEntry) =>
   scopedThreadKey(scopeThreadRef(entry.thread.environmentId, entry.thread.id));
 
+const OVERLAY_SELECTOR =
+  '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot$="-popup"]';
+
 // Keys typed into a field or an open dialog or menu belong there, not to the card underneath.
 function ignoresCardKeys(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.isContentEditable ||
       ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
-      target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]') !==
-        null)
+      target.closest(OVERLAY_SELECTOR) !== null)
   );
 }
 
