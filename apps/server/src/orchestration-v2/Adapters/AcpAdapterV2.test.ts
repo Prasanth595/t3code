@@ -350,12 +350,20 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   let copilotSessionEvent:
     | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
     | undefined;
+  let duringNextPreparation: Effect.Effect<void, EffectAcpErrors.AcpError> = Effect.void;
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       supportsCompaction: true,
+      // Prompt preparation awaits this hook, so frames sent from it land mid-preparation.
+      rewriteUserText: (text) =>
+        Effect.suspend(() => {
+          const during = duringNextPreparation;
+          duringNextPreparation = Effect.void;
+          return during.pipe(Effect.orDie, Effect.as(text));
+        }),
       registerExtensions: makeCopilotSubagentRouting().registerExtensions,
       // Routes updates tagged with a Devin subagent context to that child session.
       normalizeSessionUpdate: normalizeDevinSessionUpdate,
@@ -430,6 +438,13 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       assert.isDefined(sessionUpdate);
       yield* sessionUpdate({ sessionId, update });
     }),
+    sessionUpdateDuringNextPreparation: (update: EffectAcpSchema.SessionUpdate) =>
+      Effect.sync(() => {
+        duringNextPreparation = Effect.suspend(() => {
+          assert.isDefined(sessionUpdate);
+          return sessionUpdate({ sessionId, update });
+        });
+      }),
     idleCopilotSessionEvent: Effect.fnUntraced(function* (event: {
       readonly type: string;
       readonly agentId?: string;
@@ -1078,14 +1093,18 @@ describe("AcpAdapterV2", () => {
   );
 
   it.live(
-    "reinjects ACP instructions after protocol compaction, during reinjection or while idle",
+    "reinjects ACP instructions after protocol compaction, during reinjection, prompt preparation, or while idle",
     () =>
       Effect.gen(function* () {
-        const { runTurn, idleSessionUpdate, idleCopilotSessionEvent } =
-          yield* makeInstructionCompactionHarness({
-            T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
-            T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
-          });
+        const {
+          runTurn,
+          idleSessionUpdate,
+          idleCopilotSessionEvent,
+          sessionUpdateDuringNextPreparation,
+        } = yield* makeInstructionCompactionHarness({
+          T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
+          T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
+        });
         yield* runTurn("Start work.");
         yield* runTurn("Continue until context compacts.");
         assert.deepEqual(yield* runTurn("  /repro-skill"), [
@@ -1166,6 +1185,18 @@ describe("AcpAdapterV2", () => {
           yield* runTurn("Continue after the compaction really finished."),
           "Continue after the compaction really finished.",
         );
+        yield* sessionUpdateDuringNextPreparation({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-while-preparing",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after a compaction during prompt preparation."),
+          "Continue after a compaction during prompt preparation.",
+        );
+        assert.deepEqual(yield* runTurn("Finish after that reinjection."), [
+          { type: "text", text: "Finish after that reinjection." },
+        ]);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2253,7 +2284,7 @@ describe("AcpAdapterV2", () => {
               Object(rawProtocolRequestParam(initialize, "clientCapabilities")),
               "session",
             ),
-        { notices: {} },
+        { notices: {}, compaction: {} },
       );
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
@@ -3554,10 +3585,15 @@ describe("AcpAdapterV2", () => {
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let firstSessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const firstPromptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const firstPromptCallbackDone = yield* Deferred.make<void>();
       const replacementPromptText = yield* Deferred.make<string>();
       const instanceId = ProviderInstanceId.make("acp-test-late-prompt-rollback");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
+        testHooks: {
+          afterPromptCallback: () =>
+            Deferred.succeed(firstPromptCallbackDone, undefined).pipe(Effect.asVoid),
+        },
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
@@ -3645,9 +3681,10 @@ describe("AcpAdapterV2", () => {
           appRunOrdinal: 0,
         },
       });
-      // Closing the replaced runtime settles its open prompt as cancelled. The waiting
-      // prompt fiber resumes inside this call, before the next turn reads delivery state.
+      // Closing the replaced runtime settles its open prompt as cancelled. Its completion
+      // callback must finish before the next turn reads delivery state.
       yield* Deferred.succeed(firstPromptGate, { stopReason: "cancelled" });
+      yield* Deferred.await(firstPromptCallbackDone);
       yield* runtime.startTurn(
         makeTurnInput({
           threadId,
