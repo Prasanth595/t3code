@@ -1513,8 +1513,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
+      // A worktree handoff detaches the running session on purpose, which fails
+      // its run; that failure says nothing about the provider, and holding the
+      // queue would strand the handoff's own continuation.
+      const failedSessionId = projection.providerThreads.find(
+        (thread) => thread.id === failedRun?.providerThreadId,
+      )?.providerSessionId;
+      const failedSessionCwd = projection.providerSessions.find(
+        (session) => session.id === failedSessionId,
+      )?.cwd;
+      const workspaceMovedAway =
+        projection.thread.worktreePath !== null &&
+        failedSessionCwd !== undefined &&
+        failedSessionCwd !== projection.thread.worktreePath;
       const failureClass =
-        failedRun?.id === options?.failedRunId
+        failedRun?.id === options?.failedRunId && !workspaceMovedAway
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
