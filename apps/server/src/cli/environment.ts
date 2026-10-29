@@ -37,14 +37,16 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
         Layer.provide(
           Layer.mergeAll(
             ServerSecretStore.layer,
-            SqlitePersistence.layerConfig,
+            SqlitePersistence.layerCliConfig,
             FetchHttpClient.layer,
           ),
         ),
         Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
         Layer.provide(
           ServerSettings.layer.pipe(
-            Layer.provide(Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig)),
+            Layer.provide(
+              Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerCliConfig),
+            ),
           ),
         ),
         Layer.provide(ServerConfig.layer(config)),

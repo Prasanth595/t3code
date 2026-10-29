@@ -8,15 +8,22 @@ import {
   computeDpopJwkThumbprint,
   type DpopPublicJwk,
 } from "@t3tools/shared/dpop";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { migrationManifest, runMigrations } from "../persistence/Migrations.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -107,7 +114,74 @@ const makeDpopKey = () => {
   };
 };
 
+const ownT3Home = (config: ServerConfig.ServerConfig["Service"]) =>
+  Effect.gen(function* () {
+    yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProcessRunner.layer,
+          // An empty home, so no boot service unit installed on this machine is read.
+          Layer.effect(
+            HostProcess.HomeDirectory,
+            (yield* FileSystem.FileSystem).makeTempDirectoryScoped(),
+          ),
+          Layer.succeed(HostProcess.Environment, {}),
+        ),
+      ),
+    );
+  });
+
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("does not migrate a T3 home behind the server that owns it", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* ownT3Home(config);
+      const recordedMigrationId = Math.max(...migrationManifest.map(([id]) => id)) - 1;
+      const latestRecordedMigrationId = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const rows = yield* sql<{ readonly id: number }>`
+          SELECT MAX(migration_id) AS id FROM effect_sql_migrations
+        `;
+        return rows[0]?.id;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: config.dbPath })));
+      yield* runMigrations({ toMigrationInclusive: recordedMigrationId }).pipe(
+        Effect.provide(NodeSqliteClient.layer({ filename: config.dbPath })),
+      );
+
+      const cliStorage = yield* Effect.void.pipe(
+        Effect.provide(
+          EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config))),
+        ),
+        Effect.result,
+      );
+
+      expect(yield* latestRecordedMigrationId).toBe(recordedMigrationId);
+      expect(cliStorage._tag).toBe("Failure");
+      if (cliStorage._tag === "Failure") {
+        expect(cliStorage.failure.message).toMatch(/running server, owns/i);
+      }
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
+  it.effect("opens a current T3 home while the server that owns it runs", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* runMigrations().pipe(
+        Effect.provide(NodeSqliteClient.layer({ filename: config.dbPath })),
+      );
+      yield* ownT3Home(config);
+
+      const issued = yield* EnvironmentAuth.EnvironmentAuth.pipe(
+        Effect.flatMap((auth) => auth.issueSession()),
+        Effect.provide(
+          EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config))),
+        ),
+      );
+
+      expect(issued.token.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
