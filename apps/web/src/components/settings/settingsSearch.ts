@@ -500,6 +500,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "settle-snoozed-threads-on-merge",
+    title: "Settle snoozed threads on merge",
+    to: "/settings/threads",
+    targetId: "auto-settle-merged-threads",
+    searchTerms: ["snooze pull request merge auto-settle sidebar wake"],
+    requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
     id: "keep-threads-with-pull-requests",
     title: "Keep threads with a PR",
     to: "/settings/threads",

@@ -145,6 +145,7 @@ function pullRequestSettles(
 export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
+  settleSnoozedOnMerge = false,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
@@ -155,7 +156,7 @@ export function isAutoSettlementCandidate(
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
-  return !isSnoozed(thread, nowMs);
+  return settleSnoozedOnMerge || !isSnoozed(thread, nowMs);
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -191,6 +192,7 @@ export function resolveAutoSettlementAt(input: {
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
   readonly autoSettleKeepPullRequests?: boolean;
+  readonly autoSettleSnoozedOnMerge?: boolean;
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -214,7 +216,9 @@ export function resolveAutoSettlementAt(input: {
             closedAt: latest.snapshot.closedAt ?? null,
           };
   }
-  if (!isAutoSettlementCandidate(thread, input.nowMs)) return null;
+  const settleSnoozedOnMerge = input.autoSettleOnMerge && input.autoSettleSnoozedOnMerge === true;
+  if (!isAutoSettlementCandidate(thread, input.nowMs, settleSnoozedOnMerge)) return null;
+  const snoozed = isSnoozed(thread, input.nowMs);
   const activityAtMs =
     latestMillis([
       toMillis(thread.latestUserMessageAt),
@@ -222,9 +226,14 @@ export function resolveAutoSettlementAt(input: {
       toMillis(thread.latestRunStartedAt),
       toMillis(thread.latestRunCompletedAt),
     ]) ?? DateTime.toEpochMillis(thread.createdAt);
-  if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
+  if (
+    pullRequest !== null &&
+    (!snoozed || pullRequest.state === "merged") &&
+    pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)
+  ) {
     return DateTime.makeUnsafe(activityAtMs);
   }
+  if (snoozed) return null;
   const hasPullRequest =
     hasOpenLink ||
     pullRequest !== null ||
@@ -269,12 +278,14 @@ export function autoSettlementSettingsKey(
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,
+    settings.sidebarAutoSettleSnoozedOnMerge,
     Object.entries(settings.projectSettingsOverrides)
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
           entry.sidebarAutoSettleAfterDays !== undefined ||
-          entry.sidebarAutoSettleKeepPullRequests !== undefined,
+          entry.sidebarAutoSettleKeepPullRequests !== undefined ||
+          entry.sidebarAutoSettleSnoozedOnMerge !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -284,6 +295,7 @@ export function autoSettlementSettingsKey(
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
         entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
+        entry.sidebarAutoSettleSnoozedOnMerge ?? "inherit",
       ]),
   ]);
 }
@@ -319,7 +331,14 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter((thread) => {
+      const { settings: projectSettings } = resolveProjectSettings(settings, thread.projectId);
+      return isAutoSettlementCandidate(
+        thread,
+        nowMs,
+        projectSettings.sidebarAutoSettleOnMerge && projectSettings.sidebarAutoSettleSnoozedOnMerge,
+      );
+    });
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
@@ -337,6 +356,7 @@ export const make = Effect.gen(function* () {
           autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
+          autoSettleSnoozedOnMerge: currentSettings.sidebarAutoSettleSnoozedOnMerge,
         });
         if (settledAt === null) return thread;
         const uuid = yield* crypto.randomUUIDv4();
@@ -433,6 +453,7 @@ export const make = Effect.gen(function* () {
             autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
             autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
             autoSettleKeepPullRequests: settings.sidebarAutoSettleKeepPullRequests,
+            autoSettleSnoozedOnMerge: settings.sidebarAutoSettleSnoozedOnMerge,
           }) !== null
         );
       });

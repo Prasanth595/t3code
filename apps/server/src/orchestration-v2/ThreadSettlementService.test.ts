@@ -164,6 +164,7 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
     });
     expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS, true)).toBe(true);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
@@ -1450,5 +1451,15 @@ describe("isSnoozed", () => {
         autoSettleOnMerge: true,
       }),
     ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+        autoSettleSnoozedOnMerge: true,
+      }),
+    ).toEqual(at(-DAY_MS));
   });
 });

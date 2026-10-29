@@ -475,6 +475,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? ["Auto-settle merged threads"]
       : []),
+    ...(settings.sidebarAutoSettleSnoozedOnMerge !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleSnoozedOnMerge
+      ? ["Settle snoozed threads on merge"]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? ["Resume after usage limits"]
       : []),
@@ -634,6 +638,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarAutoSettleSnoozedOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleSnoozedOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -1492,6 +1497,10 @@ export function ThreadsSettingsPanel() {
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
+  const supportsAutoSettleSnoozedOnMerge = connectedEnvironments.every(
+    (target) =>
+      target.serverConfig?.environment.capabilities.threadAutoSettleSnoozedOnMerge === true,
+  );
 
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,
@@ -1642,6 +1651,24 @@ export function ThreadsSettingsPanel() {
               />
             }
           />
+          {settings.sidebarAutoSettleOnMerge && supportsAutoSettleSnoozedOnMerge ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoSettleSnoozedOnMerge"]}
+              title={searchableSetting("settle-snoozed-threads-on-merge").title}
+              description="A merge also settles snoozed threads. Off keeps them snoozed until they wake."
+              control={
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleSnoozedOnMerge"]}
+                  checked={settings.sidebarAutoSettleSnoozedOnMerge}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarAutoSettleSnoozedOnMerge: Boolean(checked) })
+                  }
+                  aria-label="Settle snoozed threads on merge"
+                />
+              }
+            />
+          ) : null}
 
           <SettingsRow
             serverScoped
