@@ -124,7 +124,7 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 );
 
 const applicationActiveWakeups = Stream.callback<
-  "application-active-probe" | "application-active-reconnect"
+  "application-active-probe" | "application-active-long"
 >((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {

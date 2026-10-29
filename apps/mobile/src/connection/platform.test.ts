@@ -261,8 +261,8 @@ describe("mobile connection signals", () => {
       native.app("background");
       now.mockReturnValue(115_000);
       native.app("active");
-      expect(yield* first.next).toBe("application-active-reconnect");
-      expect(yield* second.next).toBe("application-active-reconnect");
+      expect(yield* first.next).toBe("application-active-long");
+      expect(yield* second.next).toBe("application-active-long");
       for (const accountId of ["account-a", "account-b"]) {
         setManagedRelaySession(appAtomRegistry, {
           accountId,
@@ -296,7 +296,7 @@ describe("mobile connection signals", () => {
           expect(yield* late.next).toBe("credentials-changed");
           now.mockReturnValue(113_000);
           native.app("active");
-          expect(yield* early.next).toBe("application-active-reconnect");
+          expect(yield* early.next).toBe("application-active-long");
           expect(yield* late.next).toBe("application-active-probe");
         }),
       ),
