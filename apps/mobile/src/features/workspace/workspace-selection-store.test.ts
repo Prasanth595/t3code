@@ -162,7 +162,9 @@ async function setup(
   vi.doMock("../../state/presentation", () => ({
     environmentPresentations: { presentationsAtom: Atom.make(new Map()) },
   }));
+  const startOpeningEnvironmentThread = vi.fn();
   vi.doMock("../../state/threads", () => ({
+    startOpeningEnvironmentThread,
     threadEnvironment: { snapshotAtom: () => Atom.make(undefined) },
     environmentThreadShells: { environmentThreadIndexAtom: () => Atom.make(new Map()) },
   }));
@@ -185,6 +187,7 @@ async function setup(
   const { appAtomRegistry } = await import("../../state/atom-registry");
   return {
     store,
+    startOpeningEnvironmentThread,
     writes,
     stored,
     releaseFirst,
@@ -412,6 +415,7 @@ describe("workspace selection persistence", () => {
       settings: "SettingsAppearance",
     });
     expect(await fixture.store.launchWorkspaceURL()).toBe("t3code://threads/env/old");
+    expect(fixture.startOpeningEnvironmentThread).toHaveBeenCalledWith("env", "old");
     expect(fixture.store.settingsLinkPage()).toBe("SettingsAppearance");
     fixture.record("a");
     const reopened = workspaceTabNavigationState(
