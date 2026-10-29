@@ -101,7 +101,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   for (const required of [
     executable,
     path.join(contentDir, "client/index.html"),
-    ...(platform === "linux" ? [bundledLibatomic] : []),
+    ...(platform === "linux" ? [bundledLibatomic, `${bundledLibatomic}.LICENSE`] : []),
   ]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({

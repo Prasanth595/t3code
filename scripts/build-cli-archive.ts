@@ -274,13 +274,14 @@ const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input:
   const owner = yield* spawner.string(
     ChildProcess.make("dpkg-query", ["-S", yield* fs.realPath(source)]),
   );
-  const pkg = /^([^:\s]+)(?::[^:\s]+)?: /.exec(owner)?.[1];
-  const versions = pkg
+  // Keep the arch qualifier so a second installed arch cannot add its own line.
+  const [, qualifiedPkg, pkg] = /^(([^:\s]+)(?::[^:\s]+)?): /.exec(owner) ?? [];
+  const versions = qualifiedPkg
     ? yield* spawner.string(
         ChildProcess.make("dpkg-query", [
           "-W",
           "-f=${Version} ${source:Package} ${source:Version}",
-          pkg,
+          qualifiedPkg,
         ]),
       )
     : "";
