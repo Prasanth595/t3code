@@ -168,6 +168,13 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+New worktrees check out every file. For a large repository, set `"worktreeSparsePatternsPath"` in
+`t3.json` to a repository-relative file of git sparse-checkout patterns in non-cone syntax. New
+worktrees then check out only the matching files, before any other file is written. Both files are
+read from the branch being checked out, so keep `t3.json` inside the patterns. If the pattern file
+is missing, creating the worktree fails instead of checking out everything. Submodules still follow
+**Submodules** above, not the patterns; set it to **Skip** to leave them empty.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
