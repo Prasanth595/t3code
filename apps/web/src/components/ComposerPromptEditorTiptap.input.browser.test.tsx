@@ -149,52 +149,43 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
-it("bolds with Mod+B only when text is selected", async () => {
-  await using screen = await mountEditor("ship it");
-  const { editor } = screen;
-  const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
-  await act(async () => {
-    editor.commands.focus("end");
-  });
-  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-  await userEvent.keyboard(modB);
-  // Without the guard, Tiptap stores bold for the next typed text.
-  expect(editor.state.storedMarks).toBeNull();
+it.each([
+  // The sidebar toggle claims Mod+B in the capture phase, so the composer may swallow it.
+  { key: "b", mark: "bold", passesThrough: false },
+  { key: "e", mark: "code", passesThrough: true },
+])(
+  "applies $mark with Mod+$key only when text is selected",
+  async ({ key, mark, passesThrough }) => {
+    await using screen = await mountEditor("ship it");
+    const { editor } = screen;
+    const chord = isMacPlatform(navigator.platform)
+      ? `{Meta>}${key}{/Meta}`
+      : `{Control>}${key}{/Control}`;
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const consumed: boolean[] = [];
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === key) consumed.push(event.defaultPrevented);
+    };
+    using listener = new DisposableStack();
+    window.addEventListener("keydown", onKeyDown);
+    listener.defer(() => window.removeEventListener("keydown", onKeyDown));
 
-  await act(async () => {
-    editor.commands.setTextSelection({ from: 1, to: 5 });
-  });
-  await userEvent.keyboard(modB);
-  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
-});
+    await userEvent.keyboard(chord);
+    // Without the guard, Tiptap stores the mark for the next typed text.
+    expect(editor.state.storedMarks).toBeNull();
+    expect(consumed).toEqual([!passesThrough]);
 
-it("formats code with Mod+E only when text is selected, leaving the key to app shortcuts", async () => {
-  await using screen = await mountEditor("ship it");
-  const { editor } = screen;
-  const modE = isMacPlatform(navigator.platform) ? "{Meta>}e{/Meta}" : "{Control>}e{/Control}";
-  await act(async () => {
-    editor.commands.focus("end");
-  });
-  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-  const consumed: boolean[] = [];
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "e") consumed.push(event.defaultPrevented);
-  };
-  using listener = new DisposableStack();
-  window.addEventListener("keydown", onKeyDown);
-  listener.defer(() => window.removeEventListener("keydown", onKeyDown));
-
-  await userEvent.keyboard(modE);
-  expect(consumed).toEqual([false]);
-  expect(editor.state.storedMarks).toBeNull();
-
-  await act(async () => {
-    editor.commands.setTextSelection({ from: 1, to: 5 });
-  });
-  await userEvent.keyboard(modE);
-  await vi.waitFor(() => expect(textWithMark(editor, "code")).toEqual(["ship"]));
-  expect(consumed).toEqual([false, true]);
-});
+    await act(async () => {
+      editor.commands.setTextSelection({ from: 1, to: 5 });
+    });
+    await userEvent.keyboard(chord);
+    await vi.waitFor(() => expect(textWithMark(editor, mark)).toEqual(["ship"]));
+    expect(consumed).toEqual([!passesThrough, true]);
+  },
+);
 
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
