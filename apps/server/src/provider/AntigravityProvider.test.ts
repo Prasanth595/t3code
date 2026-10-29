@@ -28,6 +28,10 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { antigravity140Session } from "./acp/antigravity140.fixture.ts";
+import { antigravityThirdPartySession } from "./acp/antigravityThirdParty.fixture.ts";
+
+import { antigravity141Session } from "./acp/antigravity141.fixture.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -178,6 +182,69 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
+  it("preserves every concrete ID in the real Linux ACP 1.4.1 API-key advertisement", () => {
+    const models = buildAntigravityModelsFromSession(antigravity141Session);
+    expect(models.map((model) => model.slug)).toEqual(
+      antigravity141Session.models.availableModels.map((model) => model.modelId),
+    );
+    expect(models).toHaveLength(14);
+    expect(models.find((model) => model.isDefault)?.slug).toBe("gemini-3.8-flash-high");
+  });
+
+  it.each([
+    {
+      name: "family without thinking",
+      configOptions: antigravity140Session.configOptions.slice(0, 1),
+    },
+    {
+      name: "thinking without family",
+      configOptions: antigravity140Session.configOptions.slice(1),
+    },
+    { name: "no config", configOptions: [] },
+  ])("synthetic ACP 1.4.0 catalog: $name", ({ configOptions }) => {
+    const models = buildAntigravityModelsFromSession({ ...antigravity140Session, configOptions });
+    expect(models.map((model) => model.slug)).toEqual(
+      antigravity140Session.models.availableModels.map((model) => model.modelId),
+    );
+  });
+
+  it("synthetic ACP 1.4.0 catalog deduplicates IDs, ignores blanks, and keeps renamed display names", () => {
+    const models = buildAntigravityModelsFromSession({
+      ...antigravity140Session,
+      models: {
+        currentModelId: "removed",
+        availableModels: [
+          { modelId: "gemini-3.8-flash-low", name: "Renamed Low" },
+          ...antigravity140Session.models.availableModels,
+          { modelId: " ", name: "Blank" },
+        ],
+      },
+    });
+    expect(models.map((model) => model.slug)).toEqual([
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+    ]);
+    expect(models[0]?.name).toBe("Renamed Low");
+    expect(models.some((model) => model.isDefault)).toBe(false);
+    expect(
+      buildAntigravityModelsFromSession({
+        ...antigravity140Session,
+        models: { ...antigravity140Session.models, availableModels: [] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("synthetic ACP 1.4.0 ignores non-select options in the model category", () => {
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        { id: "other", name: "Other", type: "boolean", category: "model", currentValue: false },
+        modelConfig,
+      ],
+    });
+    expect(models.map((model) => model.slug)).toEqual(modelOptions.map((model) => model.value));
+  });
+
   it("uses legacy session models only when model config is absent", () => {
     const fromLegacy = buildAntigravityModelsFromSession({
       models: sessionSetupResult.models,
@@ -217,6 +284,114 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {
+  it.effect("keeps concrete ACP 1.4 models when grouped config options are updated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity140Session,
+        });
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.models.map((model) => [model.slug, model.name])).toEqual([
+          ["gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"],
+          ["gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"],
+          ["gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"],
+        ]);
+        expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(
+          "gemini-3.8-flash-high",
+        );
+        yield* harness.provider.onConfigOptionsUpdated(
+          antigravity140Session.configOptions.map((option) =>
+            option.id === "thinking_level" ? { ...option, currentValue: "low" } : option,
+          ),
+        );
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
+        yield* harness.provider.onSessionStarted(started);
+        yield* harness.provider.onConfigOptionsUpdated([
+          { ...modelConfig, options: modelOptions.slice(0, 1) },
+        ]);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect(
+    "synthetic ACP 1.4.0 cache keeps the catalog when thinking disappears during selection",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          yield* harness.initialize;
+          yield* harness.provider.onSessionStarted({
+            ...started,
+            sessionSetupResult: antigravity140Session,
+          });
+          const before = (yield* harness.provider.snapshot.getSnapshot).models;
+          yield* harness.provider.onConfigOptionsUpdated(
+            antigravity140Session.configOptions.slice(0, 1),
+          );
+          expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(before);
+        }),
+      ),
+  );
+
+  it.effect.each(["gpt-oss-120b-medium", "claude-sonnet-5-5-low"])(
+    "keeps every concrete family when %s omits thinking_level",
+    (currentModelId) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          yield* harness.initialize;
+          const setup = {
+            ...antigravityThirdPartySession,
+            models: { ...antigravityThirdPartySession.models, currentModelId },
+            configOptions: antigravityThirdPartySession.configOptions.map((option) => ({
+              ...option,
+              currentValue: currentModelId,
+            })),
+          };
+          yield* harness.provider.onSessionStarted({ ...started, sessionSetupResult: setup });
+          const snapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(snapshot.models.map((model) => [model.slug, model.name])).toEqual(
+            setup.models.availableModels.map((model) => [model.modelId, model.name]),
+          );
+          expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(currentModelId);
+          yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
+          yield* harness.provider.onConfigOptionsUpdated(setup.configOptions);
+          expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
+        }),
+      ),
+  );
+
+  it.effect("does not restore removed concrete models after a session refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity140Session,
+        });
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: {
+            ...antigravity140Session,
+            models: {
+              ...antigravity140Session.models,
+              availableModels: antigravity140Session.models.availableModels.slice(0, 1),
+            },
+          },
+        });
+        yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
+        expect(
+          (yield* harness.provider.snapshot.getSnapshot).models.map((model) => model.slug),
+        ).toEqual(["gemini-3.8-flash-high"]);
+      }),
+    ),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   ChatFileAttachment,
   MessageId,
   NodeId,
@@ -18,6 +19,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -30,6 +33,12 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravity140AgentSource,
+  antigravity140Session,
+  decodeAntigravity140Request,
+} from "../../provider/acp/antigravity140.fixture.ts";
+import { antigravityThirdPartyAgentSource } from "../../provider/acp/antigravityThirdParty.fixture.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -38,6 +47,8 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
+
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -125,6 +136,444 @@ const layerSession = Layer.mergeAll(
   McpProviderSessions.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
+
+describe("AntigravityAdapterV2 ACP 1.4 models", () => {
+  it.effect.each(["removed", "renamed", "display-renamed", "missing-current", "empty"])(
+    "synthetic ACP 1.4.0 resumes after catalog change: %s",
+    (change) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ag-synthetic-resume-" });
+        const agentPath = path.join(workspace, "agent.mjs");
+        const logPath = path.join(workspace, "requests.ndjson");
+        const low = "gemini-3.8-flash-low";
+        const high = "gemini-3.8-flash-high";
+        const availableModels =
+          change === "empty"
+            ? []
+            : antigravity140Session.models.availableModels.flatMap((model) =>
+                model.modelId !== low
+                  ? [model]
+                  : change === "removed"
+                    ? []
+                    : [
+                        {
+                          ...model,
+                          modelId: change === "renamed" ? "replacement-low" : model.modelId,
+                          name: change === "display-renamed" ? "Renamed Low" : model.name,
+                        },
+                      ],
+              );
+        // Keep the fresh session equal to the real capture, then change only the resumed catalog.
+        const resumedSetup = {
+          ...antigravity140Session,
+          models: {
+            ...(change === "missing-current" ? {} : { currentModelId: high }),
+            availableModels,
+          },
+        };
+        const source = antigravity140AgentSource
+          .replace("const setup =", "let setup =")
+          .replace(
+            "result = { ...setup, configOptions: configOptions() };",
+            'sessionId = "synthetic-" + process.pid; result = { ...setup, sessionId, configOptions: configOptions() };',
+          )
+          .replace(
+            "sessionId = request.params.sessionId;",
+            `setup = ${JSON.stringify(resumedSetup)}; sessionId = request.params.sessionId;`,
+          );
+        yield* fs.writeFileString(agentPath, source);
+        const instanceId = ProviderInstanceId.make("antigravity-synthetic-resume");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd: workspace,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.succeed(high),
+        });
+        const open = {
+          threadId: ThreadId.make("thread-synthetic-resume"),
+          providerSessionId: ProviderSessionId.make("session-synthetic-resume"),
+          modelSelection: { instanceId, model: low },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: workspace,
+          }),
+        };
+        const freshScope = yield* Scope.fork(yield* Effect.scope);
+        const session = yield* adapter
+          .openSession(open)
+          .pipe(Effect.provideService(Scope.Scope, freshScope));
+        const thread = yield* session.ensureThread(open);
+        yield* Scope.close(freshScope, Exit.void);
+        const resumed = yield* adapter.openSession({
+          ...open,
+          initialNativeThreadId: thread.nativeThreadRef!.nativeId!,
+        });
+        assert.isDefined(yield* resumed.ensureThread(open));
+        const now = yield* DateTime.now;
+        for (const [ordinal, interactionMode] of [
+          [1, "default"],
+          [2, "plan"],
+        ] as const) {
+          const completed = yield* resumed.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            ),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* resumed.startTurn(
+            makeTurnInput({
+              threadId: open.threadId,
+              providerThread: thread,
+              instanceId,
+              now,
+              ordinal,
+              messageText: "Report selected model",
+              modelSelection: open.modelSelection,
+              runtimePolicy: { ...open.runtimePolicy, interactionMode },
+            }),
+          );
+          const events = yield* Fiber.join(completed);
+          const output = events
+            .filter(
+              (event) => event.type === "message.updated" && event.message.role === "assistant",
+            )
+            .map((event) => (event.type === "message.updated" ? event.message.text : undefined))
+            .at(-1);
+          assert.equal(
+            output,
+            change === "removed" || change === "renamed" || change === "empty" ? high : low,
+          );
+        }
+        // Also exercise activation in a process initially opened on a different native thread.
+        const activated = yield* adapter.openSession({
+          ...open,
+          providerSessionId: ProviderSessionId.make("activation-synthetic-resume"),
+        });
+        yield* activated.resumeThread({ providerThread: thread });
+        const requests = yield* Effect.forEach(
+          (yield* fs.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        assert.deepEqual(
+          requests
+            .filter((request) => request.method === "session/set_model")
+            .map((request) => request.params?.modelId),
+          [
+            low,
+            ...(change === "empty"
+              ? []
+              : Array(2).fill(change === "removed" || change === "renamed" ? high : low)),
+            low,
+            ...(change === "empty"
+              ? []
+              : [change === "removed" || change === "renamed" ? high : low]),
+          ],
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "uses concrete models for fresh and resumed chat and restores the default after thinking changes",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 ag models ü-" });
+        const agentPath = path.join(workspace, "agent.mjs");
+        const logPath = path.join(workspace, "requests.ndjson");
+        yield* fileSystem.writeFileString(agentPath, antigravity140AgentSource);
+        const instanceId = ProviderInstanceId.make("antigravity-model-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd: workspace,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.succeed("gemini-3.8-flash-high"),
+        });
+        const threadId = ThreadId.make("thread-antigravity-models");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const savedModel = { instanceId, model: "gemini-3.8-flash-low" };
+        const open = {
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-models"),
+          modelSelection: savedModel,
+          runtimePolicy,
+        };
+        const freshScope = yield* Scope.fork(yield* Effect.scope);
+        let session = yield* adapter
+          .openSession(open)
+          .pipe(Effect.provideService(Scope.Scope, freshScope));
+        const providerThread = yield* session.ensureThread(open);
+        const now = yield* DateTime.now;
+        const turn = Effect.fnUntraced(function* (
+          ordinal: number,
+          modelSelection: typeof savedModel & { options?: Array<{ id: string; value: string }> },
+        ) {
+          const completed = yield* session.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            ),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* session.startTurn({
+            appThread: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project-antigravity-models"),
+              title: "Antigravity models",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            threadId,
+            runId: RunId.make(`run-model-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`attempt-model-${ordinal}`),
+            rootNodeId: NodeId.make(`node-model-${ordinal}`),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`message-model-${ordinal}`),
+              text: "Report the selected model",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          const events = yield* Fiber.join(completed);
+          return events
+            .filter(
+              (event) => event.type === "message.updated" && event.message.role === "assistant",
+            )
+            .map((event) => (event.type === "message.updated" ? event.message.text : undefined))
+            .at(-1);
+        });
+        assert.equal(yield* turn(1, savedModel), "gemini-3.8-flash-low");
+        yield* Scope.close(freshScope, Exit.void);
+        assert.isNotNull(providerThread.nativeThreadRef?.nativeId);
+        session = yield* adapter.openSession({
+          ...open,
+          initialNativeThreadId: providerThread.nativeThreadRef!.nativeId!,
+        });
+        yield* session.resumeThread({ providerThread });
+        assert.equal(yield* turn(2, savedModel), "gemini-3.8-flash-low");
+        assert.equal(
+          yield* turn(3, {
+            instanceId,
+            model: ANTIGRAVITY_DEFAULT_MODEL,
+            options: [{ id: "thinking_level", value: "low" }],
+          }),
+          "gemini-3.8-flash-low",
+        );
+        assert.equal(
+          yield* turn(4, { instanceId, model: ANTIGRAVITY_DEFAULT_MODEL }),
+          "gemini-3.8-flash-high",
+        );
+        const requests = yield* Effect.forEach(
+          (yield* fileSystem.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        assert.equal(requests.filter((request) => request.method === "session/new").length, 1);
+        assert.equal(requests.filter((request) => request.method === "session/resume").length, 1);
+        assert.deepEqual(
+          requests
+            .filter((request) => request.method === "session/set_model")
+            .map((request) => request.params?.modelId),
+          [
+            "gemini-3.8-flash-low",
+            "gemini-3.8-flash-low",
+            "gemini-3.8-flash-high",
+            "gemini-3.8-flash-high",
+          ],
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+  it.effect.each(["gpt-oss-120b-medium", "gemini-3.8-flash-low"])(
+    "preserves saved %s in fresh and resumed chat from a GPT-OSS default",
+    (requestedModel) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 ag models ü-" });
+        const agentPath = path.join(workspace, "agent.mjs");
+        const logPath = path.join(workspace, "requests.ndjson");
+        yield* fileSystem.writeFileString(agentPath, antigravityThirdPartyAgentSource);
+        const instanceId = ProviderInstanceId.make("antigravity-model-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd: workspace,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.succeed("gemini-3.8-flash-high"),
+        });
+        const threadId = ThreadId.make("thread-antigravity-models");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const savedModel = { instanceId, model: requestedModel };
+        const open = {
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-models"),
+          modelSelection: savedModel,
+          runtimePolicy,
+        };
+        const freshScope = yield* Scope.fork(yield* Effect.scope);
+        let session = yield* adapter
+          .openSession(open)
+          .pipe(Effect.provideService(Scope.Scope, freshScope));
+        const providerThread = yield* session.ensureThread(open);
+        const now = yield* DateTime.now;
+        const turn = Effect.fnUntraced(function* (
+          ordinal: number,
+          modelSelection: typeof savedModel & { options?: Array<{ id: string; value: string }> },
+        ) {
+          const completed = yield* session.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            ),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* session.startTurn({
+            appThread: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project-antigravity-models"),
+              title: "Antigravity models",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            threadId,
+            runId: RunId.make(`run-model-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`attempt-model-${ordinal}`),
+            rootNodeId: NodeId.make(`node-model-${ordinal}`),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`message-model-${ordinal}`),
+              text: "Report the selected model",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          const events = yield* Fiber.join(completed);
+          return events
+            .filter(
+              (event) => event.type === "message.updated" && event.message.role === "assistant",
+            )
+            .map((event) => (event.type === "message.updated" ? event.message.text : undefined))
+            .at(-1);
+        });
+        assert.equal(yield* turn(1, savedModel), requestedModel);
+        yield* Scope.close(freshScope, Exit.void);
+        assert.isNotNull(providerThread.nativeThreadRef?.nativeId);
+        session = yield* adapter.openSession({
+          ...open,
+          initialNativeThreadId: providerThread.nativeThreadRef!.nativeId!,
+        });
+        yield* session.resumeThread({ providerThread });
+        assert.equal(yield* turn(2, savedModel), requestedModel);
+        const requests = yield* Effect.forEach(
+          (yield* fileSystem.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        assert.equal(requests.filter((request) => request.method === "session/new").length, 1);
+        assert.equal(requests.filter((request) => request.method === "session/resume").length, 1);
+        assert.deepEqual(
+          requests
+            .filter((request) => request.method === "session/set_model")
+            .map((request) => request.params?.modelId),
+          [requestedModel, requestedModel],
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
 
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("confines agent file requests to the workspace under full access", () =>

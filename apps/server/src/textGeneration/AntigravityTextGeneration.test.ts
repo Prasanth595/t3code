@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ProviderSetupError,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -14,12 +15,20 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
 import { type AcpError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { makeAntigravityAcpRuntime } from "../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravity140AgentSource,
+  antigravity140Session,
+  decodeAntigravity140Request,
+} from "../provider/acp/antigravity140.fixture.ts";
+import { antigravityThirdPartyAgentSource } from "../provider/acp/antigravityThirdParty.fixture.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 
 import {
@@ -170,6 +179,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
           Effect.sync(() => {
             state.selectedModels.push(model);
           }),
+        setSessionModel: () => Effect.die("ACP 1.3 selects models through config options"),
         prompt: (request) =>
           Effect.gen(function* () {
             state.prompts.push(request);
@@ -278,6 +288,129 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect.each([
+    "captured 1.4.0",
+    "synthetic family without thinking",
+    "synthetic thinking without family",
+    "synthetic missing current",
+  ])("generates a title using the saved concrete model: %s", (variant) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3 ag title ü-" });
+      const agentPath = path.join(profileDirectory, "agent.mjs");
+      const logPath = path.join(profileDirectory, "requests.ndjson");
+      const setup = {
+        ...antigravity140Session,
+        configOptions:
+          variant === "synthetic family without thinking"
+            ? antigravity140Session.configOptions.slice(0, 1)
+            : variant === "synthetic thinking without family"
+              ? antigravity140Session.configOptions.slice(1)
+              : antigravity140Session.configOptions,
+      };
+      let source = antigravity140AgentSource.replace(
+        JSON.stringify(antigravity140Session),
+        JSON.stringify(setup),
+      );
+      if (variant === "synthetic missing current")
+        source = source.replace(
+          "result = { ...setup, configOptions: configOptions() };",
+          "const { currentModelId: _current, ...models } = setup.models; result = { ...setup, models, configOptions: configOptions() };",
+        );
+      yield* fs.writeFileString(agentPath, source);
+      const textGeneration = yield* makeAntigravityTextGeneration({
+        profileDirectory,
+        makeRuntime: (cwd) =>
+          makeAntigravityAcpRuntime({
+            cwd,
+            clientInfo: { name: "t3-antigravity-test", version: "0.0.0" },
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [agentPath],
+              cwd,
+              env: { T3_ACP_REQUEST_LOG_PATH: logPath, T3_ACP_TITLE: "1" },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
+      });
+      expect(
+        yield* textGeneration.generateThreadTitle({
+          cwd: profileDirectory,
+          message: "Repair login",
+          modelSelection: { ...modelSelection, model: "gemini-3.8-flash-low" },
+        }),
+      ).toEqual({ title: "gemini-3.8-flash-low" });
+      const requests = yield* Effect.forEach(
+        (yield* fs.readFileString(logPath)).trim().split("\n"),
+        (line) => decodeAntigravity140Request(line),
+      );
+      expect(
+        requests
+          .map((request) => request.method)
+          .filter((method) =>
+            ["session/new", "session/resume", "session/set_model", "session/prompt"].includes(
+              method,
+            ),
+          ),
+      ).toEqual(["session/new", "session/set_model", "session/prompt"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["gpt-oss-120b-medium", "gemini-3.8-flash-low"])(
+    "generates a title with saved %s from a GPT-OSS default session",
+    (savedModel) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const crypto = yield* Crypto.Crypto;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3 ag title ü-" });
+        const agentPath = path.join(profileDirectory, "agent.mjs");
+        const logPath = path.join(profileDirectory, "requests.ndjson");
+        yield* fs.writeFileString(agentPath, antigravityThirdPartyAgentSource);
+        const textGeneration = yield* makeAntigravityTextGeneration({
+          profileDirectory,
+          makeRuntime: (cwd) =>
+            makeAntigravityAcpRuntime({
+              cwd,
+              clientInfo: { name: "t3-antigravity-test", version: "0.0.0" },
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [agentPath],
+                cwd,
+                env: { T3_ACP_REQUEST_LOG_PATH: logPath, T3_ACP_TITLE: "1" },
+              },
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          withProcess: (_stop, task) => task,
+        });
+        expect(
+          yield* textGeneration.generateThreadTitle({
+            cwd: profileDirectory,
+            message: "Repair login",
+            modelSelection: { ...modelSelection, model: savedModel },
+          }),
+        ).toEqual({ title: savedModel });
+        const requests = yield* Effect.forEach(
+          (yield* fs.readFileString(logPath)).trim().split("\n"),
+          (line) => decodeAntigravity140Request(line),
+        );
+        expect(
+          requests
+            .map((request) => request.method)
+            .filter((method) =>
+              ["session/new", "session/resume", "session/set_model", "session/prompt"].includes(
+                method,
+              ),
+            ),
+        ).toEqual(["session/new", "session/set_model", "session/prompt"]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "generates all helper types in empty workspaces and removes only owned session files",
     () =>

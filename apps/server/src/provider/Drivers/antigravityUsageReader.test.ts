@@ -11,6 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { parseRateTable, priceUsage } from "../../usage/usagePricing.ts";
+
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
@@ -190,6 +192,126 @@ describe("readAntigravityUsage", () => {
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("normalizes named model families and prices only their known effort variants", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const cases = [
+        ["gemini-3.8-flash-low", "gemini-3.8-flash-low", "gemini-3.8-flash"],
+        ["gemini-3.8-flash-medium", "gemini-3.8-flash-medium", "gemini-3.8-flash"],
+        ["gemini-3.8-flash-high", "gemini-3.8-flash-high", "gemini-3.8-flash"],
+        ["gemini-4-argon-medium", "gemini-4-argon-medium", "gemini-4-argon"],
+        ["GPT-OSS 120B (Medium)", "gpt-oss-120b", undefined],
+        ["gpt-oss-120b-medium", "gpt-oss-120b-medium", "gpt-oss-120b"],
+        ["Claude 5.5 Sonnet (Thinking)", "claude-sonnet-5-5", undefined],
+        ["Claude Opus 5.5 (Thinking)", "claude-opus-5-5", undefined],
+        ["future-model-high", "future-model-high", undefined],
+        ["future-model-medium", "future-model-medium", undefined],
+        ["gemini-4-argon-low", "gemini-4-argon-low", undefined],
+        ["gemini-4-argon-xhigh", "gemini-4-argon-xhigh", undefined],
+      ] as const;
+      yield* seedDatabase(path.join(dir, "families.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, [name]] of cases.entries()) {
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              idx,
+              new Uint8Array([
+                ...protoBytes(24, protoText(12, name)),
+                ...protoBytes(9, protoNumber(2, 10)),
+              ]),
+            ]);
+          }
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      const read = records(result);
+      assert.deepStrictEqual(
+        read.map(({ model, rateModel }) => [model, rateModel]),
+        cases.map(([, model, rateModel]) => [model, rateModel]),
+      );
+      const rates = parseRateTable(
+        Object.fromEntries(
+          [
+            "gemini-3.8-flash",
+            "gemini-4-argon",
+            "gpt-oss-120b",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+          ].map((model) => [model, { input_cost_per_token: 1, output_cost_per_token: 2 }]),
+        ),
+      );
+      const withHighBase = new Map(rates);
+      withHighBase.set("future-model-high", {
+        ...rates.get("gemini-4-argon")!,
+        inputCostPerToken: 3,
+      });
+      withHighBase.set("future-model", { ...rates.get("gemini-4-argon")!, inputCostPerToken: 99 });
+      assert.deepStrictEqual(
+        read.map((record) => priceUsage(withHighBase, record).costSource),
+        [...Array<string>(9).fill("modelPriced"), "unpriced", "unpriced", "unpriced"],
+      );
+      assert.strictEqual(priceUsage(withHighBase, read[8]!).costUsd, 30);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "preserves numeric model aliases and unknown numeric usage without inventing a price",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const dir = yield* tempDir;
+        const cases = [
+          [246, "gemini-2.5-pro"],
+          [312, "gemini-2.5-flash"],
+          [313, "gemini-2.5-flash-thinking"],
+          [329, "gemini-2.5-flash-thinking"],
+          [330, "gemini-2.5-flash-lite"],
+          [281, "claude-sonnet-4"],
+          [282, "claude-sonnet-4"],
+          [290, "claude-opus-4"],
+          [291, "claude-opus-4"],
+          [333, "claude-sonnet-4-5"],
+          [334, "claude-sonnet-4-5"],
+          [340, "claude-haiku-4-5"],
+          [341, "claude-haiku-4-5"],
+          [1026, "claude-opus-4-6"],
+          [1035, "claude-sonnet-4-6"],
+          [1016, "gemini-3.1-pro"],
+          [1036, "gemini-3.1-pro"],
+          [1037, "gemini-3.1-pro"],
+          [1018, "gemini-3-flash-preview"],
+          [1084, "gemini-3-flash-preview"],
+          [1047, "gemini-3-flash-preview"],
+          [999999, "antigravity-model-999999"],
+        ] as const;
+        yield* seedDatabase(path.join(dir, "ids.db"), (db) =>
+          Effect.gen(function* () {
+            yield* createTables(db);
+            for (const [idx, [id]] of cases.entries()) {
+              yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+                idx,
+                new Uint8Array(
+                  protoBytes(1, protoBytes(4, [...protoNumber(1, id), ...protoNumber(2, 10)])),
+                ),
+              ]);
+            }
+          }),
+        );
+        const result = yield* readAntigravityUsage(dir, 0);
+        assert.deepStrictEqual(result.errors, []);
+        assert.deepStrictEqual(
+          records(result).map(({ model }) => model),
+          cases.map(([, model]) => model),
+        );
+        const unknown = records(result).at(-1)!;
+        assert.strictEqual(unknown.totals.uncachedInputTokens, 10);
+        assert.strictEqual(unknown.rateModel, undefined);
+        assert.strictEqual(priceUsage(new Map(), unknown).costSource, "unpriced");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("merges Antigravity aliases that bridge previously separate step records", () =>
