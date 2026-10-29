@@ -5,8 +5,14 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { driver as gitHubDriver } from "@t3tools/source-control-github/server/driver";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
@@ -42,8 +48,11 @@ const success: VcsProcessOutput = {
   stderrTruncated: false,
 };
 
-type Reply = { readonly _tag: "ok" } | { readonly _tag: "fail"; readonly error: VcsError };
+type Reply =
+  | { readonly _tag: "ok"; readonly stdout?: string }
+  | { readonly _tag: "fail"; readonly error: VcsError };
 const ok: Reply = { _tag: "ok" };
+const okWith = (stdout: string): Reply => ({ _tag: "ok", stdout });
 const fail = (error: VcsError): Reply => ({ _tag: "fail", error });
 
 /** An inner VcsProcess that answers each call with the next scripted reply and records its input. */
@@ -54,7 +63,10 @@ const fakeInner = (replies: Array<Reply>) => {
       calls.push(input);
       const reply = replies.shift();
       if (reply === undefined) return Effect.die(new Error("unexpected inner run"));
-      return reply._tag === "ok" ? Effect.succeed(success) : Effect.fail(reply.error);
+      if (reply._tag === "fail") return Effect.fail(reply.error);
+      return Effect.succeed(
+        reply.stdout === undefined ? success : { ...success, stdout: reply.stdout },
+      );
     });
   return { calls, service: { run } };
 };
@@ -142,6 +154,33 @@ describe("ghCredentialProcess.decorate", () => {
       yield* TestClock.adjust("1 millis");
       const error = yield* Effect.flip(decorated.run(credentialInput));
       assert.deepStrictEqual(error, timeout(30_000));
+    }),
+  );
+
+  it.effect("replaces the remembered output and its time with each newer success", () =>
+    Effect.gen(function* () {
+      const logs = captureLogs();
+      const inner = fakeInner([
+        okWith("token-a\n"),
+        okWith("token-b\n"),
+        fail(timeout()),
+        fail(timeout(30_000)),
+        fail(timeout()),
+        fail(timeout(30_000)),
+      ]);
+      const decorated = decorate(inner.service);
+      yield* Effect.gen(function* () {
+        yield* decorated.run(credentialInput);
+        yield* TestClock.adjust("20 minutes");
+        yield* decorated.run(credentialInput);
+        yield* TestClock.adjust("15 minutes");
+        assert.strictEqual((yield* decorated.run(credentialInput)).stdout, "token-b\n");
+        yield* TestClock.adjust("15 minutes");
+        assert.strictEqual((yield* decorated.run(credentialInput)).stdout, "token-b\n");
+      }).pipe(Effect.provide(logs.layer));
+      const warnings = logs.lines.filter((line) => line.includes('"WARN"'));
+      assert.include(warnings[0]!, "reusing the credential read 900 s ago");
+      assert.include(warnings[1]!, "reusing the credential read 1800 s ago");
     }),
   );
 
@@ -258,5 +297,46 @@ describe("ghCredentialProcess.layer", () => {
       });
       assert.strictEqual(output.stdout, "ok");
     }).pipe(Effect.provide(layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
+});
+
+describe("ghCredentialProcess with upstream's GitHub driver", () => {
+  // Fails when upstream renames the operation or reshapes the lookup, since nothing else would.
+  it.effect(
+    "retries upstream's own gh credential lookup and fetches with the token it reads",
+    () => {
+      const inner = fakeInner([fail(timeout()), ok]);
+      const authorizations: Array<string | undefined> = [];
+      return Effect.gen(function* () {
+        const instance = yield* gitHubDriver.make;
+        const response = yield* instance.fetchMedia!({
+          url: "https://raw.githubusercontent.com/owner/repo/main/shot.png",
+          headers: {},
+        });
+        assert.strictEqual(response?.status, 200);
+        assert.strictEqual(inner.calls.length, 2);
+        assert.strictEqual(inner.calls[0]!.operation, credentialInput.operation);
+        assert.strictEqual(inner.calls[1]!.timeoutMs, 30_000);
+        assert.deepStrictEqual(authorizations, [`Bearer ${TOKEN}`]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer({ process: decorate(inner.service) }),
+            SourceControlRateLimit.layer,
+            NodeCrypto.layer,
+            NodeServices.layer,
+          ),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            authorizations.push(request.headers.authorization);
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null)));
+          }),
+        ),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.scoped,
+      );
+    },
   );
 });
