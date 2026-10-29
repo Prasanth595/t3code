@@ -9,7 +9,7 @@ import {
   type ProviderApprovalOption,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { CheckIcon, CircleCheckIcon, SparklesIcon } from "lucide-react";
+import { CheckIcon, CircleCheckIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -77,6 +77,7 @@ interface QuestionProgress {
 interface CardOption {
   readonly label: string;
   readonly description?: string | undefined;
+  readonly warning?: string | undefined;
 }
 
 const threadKeyOf = (entry: AdhdQueueEntry) =>
@@ -587,6 +588,12 @@ function AdhdCard(props: {
                 </span>
                 {option.description && option.description !== option.label ? (
                   <span className="block text-xs text-muted-foreground">{option.description}</span>
+                ) : null}
+                {option.warning ? (
+                  <span className="flex items-center gap-1 text-xs text-warning-foreground">
+                    <TriangleAlertIcon className="size-3 shrink-0" />
+                    {option.warning}
+                  </span>
                 ) : null}
               </span>
               {question?.multiSelect && picked.includes(optionValue(index) ?? "") ? (
