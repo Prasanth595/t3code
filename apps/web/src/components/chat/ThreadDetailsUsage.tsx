@@ -51,10 +51,13 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
       : null;
-  // The report spans every account of the driver; prefer the one this thread runs on.
+  // The report spans every account of the driver and keeps one instance per login, so match the
+  // thread's instance or, when deduplicated, its sign-in. Never show another login's quota.
+  const email = providers.find((provider) => provider.instanceId === providerInstanceId)?.auth
+    .email;
   const account =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId) ??
-    report?.accounts[0];
+    (email ? report?.accounts.find((entry) => entry.email === email) : undefined);
   const notice = account ? limitsNotice(account.limits) : null;
   if (!account && !contextWindow) return null;
 
