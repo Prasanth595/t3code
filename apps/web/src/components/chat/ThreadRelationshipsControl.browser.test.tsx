@@ -45,10 +45,9 @@ vi.mock(import("../../lib/archivedThreadsState"), async (original) => ({
   useArchivedThreadSnapshots: (() => ({ snapshots: [] })) as never,
 }));
 
-async function showLineage() {
+async function showLineage(fixture = lineagePanelFixture()) {
   // A pointer left on the page by an earlier test would hover the row before the test does.
   await commands.resetPointer();
-  const fixture = lineagePanelFixture();
   state.fixture = fixture;
   stop.mockReset();
   stop.mockResolvedValue({ _tag: "Success" });
@@ -60,6 +59,37 @@ async function showLineage() {
 }
 
 describe("a workflow's row in the Lineage panel", () => {
+  it("counts a running workflow before and after its first agent gets a thread", async () => {
+    using _permission = stubQaWorkflowStopPermission();
+    const fixture = lineagePanelFixture();
+    const { screen } = await showLineage({
+      ...fixture,
+      shells: [fixture.projection.thread],
+      projection: {
+        ...fixture.projection,
+        subagents: fixture.projection.subagents.map((agent) => ({
+          ...agent,
+          workflow: { ...agent.workflow, agents: [] },
+        })),
+      },
+    });
+    await using _screen = screen;
+    await expect
+      .element(screen.getByRole("heading", { name: "Lineage · 1 running" }))
+      .toBeVisible();
+
+    state.fixture = fixture;
+    await screen.rerender(
+      <ThreadRelationshipsPanel environmentId={QA_ENVIRONMENT} threadId={LINEAGE_PARENT} />,
+    );
+    await expect
+      .element(screen.getByRole("heading", { name: "Lineage · 1 running" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: `Expand ${fixture.workflowTitle}`, exact: true }))
+      .toBeVisible();
+  });
+
   it("is named for the workflow, never for its first agent's thread", async () => {
     using _permission = stubQaWorkflowStopPermission();
     const { screen, title } = await showLineage();

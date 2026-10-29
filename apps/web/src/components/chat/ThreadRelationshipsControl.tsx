@@ -9,7 +9,6 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import {
   appWorkflowMemberThreads,
   canStopWorkflowWork,
-  isAppWorkflow,
   deriveWorkflowGroups,
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
@@ -427,6 +426,7 @@ export function ThreadRelationshipsPanel(props: {
   // A T3-run workflow has no thread of its own: its first agent's row stands for the
   // whole workflow, and the other agents' rows fold into it.
   const foldedAppWorkflowThreads = new Set<string>();
+  const appWorkflowsWithRows = new Set<string>();
   for (const [workflowId, memberThreads] of appWorkflowMemberThreads(projected)) {
     const [leadThread, ...rest] = memberThreads;
     const workflow = projected.find((subagent) => subagent.id === workflowId);
@@ -444,6 +444,7 @@ export function ThreadRelationshipsPanel(props: {
       origin: workflow.origin,
       modelSelection: workflow.modelSelection,
     });
+    appWorkflowsWithRows.add(workflowId);
   }
   const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
     ...relationshipShells,
@@ -498,9 +499,11 @@ export function ThreadRelationshipsPanel(props: {
   );
   const runningCount =
     (projection?.subagents.filter(
-      // A T3-run workflow is counted by its row below.
+      // Workflows with a member-thread row are counted below.
       (agent) =>
-        agent.childThreadId === null && agent.status === "running" && !isAppWorkflow(agent),
+        agent.childThreadId === null &&
+        agent.status === "running" &&
+        !appWorkflowsWithRows.has(agent.id),
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
   // A linked environment's agent may have delegated this thread from there.
