@@ -704,6 +704,8 @@ export const make = Effect.gen(function* () {
             acceptedAt: now,
             events,
             effects,
+            // A respond already past the shutdown gate can answer after this read.
+            guardPendingUserInputCancellations: true,
             cancelUnsettledEffects: {
               effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
               reason: detail,

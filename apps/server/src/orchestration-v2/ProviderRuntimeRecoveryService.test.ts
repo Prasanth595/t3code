@@ -85,7 +85,6 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
 it.effect("preserves async questions across startup and shutdown", () => {
   const threadId = ThreadId.make("async-recovery-thread");
   const nodeId = NodeId.make("async-recovery-node");
-  const awaitedRequestId = RuntimeRequestId.make("async-recovery-awaited-request");
   const projection = {
     thread: { id: threadId },
     runtimeRequests: [
@@ -95,12 +94,6 @@ it.effect("preserves async questions across startup and shutdown", () => {
         status: "pending",
         responseCapability: { type: "message" },
       },
-      {
-        id: awaitedRequestId,
-        nodeId,
-        status: "pending",
-        responseCapability: { type: "message", agentWaiting: true },
-      },
     ],
     providerSessions: [],
     providerThreads: [],
@@ -108,10 +101,7 @@ it.effect("preserves async questions across startup and shutdown", () => {
     nodes: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
-  const commitCommand = vi.fn(
-    (_input: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0]) =>
-      Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never),
-  );
+  const commitCommand = vi.fn(() => Effect.die("an async question needs no process-loss write"));
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
@@ -136,19 +126,8 @@ it.effect("preserves async questions across startup and shutdown", () => {
   return Effect.gen(function* () {
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     assert.equal((yield* recovery.reconcile("startup")).closedRequests, 0);
-    assert.equal((yield* recovery.reconcile("shutdown")).closedRequests, 0);
-    // The agent that was waiting on a question is gone, so it no longer blocks.
-    for (const [input] of commitCommand.mock.calls) {
-      assert.deepEqual(
-        input.events.map((event) =>
-          event.type === "runtime-request.updated"
-            ? [event.payload.id, event.payload.status, event.payload.responseCapability]
-            : event.type,
-        ),
-        [[awaitedRequestId, "pending", { type: "message" }]],
-      );
-    }
-    assert.lengthOf(commitCommand.mock.calls, 2);
+    assert.equal((yield* recovery.reconcile("startup")).closedRequests, 0);
+    assert.isFalse(commitCommand.mock.calls.length > 0);
   }).pipe(Effect.provide(layer));
 });
 

@@ -148,6 +148,7 @@ export interface EventSinkV2Shape {
     };
     /** Like writeWithEffects' updateDelegatedCompletionOnly, for this run's run.updated only. */
     readonly updateDelegatedCompletionOnlyRunId?: RunId;
+    readonly guardPendingUserInputCancellations?: boolean;
   }) => Effect.Effect<
     {
       readonly receipt: CommandReceiptStore.CommandReceiptV2;
@@ -662,19 +663,24 @@ const layerBase: Layer.Layer<
           }
 
           const runId = input.updateDelegatedCompletionOnlyRunId;
-          const normalized = yield* normalizeEvents(
+          const events =
             runId === undefined
               ? input.events
-              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId);
+          const normalized = yield* normalizeEvents(
+            input.guardPendingUserInputCancellations === true
+              ? yield* guardUserInputCancellations(events)
+              : events,
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
           });
-          // A Stop that changes nothing can still queue the stop of its delegated tasks.
+          // A Stop that changes nothing can still queue the stop of its delegated tasks,
+          // and the user-input guard can drop every event.
           const sequence =
             storedEvents.at(-1)?.sequence ??
-            (input.effects.length === 0
+            (input.effects.length === 0 && input.guardPendingUserInputCancellations !== true
               ? undefined
               : yield* eventStore.latestSequence({ threadId: input.threadId }));
           if (sequence === undefined) {
