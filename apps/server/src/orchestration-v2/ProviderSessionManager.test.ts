@@ -1,6 +1,6 @@
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
@@ -1644,6 +1644,41 @@ it.effect.each([
     }),
 );
 
+it.effect("does not classify an unreadable lineage as a workflow member", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:unreadable-lineage");
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+      });
+      using _read = vi
+        .spyOn(store, "getThread")
+        .mockImplementation(() =>
+          Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId })),
+        );
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const config = (yield* Ref.get(mcpConfigs))[0];
+      assert.isDefined(config);
+      assert.isFalse(config?.capabilities?.has("orchestration"));
+      assert.isFalse(McpProviderSession.isWorkflowMemberSession(config));
+      yield* manager.close(providerSessionId);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, mcpConfigs })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 withholds orchestration, preview and device from workflow members and replaces an overprivileged credential",
   () =>
@@ -1703,6 +1738,7 @@ it.effect(
         // Preview and device tools belong to the thread that answers the user, not to workflow members.
         assert.deepEqual(resolved?.capabilities, new Set(["worktree", "pull-requests"]));
         assert.isFalse(captured?.browserToolsAvailable);
+        assert.isTrue(McpProviderSession.isWorkflowMemberSession(captured));
 
         yield* manager.close(providerSessionId);
         assert.isUndefined(yield* mcpSessions.read(threadId));

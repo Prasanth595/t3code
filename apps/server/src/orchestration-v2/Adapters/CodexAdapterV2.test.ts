@@ -1368,12 +1368,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       capabilities: ["orchestration", "worktree", "pull-requests"],
       member: false,
     },
+    { name: "an unavailable lineage", capabilities: ["worktree", "pull-requests"], member: false },
     { name: "a workflow member", capabilities: ["worktree", "pull-requests"], member: true },
   ] as const;
 
   const setCodexMemberSession = (
     scenario: string,
     capabilities: ReadonlyArray<string> | undefined,
+    workflowMember: boolean,
   ) =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
@@ -1384,6 +1386,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer secret-codex-token",
         browserToolsAvailable: false,
+        workflowMember,
         ...(capabilities === undefined ? {} : { capabilities: new Set(capabilities) }),
       });
     });
@@ -1423,7 +1426,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ({ capabilities, member }) =>
       Effect.gen(function* () {
         const scenario = `member-skills-start-${member ? "member" : "other"}-${capabilities?.length ?? "none"}`;
-        yield* setCodexMemberSession(scenario, capabilities);
+        yield* setCodexMemberSession(scenario, capabilities, member);
         const requests: Array<unknown> = [];
         yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
@@ -1468,7 +1471,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const scenario = `member-skills-resume-${member ? "member" : "other"}-${capabilities?.length ?? "none"}`;
-          yield* setCodexMemberSession(scenario, capabilities);
+          yield* setCodexMemberSession(scenario, capabilities, member);
           const nativeThreadId = `native-${scenario}-thread`;
           const transcript = makeCodexReplayTranscript({
             scenario,

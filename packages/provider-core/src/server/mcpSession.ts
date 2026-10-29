@@ -10,21 +10,19 @@ export interface McpProviderSessionConfig {
   /** Omit preview_* instructions when the user withholds agent browser access. */
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
+  readonly workflowMember?: boolean;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
 }
 
-/**
- * A workflow member's thread credential is the only one issued without `orchestration`
- * (ProviderSessionManager withholds it). Sessions that record no capabilities are not members.
- */
-export function hasMemberToolset(capabilities: ReadonlySet<string> | undefined): boolean {
+/** Missing orchestration restricts tools even when the lineage could not be read. */
+export function hasRestrictedToolset(capabilities: ReadonlySet<string> | undefined): boolean {
   return capabilities !== undefined && !capabilities.has("orchestration");
 }
 
 export function isWorkflowMemberSession(
-  session: Pick<McpProviderSessionConfig, "capabilities"> | undefined,
+  session: Pick<McpProviderSessionConfig, "capabilities" | "workflowMember"> | undefined,
 ): boolean {
-  return hasMemberToolset(session?.capabilities);
+  return session?.workflowMember === true;
 }
 
 export function withAgentDeviceEnvironment(

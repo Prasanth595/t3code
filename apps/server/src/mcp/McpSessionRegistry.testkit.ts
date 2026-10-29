@@ -7,9 +7,16 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
-    issue: ({ threadId, providerInstanceId, browserToolsAvailable, capabilities }) =>
+    issue: ({
+      threadId,
+      providerInstanceId,
+      browserToolsAvailable,
+      capabilities,
+      workflowMember,
+    }) =>
       Effect.succeed({
         config: {
+          ...(workflowMember === true ? { workflowMember: true } : {}),
           environmentId: EnvironmentId.make("environment:mcp-test"),
           threadId,
           providerSessionId: `mcp-test:${threadId}`,

@@ -9,7 +9,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import { hasMemberToolset } from "@t3tools/provider-core/server/mcpSession";
+import { hasRestrictedToolset } from "@t3tools/provider-core/server/mcpSession";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -140,7 +140,7 @@ export const visibleToMembersWith = (capability: McpCapability) => (): boolean =
   if (capability === "workflows") return scope?.capabilities.has(capability) === true;
   return scope === undefined || scope.thread === undefined
     ? true
-    : !hasMemberToolset(scope.capabilities) || scope.capabilities.has(capability);
+    : !hasRestrictedToolset(scope.capabilities) || scope.capabilities.has(capability);
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

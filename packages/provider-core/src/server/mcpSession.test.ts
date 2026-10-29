@@ -1,22 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  hasMemberToolset,
+  hasRestrictedToolset,
   isWorkflowMemberSession,
   withAgentDeviceEnvironment,
 } from "./mcpSession.ts";
 
 describe("workflow member credentials", () => {
-  it("treats a thread credential without orchestration as a member's", () => {
-    expect(hasMemberToolset(new Set(["worktree", "pull-requests"]))).toBe(true);
-    expect(hasMemberToolset(new Set())).toBe(true);
-    expect(hasMemberToolset(new Set(["orchestration", "worktree"]))).toBe(false);
+  it("restricts a thread credential without orchestration", () => {
+    expect(hasRestrictedToolset(new Set(["worktree", "pull-requests"]))).toBe(true);
+    expect(hasRestrictedToolset(new Set())).toBe(true);
+    expect(hasRestrictedToolset(new Set(["orchestration", "worktree"]))).toBe(false);
   });
 
-  it("leaves sessions that record no capabilities unchanged", () => {
-    expect(hasMemberToolset(undefined)).toBe(false);
+  it("requires explicit membership before omitting provider instructions", () => {
+    expect(hasRestrictedToolset(undefined)).toBe(false);
     expect(isWorkflowMemberSession(undefined)).toBe(false);
     expect(isWorkflowMemberSession({})).toBe(false);
-    expect(isWorkflowMemberSession({ capabilities: new Set(["worktree"]) })).toBe(true);
+    expect(isWorkflowMemberSession({ capabilities: new Set(["worktree"]) })).toBe(false);
+    expect(isWorkflowMemberSession({ workflowMember: true })).toBe(true);
   });
 });
 

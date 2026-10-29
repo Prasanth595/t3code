@@ -443,17 +443,18 @@ export const layerWithOptions = (
                 );
                 // An unreadable lineage may belong to a workflow member, so it gets no orchestration;
                 // the credential is replaced once the read works.
-                const workflowMember = lineage === undefined || lineage.workflowId !== undefined;
-                if (workflowMember) {
+                const workflowMember = lineage?.workflowId !== undefined;
+                const withholdTools = lineage === undefined || workflowMember;
+                if (withholdTools) {
                   capabilities.delete("orchestration");
                 }
                 // Members get the member toolset; preview and device tools stay with the thread that
                 // answers the user.
-                const browserToolsAvailable = agentAccess.browser && !workflowMember;
-                const deviceToolsAvailable = agentAccess.device && !workflowMember;
+                const browserToolsAvailable = agentAccess.browser && !withholdTools;
+                const deviceToolsAvailable = agentAccess.device && !withholdTools;
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                if (workflows && !workflowMember) capabilities.add("workflows");
+                if (workflows && !withholdTools) capabilities.add("workflows");
                 const subagent = lineage?.relationshipToParent === "subagent";
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
@@ -474,6 +475,7 @@ export const layerWithOptions = (
                     resolved !== undefined &&
                     resolved.thread.threadId === threadId &&
                     resolved.thread.providerInstanceId === providerInstanceId &&
+                    (existing.workflowMember === true) === workflowMember &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     resolved.capabilities.has("workflows") === capabilities.has("workflows") &&
@@ -495,6 +497,7 @@ export const layerWithOptions = (
                   threadId,
                   providerInstanceId,
                   browserToolsAvailable,
+                  workflowMember,
                   capabilities,
                   subagent,
                 });

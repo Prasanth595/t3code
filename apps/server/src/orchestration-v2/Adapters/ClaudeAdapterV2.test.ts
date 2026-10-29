@@ -960,6 +960,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     launchArgs: string,
     cwd: string,
     mcpCapabilities?: ReadonlyArray<string>,
+    workflowMember = false,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
@@ -1010,6 +1011,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         authorizationHeader: "Bearer secret-claude-token",
         browserToolsAvailable: false,
         capabilities: new Set(mcpCapabilities),
+        workflowMember,
       });
     }
     const runtime = yield* adapter.openSession({
@@ -1106,7 +1108,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-member-cwd-" });
-        const { exit, opened } = yield* startTurnWithLaunchArgs("", cwd, capabilities);
+        const { exit, opened } = yield* startTurnWithLaunchArgs("", cwd, capabilities, member);
         assert.isTrue(Exit.isSuccess(exit));
         const append = appendSystemPrompt(opened[0]) ?? "";
         assert.equal(append.includes("Use `delegate_task`"), !member);
