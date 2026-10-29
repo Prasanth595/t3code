@@ -55,6 +55,7 @@ import { environmentThreadDetails, threadEnvironment } from "../../state/threads
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -883,6 +884,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
+    const failurePresentation = providerFailurePresentation(failureItem.failure, row.summary);
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt
@@ -894,7 +896,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         })
       : null;
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? failurePresentation.kind === "provider_capacity"
+        ? failurePresentation.title
+        : `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable

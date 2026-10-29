@@ -24,6 +24,7 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
@@ -206,10 +207,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
+    const failurePresentation = providerFailurePresentation(failureItem.failure, workEntry.label);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? failurePresentation.kind === "provider_capacity"
+        ? failurePresentation.title
+        : `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&

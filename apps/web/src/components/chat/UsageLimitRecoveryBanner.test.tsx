@@ -33,4 +33,23 @@ describe("usageLimitRecoveryBannerItem", () => {
       "Resets tomorrow at 17:30",
     );
   });
+
+  it("shows the provider capacity message and keeps the reset recovery actions", () => {
+    const message =
+      "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
+    const item = usageLimitRecoveryBannerItem({
+      runId: RunId.make("run-capacity"),
+      resetAt: new Date(stoppedAt.getTime() + 30_000).toISOString(),
+      stoppedAt: stoppedAt.toISOString(),
+      snoozedUntil: null,
+      recovery: null,
+      timestampFormat: "24-hour",
+      failure: { class: "usage_limit", code: "provider.rate-limit", message },
+      onChange: async () => {},
+    });
+
+    expect(item.title).toBe("Provider at capacity");
+    expect(item.description).toBe(message);
+    expect(item.actions).not.toBeNull();
+  });
 });
