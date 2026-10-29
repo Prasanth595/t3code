@@ -208,13 +208,19 @@ export function instanceHubIds(
 ): ReadonlySet<string> {
   const instance = settings.providerInstances[instanceId];
   if (!instance) return new Set();
-  const routing = JSON.stringify([instance.environment ?? [], instance.config ?? null]);
+  const origins = new Set(
+    (
+      JSON.stringify([instance.environment ?? [], instance.config ?? null]).match(
+        /https?:\/\/[^\s"'\\]+/gi,
+      ) ?? []
+    ).flatMap((url) => (URL.canParse(url) ? [new URL(url).origin] : [])),
+  );
   return new Set(
-    Object.entries(settings.usageLimitSources).flatMap(([id, config]) => {
-      if (!config.enabled || !URL.canParse(config.url)) return [];
-      const host = new URL(config.url).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`//${host}(?![\\w.:-])`, "i").test(routing) ? [id] : [];
-    }),
+    Object.entries(settings.usageLimitSources).flatMap(([id, config]) =>
+      config.enabled && URL.canParse(config.url) && origins.has(new URL(config.url).origin)
+        ? [id]
+        : [],
+    ),
   );
 }
 

@@ -182,6 +182,7 @@ describe("instanceHubIds", () => {
       [UsageLimitSourceId.make("fleet")]: source("https://hub.test:8443/"),
       [UsageLimitSourceId.make("local")]: source("http://127.0.0.1:8317"),
       [UsageLimitSourceId.make("off")]: source("https://off.test", false),
+      [UsageLimitSourceId.make("plain")]: source("https://plain.test"),
     },
     providerInstances: {
       [ProviderInstanceId.make("claudeProxy")]: {
@@ -196,6 +197,13 @@ describe("instanceHubIds", () => {
           launchArgs: `-c 'model_providers.p={base_url="http://127.0.0.1:8317/v1"}' https://off.test`,
         },
       },
+      [ProviderInstanceId.make("defaultPort")]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: [
+          { name: "ANTHROPIC_BASE_URL", value: "https://plain.test:443/v1", sensitive: false },
+          { name: "OTHER_URL", value: "http://hub.test:8443", sensitive: false },
+        ],
+      },
       [ProviderInstanceId.make("otherPort")]: {
         driver: ProviderDriverKind.make("codex"),
         config: { launchArgs: `-c 'model_providers.p={base_url="http://127.0.0.1:83170/v1"}'` },
@@ -206,6 +214,7 @@ describe("instanceHubIds", () => {
   it.each([
     ["claudeProxy", ["fleet"]],
     ["codexProxy", ["local"]],
+    ["defaultPort", ["plain"]],
     ["otherPort", []],
     ["missing", []],
   ])("matches %s to the enabled hubs its settings name", (instanceId, expected) => {
