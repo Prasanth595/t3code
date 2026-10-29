@@ -9,6 +9,7 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -28,6 +29,7 @@ import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBann
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
@@ -58,6 +60,7 @@ import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { Badge } from "../ui/badge";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -447,6 +450,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
+  // The thread's backend opens expanded, so its models show without a click.
+  const [expandedSubProviderKeys, setExpandedSubProviderKeys] = useState(
+    () =>
+      new Set<string>(
+        activeModel?.subProvider
+          ? [modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider)]
+          : [],
+      ),
+  );
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -471,6 +483,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       } else {
         next.add(instanceId);
       }
+      return next;
+    });
+  };
+
+  const toggleSubProviderSection = (key: string) => {
+    setExpandedSubProviderKeys((expanded) => {
+      const next = new Set(expanded);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   };
@@ -578,6 +598,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return out;
   })();
 
+  const subProvidersByInstance = new Map(
+    instanceEntries.flatMap((entry) =>
+      entry.snapshot.subProviders?.length
+        ? [[entry.instanceId, entry.snapshot.subProviders] as const]
+        : [],
+    ),
+  );
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
   // Inside one provider's tab the provider line repeats the selected rail icon on every row.
@@ -601,10 +628,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (model.isLegacy && !isFavorite) {
         tabsWithLegacyRow.add(model.instanceId);
       } else {
-        addRow(model.instanceId, Boolean(model.subProvider));
+        // Under a sub-provider heading a row drops its provider line.
+        addRow(
+          model.instanceId,
+          Boolean(model.subProvider) && !subProvidersByInstance.has(model.instanceId),
+        );
       }
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId, true);
+    for (const [instanceId, subProviders] of subProvidersByInstance) {
+      for (const _subProvider of subProviders) addRow(instanceId, true);
+    }
     return Math.max(0, ...unitsByTab.values());
   })();
   const lockedDisabledInstanceIds = (() => {
@@ -696,7 +730,46 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   })();
 
+  // A provider whose models run on several backends, such as fx, lists each
+  // backend as a collapsible heading. Search and Favorites stay flat.
+  const subProviderSections = (() => {
+    const subProviders =
+      isSearching || selectedInstanceId === "favorites"
+        ? undefined
+        : subProvidersByInstance.get(selectedInstanceId);
+    if (!subProviders || selectedInstanceId === "favorites") return null;
+    const { ungrouped, groups } = groupModelsBySubProvider(
+      filteredModels,
+      subProviders,
+      (model) => model.subProvider,
+    );
+    return {
+      ungrouped,
+      sections: groups.map(({ subProvider, models }) => {
+        const key = modelPickerSubProviderSectionKey(selectedInstanceId, subProvider.name);
+        return {
+          key,
+          name: subProvider.name,
+          unavailableReason: subProvider.unavailableReason,
+          models,
+          isExpanded: expandedSubProviderKeys.has(key),
+        };
+      }),
+    };
+  })();
+  const subProviderSectionByKey = new Map(
+    subProviderSections?.sections.map((section) => [section.key, section] as const),
+  );
+
   const visibleModels = (() => {
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped,
+        ...subProviderSections.sections.flatMap((section) =>
+          section.isExpanded ? section.models : [],
+        ),
+      ];
+    }
     if (!legacySection) {
       return filteredModels;
     }
@@ -742,11 +815,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .filter((model) => model.isLegacy)
         .map((model) => modelPickerLegacySectionKey(model.instanceId)),
     ),
+    ...[...subProvidersByInstance].flatMap(([instanceId, subProviders]) =>
+      subProviders.map((subProvider) =>
+        modelPickerSubProviderSectionKey(instanceId, subProvider.name),
+      ),
+    ),
   ])();
   const filteredItemKeys = ((): string[] => {
-    const modelKeys = visibleModels.map((model) =>
-      modelPickerModelKey(model.instanceId, model.slug),
-    );
+    const keyOf = (model: ModelPickerItem) => modelPickerModelKey(model.instanceId, model.slug);
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped.map(keyOf),
+        ...subProviderSections.sections.flatMap((section) => [
+          section.key,
+          ...(section.isExpanded ? section.models.map(keyOf) : []),
+        ]),
+      ];
+    }
+    const modelKeys = visibleModels.map(keyOf);
     if (!legacySection) {
       return modelKeys;
     }
@@ -887,6 +973,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               toggleLegacySection(legacyInstanceId);
               return;
             }
+            if (subProviderSectionByKey.has(modelKey)) {
+              toggleSubProviderSection(modelKey);
+              return;
+            }
             const model = parseModelPickerModelKey(modelKey);
             if (model) {
               handleModelSelect(
@@ -951,6 +1041,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     toggleLegacySection(legacyInstanceId);
                     return;
                   }
+                  if (subProviderSectionByKey.has(highlightedModelKeyRef.current)) {
+                    toggleSubProviderSection(highlightedModelKeyRef.current);
+                    return;
+                  }
                   const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
                   if (model) {
                     handleModelSelect(model.slug, model.instanceId, e.shiftKey);
@@ -992,6 +1086,45 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     </ComboboxItem>
                   );
                 }
+                const subProviderSection = subProviderSectionByKey.get(modelKey);
+                if (subProviderSection) {
+                  const unavailable = subProviderSection.unavailableReason !== undefined;
+                  return (
+                    <ComboboxItem
+                      hideIndicator
+                      index={index}
+                      value={modelKey}
+                      disabled={unavailable}
+                      aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
+                      className="group w-full cursor-pointer"
+                    >
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="min-w-0 truncate text-sm font-normal leading-snug">
+                            {subProviderSection.name}
+                          </div>
+                          {unavailable ? (
+                            <Badge variant="outline" size="sm">
+                              Unavailable
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
+                          {subProviderSection.unavailableReason ??
+                            `${subProviderSection.models.length} models`}
+                        </div>
+                      </div>
+                      {unavailable ? null : (
+                        <ChevronRightIcon
+                          className={cn(
+                            "size-4 shrink-0 transition-transform",
+                            subProviderSection.isExpanded && "rotate-90",
+                          )}
+                        />
+                      )}
+                    </ComboboxItem>
+                  );
+                }
                 const model = filteredModelByKey.get(modelKey);
                 if (!model) {
                   return null;
@@ -1017,7 +1150,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         ? selectedModelKeySet.has(modelKey)
                         : modelKey === activeModelKey
                     }
-                    showProvider={rowsMixProviders || Boolean(model.subProvider)}
+                    showProvider={
+                      rowsMixProviders ||
+                      (Boolean(model.subProvider) && subProviderSections === null)
+                    }
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
