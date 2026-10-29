@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
 import {
   isSidebarEmptyAreaTarget,
+  preventMiddleButtonDefault,
   useSnoozeWakeClock,
   useThreadJumpHintsVisible,
 } from "./Sidebar.logic";
@@ -87,5 +88,29 @@ describe("isSidebarEmptyAreaTarget", () => {
     expect(isSidebarEmptyAreaTarget(target("row-gap"))).toBe(false);
     expect(isSidebarEmptyAreaTarget(target("row-title"))).toBe(false);
     expect(isSidebarEmptyAreaTarget(target("button-icon"))).toBe(false);
+  });
+});
+
+describe("preventMiddleButtonDefault", () => {
+  it("cancels middle-button defaults except in text fields", async () => {
+    await using screen = await render(
+      <div data-testid="row">
+        <input data-testid="rename" />
+      </div>,
+      { router: false },
+    );
+    const middleButtonDefaultPrevented = (testId: string, button = 1) => {
+      const preventDefault = vi.fn();
+      preventMiddleButtonDefault({
+        button,
+        preventDefault,
+        target: screen.getByTestId(testId).element(),
+      });
+      return preventDefault.mock.calls.length > 0;
+    };
+
+    expect(middleButtonDefaultPrevented("row")).toBe(true);
+    expect(middleButtonDefaultPrevented("row", 0)).toBe(false);
+    expect(middleButtonDefaultPrevented("rename")).toBe(false);
   });
 });

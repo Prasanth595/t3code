@@ -178,7 +178,10 @@ The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
 On web and desktop, middle-click a thread to settle it, or to un-settle or wake it
-in those sections. Middle-click empty space in the sidebar to start a new thread.
+in those sections. Middle-click an empty part of the sidebar to start a new thread.
+If you have more than one project, this asks which project to use. Hold `Shift`
+while you middle-click to start in the current project instead. With **Boring
+sidebar** on, the thread always starts in the current project.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle

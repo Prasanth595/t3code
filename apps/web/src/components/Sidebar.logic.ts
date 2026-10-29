@@ -729,8 +729,15 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
 }
 
 // Blocks Windows autoscroll and Linux primary-selection paste for middle-click actions.
-export function preventMiddleButtonDefault(event: Pick<MouseEvent, "button" | "preventDefault">) {
-  if (event.button === 1) event.preventDefault();
+// Text fields keep the paste.
+export function preventMiddleButtonDefault(
+  event: Pick<MouseEvent, "button" | "preventDefault" | "target">,
+) {
+  if (event.button !== 1) return;
+  if (typeof event.target === "object" && nodeClosest(event.target, "input, textarea") !== null) {
+    return;
+  }
+  event.preventDefault();
 }
 
 export function isSidebarEmptyAreaTarget(target: EventTarget | null): boolean {
