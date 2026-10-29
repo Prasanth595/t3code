@@ -463,6 +463,8 @@ function AdhdCard(props: {
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    // A held key would otherwise answer the next card before it is read.
+    if (event.repeat && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     if (ignoresCardKeys(event.target)) return;
     const key = event.key.toLowerCase();
     // Enter on a focused control activates that control, never the card's option.
