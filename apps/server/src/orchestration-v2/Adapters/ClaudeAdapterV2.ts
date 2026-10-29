@@ -23,6 +23,7 @@ import {
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
+  AbortError as ClaudeAbortError,
   type CanUseTool,
   forkSession as forkClaudeSession,
   type EffortLevel,
@@ -319,6 +320,8 @@ const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
 // A steer waits at most this long, from its request, for its foreground
 // subagents to move to the background before it is sent.
 const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
+// Matches the stderr tail the SDK keeps for a CLI it spawns itself.
+const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 
 const CLAUDE_GROUP_WATCH_SCRIPT = [
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
@@ -333,6 +336,7 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
 export function spawnClaudeProcessGroup(
   options: ClaudeSpawnOptions,
   onExit?: () => void,
+  onStderr?: (text: string) => void,
 ): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(
     "/bin/sh",
@@ -341,10 +345,12 @@ export function spawnClaudeProcessGroup(
       cwd: options.cwd,
       env: options.env,
       signal: options.signal,
-      stdio: ["pipe", "pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
       detached: true,
     },
   );
+  // Always drained, so a chatty CLI never blocks on a full stderr pipe.
+  child.stderr?.setEncoding("utf8").on("data", (text: string) => onStderr?.(text));
   child.once("exit", () => {
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
@@ -545,6 +551,21 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
 ) {
   override get message(): string {
     return "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
+  }
+}
+
+// The CLI's stderr can hold private paths, tokens or settings, so only its cause chain, which reaches server logs, carries it.
+class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
+  "ClaudeCodeStartupExitError",
+  {
+    exitCode: Schema.NullOr(Schema.Number),
+    signal: Schema.NullOr(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const exit = this.exitCode === null ? `signal ${this.signal}` : `code ${this.exitCode}`;
+    return `Claude Code exited with ${exit} before it responded. Check the server log for details.`;
   }
 }
 
@@ -992,10 +1013,18 @@ export const layerQueryRunner: Layer.Layer<
           const unit = launch?.unit;
           const stopScope =
             unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
+          // Only a CLI that dies before its first message explains itself on stderr.
+          let stderrTail = "";
+          let answered = false;
+          const appendStderr = (text: string) => {
+            if (!answered) stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
+          };
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
             ((spawnOptions: ClaudeSpawnOptions) => {
-              if (platform !== "win32") return spawnClaudeProcessGroup(spawnOptions, stopScope);
+              if (platform !== "win32") {
+                return spawnClaudeProcessGroup(spawnOptions, stopScope, appendStderr);
+              }
               const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
                 cwd: spawnOptions.cwd,
                 env: spawnOptions.env,
@@ -1003,13 +1032,15 @@ export const layerQueryRunner: Layer.Layer<
                 windowsHide: true,
                 stdio: ["pipe", "pipe", "pipe"],
               });
-              child.stderr
-                .setEncoding("utf8")
-                .on("data", (chunk: string) => options.stderr?.(chunk));
+              child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+                appendStderr(chunk);
+                options.stderr?.(chunk);
+              });
               return child;
             });
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
           let processExited = false;
+          let exitStatus: { exitCode: number | null; signal: string | null } | undefined;
           let processExit: Promise<void> | undefined;
           const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
             const child = spawnProcess(spawnOptions);
@@ -1019,11 +1050,15 @@ export const layerQueryRunner: Layer.Layer<
             child.once("exit", releaseAgent);
             child.on("error", releaseAgent);
             processExited = child.exitCode !== null || child.signalCode != null;
+            if (processExited) {
+              exitStatus = { exitCode: child.exitCode, signal: child.signalCode ?? null };
+            }
             processExit = new Promise<void>((resolve) => {
               if (processExited) resolve();
               else
-                child.once("exit", () => {
+                child.once("exit", (exitCode, signal) => {
                   processExited = true;
+                  exitStatus = { exitCode, signal };
                   resolve();
                 });
             });
@@ -1115,9 +1150,26 @@ export const layerQueryRunner: Layer.Layer<
           );
 
           return {
-            messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
-              queryRunnerError(cause, "fromAsyncIterable"),
-            ).pipe(
+            messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) => {
+              // An aborted SDK query is a stop T3 asked for, not a CLI that died.
+              const exit = answered || cause instanceof ClaudeAbortError ? undefined : exitStatus;
+              const stderr = stderrTail.trim();
+              return queryRunnerError(
+                exit === undefined || exit.exitCode === 0
+                  ? cause
+                  : new ClaudeCodeStartupExitError({
+                      ...exit,
+                      cause: stderr === "" ? cause : new Error(`stderr: ${stderr}`, { cause }),
+                    }),
+                "fromAsyncIterable",
+              );
+            }).pipe(
+              Stream.tap(() =>
+                Effect.sync(() => {
+                  answered = true;
+                  stderrTail = "";
+                }),
+              ),
               Stream.tap((message) =>
                 logProtocolEvent({
                   direction: "incoming",

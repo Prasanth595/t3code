@@ -9,6 +9,7 @@ import * as NodeStream from "node:stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -16,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -453,6 +455,38 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* session.close;
       yield* Effect.promise(() => leftoverStopped);
       assert.strictEqual(yield* Deferred.await(stopped), "t3code-claude-test.scope");
+    }),
+  );
+
+  const startupDeathStderr = "error: An internal error occurred (EPERM) at /Users/private-16297";
+
+  const failStartup = Effect.gen(function* () {
+    const cli = fakeClaudeCli(`printf '%s\\n' '${startupDeathStderr}' >&2\nexit 1`);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
+    );
+    const session = yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
+    const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
+    if (!Exit.isFailure(exit)) throw new Error("Expected the CLI's exit to fail the stream");
+    return exit.cause;
+  });
+
+  it.effect("names Claude Code's exit code when it exits before answering", () =>
+    Effect.gen(function* () {
+      const cause = yield* failStartup;
+      const { message } = makeProviderFailure({
+        cause: Cause.squash(cause),
+        class: "transport_error",
+      });
+      assert.include(message, "exited");
+      assert.include(message, "code 1");
+      assert.notInclude(message, "private-16297");
+    }),
+  );
+
+  it.effect("keeps the CLI's startup stderr for the server log", () =>
+    Effect.gen(function* () {
+      assert.include(Cause.pretty(yield* failStartup), startupDeathStderr);
     }),
   );
 
