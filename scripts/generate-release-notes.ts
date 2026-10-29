@@ -3,7 +3,6 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -168,36 +167,10 @@ export function countContributors(
   return people.size;
 }
 
-function formatElapsed(milliseconds: number): string {
-  const units = [
-    ["day", 86_400_000],
-    ["hour", 3_600_000],
-    ["minute", 60_000],
-  ] as const;
-  for (const [unit, size] of units) {
-    const count = Math.floor(milliseconds / size);
-    if (count >= 1) return `${count} ${unit}${count === 1 ? "" : "s"}`;
-  }
-  return "under a minute";
-}
-
-function buildReleaseHeader(options: {
-  readonly version: string;
-  /** Epoch milliseconds. */
-  readonly builtAt: number;
-  readonly previousBuiltAt: number;
-  readonly changes: number;
-  readonly contributors: number;
-}): string {
-  const date = DateTime.formatUtc(DateTime.makeUnsafe(options.builtAt), {
-    locale: "en-US",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  const elapsed = formatElapsed(options.builtAt - options.previousBuiltAt);
+/** No date here: the app shows how long ago a release shipped, and GitHub shows the date. */
+function buildReleaseHeader(version: string, changes: number, contributors: number): string {
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-  return `**v${options.version.replace(/^v/, "")}** · ${date} · ${plural(options.changes, "change")} from ${plural(options.contributors, "contributor")} in ${elapsed}`;
+  return `**v${version.replace(/^v/, "")}** · ${plural(changes, "change")} from ${plural(contributors, "contributor")}`;
 }
 
 /** The summary leads; GitHub's full list folds under it. Clients cut the body at `<details>`. */
@@ -234,22 +207,6 @@ const readCommits = Effect.fn("generateReleaseNotes.readCommits")(function* (
       return { subject, authorName };
     });
 });
-
-/** When the previous release was published, else its commit time. Stable promotes an older nightly commit. */
-const readPreviousReleaseTime = Effect.fn("generateReleaseNotes.readPreviousReleaseTime")(
-  function* (repository: string, previousTag: string) {
-    const published = Date.parse(
-      yield* run("gh", [
-        "api",
-        `repos/${repository}/releases/tags/${previousTag}`,
-        "--jq",
-        ".published_at",
-      ]).pipe(Effect.map((output) => output.trim())),
-    );
-    if (!Number.isNaN(published)) return published;
-    return Date.parse((yield* run("git", ["log", "-1", "--format=%cI", previousTag])).trim());
-  },
-);
 
 const readPullRequests = Effect.fn("generateReleaseNotes.readPullRequests")(function* (
   repository: string,
@@ -358,22 +315,18 @@ const command = Command.make(
       const numbers = [
         ...new Set(allCommits.flatMap(({ subject }) => pullRequestNumber(subject) ?? [])),
       ];
-      const [pullRequests, fullChangelog, previousBuiltAt] = yield* Effect.all(
+      const [pullRequests, fullChangelog] = yield* Effect.all(
         [
           readPullRequests(repository, numbers),
           readFullChangelog({ repository, tag, ref, previousTag }),
-          readPreviousReleaseTime(repository, previousTag),
         ],
         { concurrency: "unbounded" },
       );
-      const builtAt = DateTime.toEpochMillis(yield* DateTime.now);
-      const header = buildReleaseHeader({
+      const header = buildReleaseHeader(
         version,
-        builtAt,
-        previousBuiltAt,
-        changes: allCommits.length,
-        contributors: countContributors(allCommits, pullRequests),
-      });
+        allCommits.length,
+        countContributors(allCommits, pullRequests),
+      );
       // With no summary, write nothing: the release falls back to GitHub's generated notes.
       const summary =
         commits.length === 0

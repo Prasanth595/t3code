@@ -135,6 +135,7 @@ export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
   fallbackVersion: string,
   channel: DesktopUpdateChannel,
+  releaseDate?: string,
 ): NormalizedDesktopUpdateReleaseNotes {
   const rawNotes = (
     typeof releaseNotes === "string"
@@ -152,6 +153,7 @@ export function normalizeDesktopUpdateReleaseNotes(
         version: entry.version,
         items,
         totalItems,
+        ...(releaseDate && entry.version === fallbackVersion ? { releasedAt: releaseDate } : {}),
       },
     ];
   });

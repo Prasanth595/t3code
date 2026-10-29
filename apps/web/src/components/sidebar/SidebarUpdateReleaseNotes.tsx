@@ -5,6 +5,7 @@ import {
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Separator } from "../ui/separator";
 
@@ -52,9 +53,12 @@ export function SidebarUpdateReleaseNotes({
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
 }) {
-  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
+  if (state.releaseNotes.length === 0) {
     return <>{tooltip}</>;
   }
+  const releasedAt = state.releaseNotes.find(
+    (releaseNote) => releaseNote.version === state.availableVersion,
+  )?.releasedAt;
 
   return (
     <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left">
@@ -66,7 +70,9 @@ export function SidebarUpdateReleaseNotes({
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                {state.availableVersion}
+                {releasedAt
+                  ? `${state.availableVersion} · ${formatRelativeTimeLabel(releasedAt)}`
+                  : state.availableVersion}
               </div>
             ) : null}
           </div>

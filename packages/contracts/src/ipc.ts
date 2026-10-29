@@ -288,12 +288,15 @@ export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
   totalItems: number;
+  /** ISO time the update feed reports for this version. Only the offered version has one. */
+  releasedAt?: string;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
+  releasedAt: Schema.optionalKey(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({

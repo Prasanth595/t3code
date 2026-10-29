@@ -64,7 +64,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     const fixes = Array.from({ length: 9 }, (_, index) => `- Fix ${index + 1} (#${index + 1})`);
     const result = normalizeDesktopUpdateReleaseNotes(
       [
-        "**v1.2.4** · Oct 29, 2026 · 12 changes from 3 contributors in 2 days",
+        "**v1.2.4** · 12 changes from 3 contributors",
         "## Highlights",
         "Link machines (beta).",
         "## Fixes",
@@ -76,13 +76,15 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       ].join("\n"),
       "1.2.4",
       "latest",
+      "2026-10-29T10:00:00.000Z",
     );
 
     expect(result.releaseNotes).toEqual([
       {
         version: "1.2.4",
+        releasedAt: "2026-10-29T10:00:00.000Z",
         items: [
-          "v1.2.4 · Oct 29, 2026 · 12 changes from 3 contributors in 2 days",
+          "v1.2.4 · 12 changes from 3 contributors",
           "Link machines (beta).",
           ...fixes.map((fix) => fix.slice(2)),
         ],
