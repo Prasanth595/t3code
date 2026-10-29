@@ -27,8 +27,8 @@ export function scanEncoding(files: ReadonlyArray<EncodingInput>): Array<string>
     if (file.now.startsWith(BOM) && !file.before?.startsWith(BOM)) {
       findings.push(`${file.path}:1: byte order mark added`);
     }
-    const known = new Set(file.before?.split("\n") ?? []);
-    file.now.split("\n").forEach((line, index) => {
+    const known = new Set(file.before?.split(/\r?\n/) ?? []);
+    file.now.split(/\r?\n/).forEach((line, index) => {
       if (MOJIBAKE.test(line) && !known.has(line)) {
         findings.push(`${file.path}:${index + 1}: ${line.trim().slice(0, 110)}`);
       }

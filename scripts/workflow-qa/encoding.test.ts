@@ -29,13 +29,13 @@ it("scans changed non-ASCII paths with Git path quoting enabled", () => {
   expect(scanChangedEncoding(cwd, "HEAD")).toEqual([`${path}:2: Broken ${damagedDash}`]);
 });
 
-it("reports damaged lines a change adds and not damage already at the base", () => {
+it.each(["\n", "\r\n"])("reports only added damage with %j line endings", (newline) => {
   expect(
     scanEncoding([
       {
         path: "a.ts",
         before: `const old = "caf${damagedAccent}";\nconst fine = 1;`,
-        now: `const old = "caf${damagedAccent}";\nconst fresh = "a ${damagedDash} b";\nconst fine = 1;`,
+        now: `const old = "caf${damagedAccent}";${newline}const fresh = "a ${damagedDash} b";${newline}const fine = 1;`,
       },
     ]),
   ).toEqual([`a.ts:2: const fresh = "a ${damagedDash} b";`]);
