@@ -3533,6 +3533,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  suggestNextPrompts: "orchestration.suggestNextPrompts",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -3957,6 +3958,30 @@ export class OrchestrationV2ForceStopThreadError extends Schema.TaggedError<Orch
   }
 }
 
+export const OrchestrationV2SuggestNextPromptsInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2SuggestNextPromptsInput =
+  typeof OrchestrationV2SuggestNextPromptsInput.Type;
+
+export const OrchestrationV2SuggestNextPromptsResult = Schema.Struct({
+  prompts: Schema.Array(TrimmedNonEmptyString),
+});
+export type OrchestrationV2SuggestNextPromptsResult =
+  typeof OrchestrationV2SuggestNextPromptsResult.Type;
+
+export class OrchestrationV2SuggestNextPromptsError extends Schema.TaggedError<OrchestrationV2SuggestNextPromptsError>()(
+  "OrchestrationV2SuggestNextPromptsError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Could not suggest next prompts for this thread.";
+  }
+}
+
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   scriptPath: TrimmedNonEmptyString,
@@ -4150,6 +4175,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
+  },
+  suggestNextPrompts: {
+    input: OrchestrationV2SuggestNextPromptsInput,
+    output: OrchestrationV2SuggestNextPromptsResult,
   },
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,

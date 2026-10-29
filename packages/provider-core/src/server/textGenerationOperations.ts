@@ -9,12 +9,14 @@ import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildNextPromptsPrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
+  sanitizeNextPrompts,
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
@@ -167,11 +169,24 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateNextPrompts: ProviderTextGeneration["generateNextPrompts"] = Effect.fn(
+    `${name}.generateNextPrompts`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateNextPrompts",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildNextPromptsPrompt(input),
+    });
+    return { prompts: sanitizeNextPrompts(generated.prompts) };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateNextPrompts,
   } satisfies ProviderTextGeneration;
 }

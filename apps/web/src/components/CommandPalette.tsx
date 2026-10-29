@@ -61,6 +61,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  InboxIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -1504,6 +1505,20 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (clientSettings.adhdModeEnabled) {
+    actionItems.push({
+      kind: "action",
+      value: "action:adhd-mode",
+      searchTerms: ["adhd", "focus", "queue", "inbox", "triage", "needs you", "cards"],
+      title: "Open ADHD mode",
+      icon: <InboxIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "adhdMode.open",
+      run: async () => {
+        await navigate({ to: "/adhd" });
+      },
+    });
+  }
 
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";

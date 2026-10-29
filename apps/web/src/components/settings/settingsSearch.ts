@@ -456,6 +456,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "adhd-mode",
+    title: "ADHD mode",
+    to: "/settings/labs",
+    searchTerms: ["beta focus queue inbox cards triage one at a time needs you"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",

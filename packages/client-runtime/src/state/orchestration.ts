@@ -111,6 +111,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:force-stop-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,
     }),
+    suggestNextPrompts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:suggest-next-prompts",
+      tag: ORCHESTRATION_V2_WS_METHODS.suggestNextPrompts,
+    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

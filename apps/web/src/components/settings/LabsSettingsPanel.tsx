@@ -18,6 +18,7 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
+        <AdhdModeRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -63,6 +64,24 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function AdhdModeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("adhd-mode")}
+      description="Answer agents one card at a time, from the keyboard. Open it from the command palette."
+      control={
+        <Switch
+          checked={settings.adhdModeEnabled}
+          onCheckedChange={(checked) => updateSettings({ adhdModeEnabled: Boolean(checked) })}
+          aria-label="ADHD mode"
         />
       }
     />

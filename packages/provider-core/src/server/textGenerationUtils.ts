@@ -54,6 +54,13 @@ export function sanitizePrTitle(raw: string): string {
 
 const MAX_THREAD_TITLE_CHARS = 120;
 
+export const MAX_NEXT_PROMPTS = 3;
+
+export function sanitizeNextPrompts(raw: ReadonlyArray<string>): ReadonlyArray<string> {
+  const prompts = raw.map((prompt) => prompt.trim().replace(/\s+/g, " ")).filter(Boolean);
+  return [...new Set(prompts)].slice(0, MAX_NEXT_PROMPTS);
+}
+
 export function sanitizeThreadTitle(raw: string): string {
   // Unwrap a JSON-formatted title before truncation can cut off the closing brace.
   const decoded = decodeJsonThreadTitle(raw);
