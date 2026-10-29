@@ -98,6 +98,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otelEnvironment: OtelEnvironment.none,
+    telemetryEnabledInSettings: true,
     devAllowedOrigins: [],
   } as const;
 
