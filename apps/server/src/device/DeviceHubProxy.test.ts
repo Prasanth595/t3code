@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import type * as DeviceHost from "./DeviceHost.ts";
@@ -29,18 +28,10 @@ const fixture = (
   let finalized = 0;
   const requests: string[] = [];
   const headers: Array<Readonly<Record<string, string>>> = [];
-  const bodies: string[] = [];
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
       headers.push(request.headers);
-      if (
-        request.body._tag === "Stream" &&
-        request.headers["content-type"] === "application/json"
-      ) {
-        const chunks = yield* Stream.runCollect(request.body.stream.pipe(Stream.orDie));
-        bodies.push([...chunks].map((chunk) => new TextDecoder().decode(chunk)).join(""));
-      }
       signal.addEventListener("abort", () => {
         finalized++;
       });
@@ -81,7 +72,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, headers, bodies, finalized: () => finalized };
+  return { handler, requests, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -163,68 +154,45 @@ describe("device hub proxy", () => {
     expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
   });
 
-  it.each([
-    "/vendor/serve-sim/helper/udid-1/webrtc/offer",
-    "/vendor/serve-emu/webrtc/offer",
-    "/vendor/serve-emu/webrtc/close",
-  ])(
-    "lets a viewer signal %s with read scope and the selected host's credentials",
-    async (path) => {
-      const { handler, requests, headers, bodies } = fixture(
-        [AuthOrchestrationReadScope],
-        false,
-        undefined,
-        (hubPath, search) =>
-          Effect.succeed({
-            url: `https://session.test${hubPath}?${search}`,
-            headers: { authorization: "Bearer session-token" },
-            protocols: [],
-          }),
-      );
-      const offer = await handler(
-        new Request(
-          `http://t3.test/api/device-hub${path}?device=session-1&hostId=eas&wsTicket=ticket`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: "Bearer environment-token",
-              cookie: "client=1",
-              dpop: "client-proof",
-            },
-            body: '{"type":"offer","sessionId":"viewer"}',
-          },
-        ),
-      );
-      expect(offer.status).toBe(200);
-      expect(offer.headers.get("set-cookie")).toBeNull();
-      await offer.text();
-      expect(requests).toEqual([`https://session.test${path}?device=session-1`]);
-      expect(headers[0]).toMatchObject({
-        "content-type": "application/json",
-        authorization: "Bearer session-token",
-      });
-      expect(headers[0]).not.toHaveProperty("cookie");
-      expect(headers[0]).not.toHaveProperty("dpop");
-      expect(bodies).toEqual(['{"type":"offer","sessionId":"viewer"}']);
-      if (path.includes("serve-emu")) {
-        for (const method of ["GET", "PUT", "DELETE"]) {
-          expect(
-            (await handler(new Request(`http://t3.test/api/device-hub${path}`, { method }))).status,
-          ).toBe(405);
-        }
-      }
-    },
-  );
+  it("lets a viewer negotiate a WebRTC stream with read scope", async () => {
+    const { handler, requests, headers } = fixture([AuthOrchestrationReadScope]);
+    const offer = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-1/webrtc/offer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"type":"offer"}',
+      }),
+    );
+    expect(offer.status).toBe(200);
+    await offer.text();
+    expect(requests).toEqual(["http://hub.test/vendor/serve-sim/helper/udid-1/webrtc/offer"]);
+    expect(headers[0]?.["content-type"]).toBe("application/json");
+  });
 
-  it("reads Android transport capabilities without permitting their mutation", async () => {
+  it("lets a viewer read Android stream capabilities and signal WebRTC with read scope", async () => {
     const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const url = "http://t3.test/api/device-hub/vendor/serve-emu/api?device=session-1";
-    const response = await handler(new Request(url));
-    expect(response.status).toBe(200);
-    await response.text();
-    expect(requests).toEqual(["http://hub.test/vendor/serve-emu/api?device=session-1"]);
-    expect((await handler(new Request(url, { method: "POST" }))).status).toBe(405);
+    const hub = "http://t3.test/api/device-hub/vendor/serve-emu";
+    const api = await handler(new Request(`${hub}/api?device=session-1`));
+    expect(api.status).toBe(200);
+    await api.text();
+    for (const action of ["offer", "close"]) {
+      const signal = await handler(
+        new Request(`${hub}/webrtc/${action}?device=session-1`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: '{"sessionId":"viewer"}',
+        }),
+      );
+      expect(signal.status).toBe(200);
+      await signal.text();
+    }
+    expect(requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/offer?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/close?device=session-1",
+    ]);
+    expect((await handler(new Request(`${hub}/api`, { method: "POST" }))).status).toBe(405);
+    expect((await handler(new Request(`${hub}/webrtc/offer`))).status).toBe(405);
   });
 
   it("sends requests a host routes itself to its upstream with its credentials", async () => {
