@@ -14,6 +14,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -357,6 +359,62 @@ describe("NextPromptSuggestionService", () => {
         assert.equal(harness.generateNextPrompt.mock.calls.length, 0);
       }).pipe(Effect.provide(harness.layer));
     }),
+  );
+
+  it.effect.each(["new message", "rollback"] as const)(
+    "drops a reply invalidated by %s while the model is generating",
+    (change) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<{ suggestion: string }>();
+        const harness = makeHarness({
+          generate: () =>
+            Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        });
+        yield* Effect.gen(function* () {
+          const suggestions = yield* NextPromptSuggestion.NextPromptSuggestionService;
+          const { threadId, runId } = yield* seedExchange({
+            thread: `thread:next:race:${change}`,
+            user: "Hello",
+            assistant: "Hi",
+          });
+          const pending = yield* suggestions
+            .suggest({ threadId, afterMessageId: assistantOf(runId) })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (change === "new message") {
+            yield* TestClock.adjust("1 second");
+            yield* recordRun({
+              threadId,
+              runId: RunId.make("run:race:2"),
+              ordinal: 2,
+              user: "Actually, stop",
+              assistant: "Stopped",
+            });
+          } else {
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            const eventSink = yield* EventSink.EventSinkV2;
+            const projection = yield* threads.getThreadRecords(threadId, ["runs"]);
+            const run = projection.runs[0]!;
+            const now = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("rollback:in-flight"),
+                  type: "run.updated",
+                  threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: { ...run, status: "rolled_back" },
+                },
+              ],
+            });
+          }
+          yield* Deferred.succeed(release, { suggestion: "Stale suggestion" });
+          assert.deepEqual(yield* Fiber.join(pending), { suggestion: null });
+          assert.equal(harness.generateNextPrompt.mock.calls.length, 1);
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("returns no suggestion when generation fails", () =>

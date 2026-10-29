@@ -202,6 +202,7 @@ export function composerCommandKeyHandler(input: {
       const plain = !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
       // Accepting only fills the draft; the user still reviews it and sends.
       if (plain && (key === "Tab" || key === "ArrowRight")) {
+        promptSuggestion.dismiss();
         replacePromptFromHistory(promptSuggestion.text);
         return true;
       }

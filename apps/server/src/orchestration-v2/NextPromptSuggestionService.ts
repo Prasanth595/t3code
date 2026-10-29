@@ -37,9 +37,9 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
 
-  const suggest: NextPromptSuggestionService["Service"]["suggest"] = Effect.fn(
-    "NextPromptSuggestionService.suggest",
-  )(function* (input) {
+  const readContext = Effect.fn("NextPromptSuggestionService.readContext")(function* (
+    input: OrchestrationV2SuggestNextPromptInput,
+  ) {
     const projection = yield* threads.getThreadRecords(input.threadId, ["messages", "runs"], {
       messageRoles: ["user", "assistant"],
     });
@@ -47,7 +47,7 @@ const make = Effect.gen(function* () {
       yield* serverSettings.getSettings,
       projection.thread.projectId,
     ).settings;
-    if (!settings.nextPromptSuggestionsEnabled) return NO_SUGGESTION;
+    if (!settings.nextPromptSuggestionsEnabled) return null;
 
     const rolledBack = new Set(
       projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
@@ -57,15 +57,24 @@ const make = Effect.gen(function* () {
     );
     // A newer message, or a rollback, means the user has moved on from the reply this was asked for.
     const latest = messages.at(-1);
-    if (latest?.id !== input.afterMessageId || latest.role !== "assistant") return NO_SUGGESTION;
+    if (latest?.id !== input.afterMessageId || latest.role !== "assistant") return null;
 
+    return { projection, settings, messages };
+  });
+
+  const suggest: NextPromptSuggestionService["Service"]["suggest"] = Effect.fn(
+    "NextPromptSuggestionService.suggest",
+  )(function* (input) {
+    const source = yield* readContext(input);
+    if (source === null) return NO_SUGGESTION;
+    const { projection, settings, messages } = source;
     const context = formatThreadTitleContext(messages);
     if (context.message.length === 0) return NO_SUGGESTION;
 
     const project = yield* projects.get(projection.thread.projectId);
     if (Option.isNone(project)) return NO_SUGGESTION;
 
-    return yield* textGeneration
+    const result = yield* textGeneration
       .generateNextPrompt({
         cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
         message: context.message,
@@ -83,6 +92,8 @@ const make = Effect.gen(function* () {
               }).pipe(Effect.as({ suggestion: null })),
         ),
       );
+    if (result.suggestion === null) return NO_SUGGESTION;
+    return (yield* readContext(input)) === null ? NO_SUGGESTION : result;
   });
 
   return NextPromptSuggestionService.of({ suggest });

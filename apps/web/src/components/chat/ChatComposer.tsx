@@ -2191,7 +2191,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !showPlanFollowUpPrompt &&
     !projectSelectionRequired &&
     !showProviderUnavailable &&
-    !isConnecting
+    environmentUnavailable === null
       ? { text: nextPrompt.suggestion, dismiss: nextPrompt.dismiss }
       : null;
 

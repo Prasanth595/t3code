@@ -45,6 +45,7 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import {
+  useClearScopedSettings,
   useScopedSettings,
   useScopedSettingsMixed,
   useUpdateScopedSettings,
@@ -384,6 +385,11 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const clearScopedSettings = useClearScopedSettings();
+  const { scope, targets } = useSettingsScope();
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const mixedNextPromptEnabled = useScopedSettingsMixed(["nextPromptSuggestionsEnabled"]);
+  const mixedNextPromptInstructions = useScopedSettingsMixed(["nextPromptInstructions"]);
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -517,11 +523,18 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
-    ...(settings.nextPromptSuggestionsEnabled !==
-    DEFAULT_UNIFIED_SETTINGS.nextPromptSuggestionsEnabled
+    ...(!isProjectScope &&
+    (mixedNextPromptEnabled ||
+      settings.nextPromptSuggestionsEnabled !==
+        DEFAULT_UNIFIED_SETTINGS.nextPromptSuggestionsEnabled)
       ? ["Next prompt suggestions"]
       : []),
-    ...(settings.nextPromptInstructions !== DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions
+    ...((
+      isProjectScope
+        ? targets.some((target) => target.sources.nextPromptInstructions === "project")
+        : mixedNextPromptInstructions ||
+          settings.nextPromptInstructions !== DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions
+    )
       ? ["Next prompt instructions"]
       : []),
     ...getChangedBrowserSettingLabels(settings),
@@ -630,7 +643,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       nextPromptSuggestionsEnabled: DEFAULT_UNIFIED_SETTINGS.nextPromptSuggestionsEnabled,
-      nextPromptInstructions: DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions,
+      ...(scope.kind === "project" || scope.kind === "checkout"
+        ? {}
+        : { nextPromptInstructions: DEFAULT_UNIFIED_SETTINGS.nextPromptInstructions }),
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -652,6 +667,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
+    if (scope.kind === "project" || scope.kind === "checkout") {
+      clearScopedSettings(["nextPromptInstructions"]);
+    }
     onRestored?.();
   };
 

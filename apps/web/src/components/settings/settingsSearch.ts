@@ -667,7 +667,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "next-prompt-suggestions",
     title: "Next prompt suggestions",
-    to: "/settings/general",
+    to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
       "composer predictions follow up draft ghost text tab autocomplete continue thread",
@@ -675,8 +675,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "next-prompt-instructions",
+    targetId: "next-prompt-suggestions",
     title: "Next prompt instructions",
-    to: "/settings/general",
+    to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: ["composer predictions suggestion prompt custom style follow up draft"],
   },

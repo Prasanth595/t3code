@@ -146,8 +146,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     generateNextPrompt: Effect.fn("TextGeneration.generateNextPrompt")(function (input) {
-      return resolveInstance(registry, "generateNextPrompt", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateNextPrompt(input)),
+      return generate("generateNextPrompt", input.modelSelection, (service, modelSelection) =>
+        service.generateNextPrompt({ ...input, modelSelection }),
       );
     }),
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {

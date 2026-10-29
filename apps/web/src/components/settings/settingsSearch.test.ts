@@ -52,6 +52,22 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds next prompt controls on Threads and targets the visible toggle for instructions", () => {
+    expect(searchSettings("next prompt instructions")).toContainEqual(
+      expect.objectContaining({
+        id: "next-prompt-instructions",
+        to: "/settings/threads",
+        targetId: "next-prompt-suggestions",
+      }),
+    );
+    expect(searchSettings("next prompt suggestions")).toContainEqual(
+      expect.objectContaining({
+        id: "next-prompt-suggestions",
+        to: "/settings/threads",
+      }),
+    );
+  });
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);

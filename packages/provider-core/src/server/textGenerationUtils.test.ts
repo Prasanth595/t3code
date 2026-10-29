@@ -24,6 +24,13 @@ describe("sanitizeNextPrompt", () => {
     expect(sanitizeNextPrompt('  "Run the tests again"  ')).toBe("Run the tests again");
   });
 
+  it.each(["Add a test for `foo`", 'Run "npm test"', "Check 'value'", '"unmatched', "unmatched`"])(
+    "preserves quotes that do not wrap the entire prompt (%j)",
+    (raw) => {
+      expect(sanitizeNextPrompt(raw)).toBe(raw);
+    },
+  );
+
   it("truncates a runaway reply to the composer-sized limit", () => {
     const result = sanitizeNextPrompt("a".repeat(400));
     expect(result).toHaveLength(280);

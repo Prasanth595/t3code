@@ -83,7 +83,7 @@ const MAX_NEXT_PROMPT_CHARS = 280;
 export function sanitizeNextPrompt(raw: string): string | null {
   const text = raw
     .trim()
-    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/^(['"`])([\s\S]*)\1$/, "$2")
     .trim();
   if (text.length === 0) return null;
   if (text.length <= MAX_NEXT_PROMPT_CHARS) return text;
