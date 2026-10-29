@@ -671,6 +671,7 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly settingKeys?: ReadonlyArray<string>;
   readonly effort?: ClaudeAgentSdkQueryOptions["effort"];
   readonly includePartialMessages?: true;
+  readonly forwardSubagentText?: true;
   readonly pathToClaudeCodeExecutable?: ClaudeAgentSdkQueryOptions["pathToClaudeCodeExecutable"];
   readonly hasExtraArgs?: true;
   readonly allowDangerouslySkipPermissions?: true;
@@ -813,6 +814,7 @@ export function loggedClaudeQueryOptions(
       : {}),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     ...(options.includePartialMessages === true ? { includePartialMessages: true } : {}),
+    ...(options.forwardSubagentText === true ? { forwardSubagentText: true } : {}),
     ...(options.pathToClaudeCodeExecutable === undefined
       ? {}
       : { pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable }),
@@ -1538,6 +1540,7 @@ export function makeClaudeQueryOptions(input: {
         ? "bypassPermissions"
         : (input.permissionMode ?? "default")),
     includePartialMessages: true,
+    forwardSubagentText: true,
     ...(compiledSelection.effort === undefined
       ? {}
       : {
