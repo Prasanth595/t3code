@@ -72,10 +72,14 @@ interface CardOption {
 const threadKeyOf = (entry: AdhdQueueEntry) =>
   scopedThreadKey(scopeThreadRef(entry.thread.environmentId, entry.thread.id));
 
-function isEditableTarget(target: EventTarget | null): boolean {
+// Keys typed into a field or an open dialog or menu belong there, not to the card underneath.
+function ignoresCardKeys(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+    (target.isContentEditable ||
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+      target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]') !==
+        null)
   );
 }
 
@@ -120,6 +124,10 @@ export function AdhdModeView() {
     queue.findIndex((entry) => threadKeyOf(entry) === selectedKey),
   );
   const current = queue[currentIndex] ?? null;
+  // Pin the shown card, so a newly urgent thread can't swap it under a key press.
+  if (current !== null && selectedKey !== threadKeyOf(current)) {
+    setSelectedKey(threadKeyOf(current));
+  }
   const workingCount = threads.filter(
     (thread) => thread.runtime?.status === "running" && thread.archivedAt === null,
   ).length;
@@ -405,7 +413,7 @@ function AdhdCard(props: {
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (isEditableTarget(event.target)) return;
+    if (ignoresCardKeys(event.target)) return;
     const key = event.key.toLowerCase();
     if (/^[1-9]$/.test(key)) props.onJump(Number(key) - 1);
     else if (key === "arrowdown") setHighlight(Math.min(selected + 1, options.length - 1));
@@ -542,7 +550,12 @@ function AdhdCard(props: {
               event.preventDefault();
               setReplying(false);
               setReply("");
-            } else if (event.key === "Enter" && !event.shiftKey) {
+            } else if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              event.keyCode !== 229
+            ) {
               event.preventDefault();
               sendReply();
             }
