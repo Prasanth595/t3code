@@ -7,7 +7,6 @@ import {
 } from "../desktopUpdate.logic";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
-import { Separator } from "../ui/separator";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
@@ -31,7 +30,7 @@ function ReleaseLink({
 }) {
   return (
     <a
-      className="mt-2 inline-flex items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground underline decoration-dotted underline-offset-4 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="mt-1 inline-flex items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       href={releaseUrl}
       onClick={(event) => {
         event.preventDefault();
@@ -39,7 +38,7 @@ function ReleaseLink({
       }}
     >
       {children}
-      <ExternalLinkIcon aria-hidden className="size-3 shrink-0" strokeWidth={2.25} />
+      <ExternalLinkIcon aria-hidden className="size-3 shrink-0" strokeWidth={2} />
     </a>
   );
 }
@@ -61,7 +60,7 @@ export function SidebarUpdateReleaseNotes({
   )?.releasedAt;
 
   return (
-    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left">
+    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left text-pretty">
       <div className="shrink-0 px-1">
         {state.status === "available" ? (
           <div>
@@ -80,7 +79,7 @@ export function SidebarUpdateReleaseNotes({
           <div className="text-sm leading-5 font-medium">{tooltip}</div>
         )}
       </div>
-      <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-3 pb-1">
         {state.releaseNotes.map((releaseNote, index) => {
           const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
           const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
@@ -91,44 +90,26 @@ export function SidebarUpdateReleaseNotes({
 
           if (releaseNote.intro !== undefined) {
             return (
-              <div key={releaseNote.version}>
-                {index > 0 && <Separator className="my-3" />}
-                <section>
-                  {index > 0 ? (
-                    <h3 className="mb-1.5 text-foreground text-xs leading-4 font-semibold">
-                      {releaseNote.version}
-                    </h3>
-                  ) : null}
-                  <p className="break-words text-sm leading-6 text-popover-foreground">
-                    {releaseNote.intro}
-                  </p>
-                  {releaseNote.items.length > 0 ? (
-                    <>
-                      <h3 className="mt-3 text-foreground text-xs leading-4 font-semibold">
-                        Fixes
-                      </h3>
-                      <div className="mt-1 space-y-0.5 text-xs leading-5 text-popover-foreground/80">
-                        {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
-                          <p className="break-words" key={key}>
-                            {item}
-                          </p>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
-                  {releaseUrl ? (
-                    <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                      {releaseNote.stats ?? "View release on GitHub"}
-                    </ReleaseLink>
-                  ) : null}
-                </section>
-              </div>
+              <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
+                {index > 0 ? (
+                  <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
+                    {releaseNote.version}
+                  </h3>
+                ) : null}
+                <p className="break-words text-xs leading-5 text-popover-foreground">
+                  {releaseNote.intro}
+                </p>
+                {releaseUrl ? (
+                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
+                    {releaseNote.stats ?? "View release on GitHub"}
+                  </ReleaseLink>
+                ) : null}
+              </section>
             );
           }
 
           return (
-            <div key={releaseNote.version}>
-              {index > 0 && <Separator className="my-3" />}
+            <div className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
               <section>
                 <h3 className="text-foreground text-xs leading-4 font-semibold">
                   {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
@@ -150,8 +131,7 @@ export function SidebarUpdateReleaseNotes({
           );
         })}
         {state.omittedReleaseCount > 0 ? (
-          <div>
-            <Separator className="my-3" />
+          <div className="mt-3">
             <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
               {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
             </ReleaseLink>
