@@ -222,7 +222,7 @@ describe("assistant citation references", () => {
   it("sends only the comment and a reference for quotes of thinking-derived messages", () => {
     const thinking = {
       ...citation,
-      messageId: MessageId.make("message:provider:claudeAgent:native-item:msg_01:thinking:1"),
+      messageId: MessageId.make("message:provider:claudeAgent:native-item:msg_01%3Athinking%3A1"),
       comment: "Can I fix this?",
     };
     const expanded = expandAssistantCitationsForProvider(
