@@ -3510,10 +3510,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       yield* watching("disabled", null);
       assert.isUndefined((yield* watchOf)?.quietDeadline);
-      const disabledUpdatedAt = (yield* orchestrator.getThreadShell(threadId))?.updatedAt;
+      const disabledUpdatedAt = (yield* orchestrator.getThreadShell(threadId))!.updatedAt;
       yield* TestClock.adjust("1 minute");
       yield* watching("disable-again", null);
-      assert.equal((yield* orchestrator.getThreadShell(threadId))?.updatedAt, disabledUpdatedAt);
+      assert.equal(
+        DateTime.toEpochMillis((yield* orchestrator.getThreadShell(threadId))!.updatedAt),
+        DateTime.toEpochMillis(disabledUpdatedAt),
+      );
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("quiet-end"),
