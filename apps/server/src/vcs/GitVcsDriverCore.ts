@@ -1697,7 +1697,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
+  const resolveConfiguredPushRemoteName = Effect.fn("resolveConfiguredPushRemoteName")(function* (
     cwd: string,
     refName: string,
   ) {
@@ -1717,8 +1717,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["config", "--get", "remote.pushDefault"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    if (pushDefaultRemote.length > 0) {
-      return pushDefaultRemote;
+    return pushDefaultRemote.length > 0 ? pushDefaultRemote : null;
+  });
+
+  const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const configuredRemote = yield* resolveConfiguredPushRemoteName(cwd, refName);
+    if (configuredRemote) {
+      return configuredRemote;
     }
 
     return yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
@@ -2703,6 +2711,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           branch,
           upstreamBranch: `${remoteName}/${publishBranch}`,
           setUpstream: yield* recordPushedUpstream(cwd, branch, remoteName, publishBranch),
+        };
+      }
+
+      // A fork workflow fetches from the upstream but pushes to the configured
+      // push remote, and keeps the upstream for pulls, as plain `git push` does.
+      const configuredPushRemoteName = yield* resolveConfiguredPushRemoteName(cwd, branch).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (configuredPushRemoteName && configuredPushRemoteName !== currentUpstream.remoteName) {
+        yield* runGit(
+          "GitVcsDriver.pushCurrentBranch.pushToPushRemote",
+          cwd,
+          ["push", "--", configuredPushRemoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
+          { timeoutMs: null },
+        );
+        return {
+          status: "pushed" as const,
+          branch,
+          upstreamBranch: `${configuredPushRemoteName}/${currentUpstream.branchName}`,
+          setUpstream: false,
         };
       }
 
