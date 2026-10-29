@@ -41,6 +41,7 @@ import {
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
+const isWatchPullRequestInput = Schema.is(WatchPullRequestInput);
 
 const testCrypto = Crypto.make({
   randomBytes: (size) => new Uint8Array(size).fill(7),
@@ -237,7 +238,7 @@ describe("pull request toolkit handlers", () => {
     [10081, false],
     [2e11, false],
   ])("bounds quiet wait duration %s", (quietTimeoutMinutes, accepted) => {
-    expect(Schema.is(WatchPullRequestInput)({ quietTimeoutMinutes })).toBe(accepted);
+    expect(isWatchPullRequestInput({ quietTimeoutMinutes })).toBe(accepted);
   });
 
   it.effect("refuses a credential without the pull-requests capability", () =>
