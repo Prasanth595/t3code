@@ -130,8 +130,8 @@ function extractReleaseNoteSummary(summary: string): ExtractedReleaseNoteItems {
 function extractReleaseNoteItems(note: string | null | undefined): ExtractedReleaseNoteItems {
   if (!note) return { items: [], totalItems: 0 };
 
-  // Generated summaries fold GitHub's full list under <details>.
-  const summaryEnd = note.search(/<details\b/i);
+  // Generated summaries fold GitHub's full list under this exact <details> block.
+  const summaryEnd = note.search(/<details>\s*<summary>\s*Full changelog\s*<\/summary>/i);
   if (summaryEnd >= 0) return extractReleaseNoteSummary(note.slice(0, summaryEnd));
   const items: string[] = [];
   let totalItems = 0;

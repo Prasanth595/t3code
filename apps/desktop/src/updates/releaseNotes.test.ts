@@ -112,6 +112,18 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     ]);
   });
 
+  it("reads handwritten notes with their own <details> as a list", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      "- Older fix\n- Newer fix\n<details><summary>Logs</summary>\n- hidden\n</details>",
+      "1.2.3",
+      "latest",
+    );
+
+    expect(result.releaseNotes).toEqual([
+      { version: "1.2.3", items: ["hidden", "Logs", "Newer fix", "Older fix"], totalItems: 4 },
+    ]);
+  });
+
   it("dates the offered release from the feed and older nightlies by their build day", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [

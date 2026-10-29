@@ -87,6 +87,7 @@ const PullRequestQueryResponse = Schema.Struct({
 const GeneratedNotes = Schema.Struct({ body: Schema.String });
 
 const SummaryResponse = Schema.Struct({
+  status: Schema.String,
   output: Schema.Array(
     Schema.Struct({
       type: Schema.String,
@@ -284,6 +285,8 @@ const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: 
       outputTokens: response.usage?.output_tokens,
     }),
   );
+  // An incomplete response can carry partial text; publishing it would cut the notes short.
+  if (response.status !== "completed") return Option.none<string>();
   const text = response.output
     .flatMap((item) => item.content ?? [])
     .flatMap((part) => (part.type === "output_text" && part.text ? [part.text] : []))
