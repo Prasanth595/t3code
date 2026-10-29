@@ -11,6 +11,7 @@ import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
+  hasThreadAutoSettleSnoozedOnMergeInScope,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
@@ -260,6 +261,51 @@ describe("auto-settlement search availability", () => {
       "settle-snoozed-threads-on-merge",
       "keep-threads-with-pull-requests",
     ]);
+  });
+
+  it("hides snoozed-on-merge search when scoped environments lack the capability", () => {
+    const legacy = environment("legacy", { snoozedOnMerge: false });
+    const scoped = {
+      kind: "environment" as const,
+      environmentIds: [legacy.environmentId],
+    };
+    expect(hasThreadAutoSettleSnoozedOnMergeInScope([legacy, capable], scoped)).toBe(false);
+    const availability = getThreadAutoSettlementSearchAvailability([legacy, capable]);
+    const items = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasThreadAutoSettleSnoozedOnMerge: false,
+    });
+    expect(searchSettings("snoozed merge", items).map((item) => item.id)).not.toContain(
+      "settle-snoozed-threads-on-merge",
+    );
+  });
+
+  it("requires every connected environment in scope to advertise snoozed-on-merge", () => {
+    const scoped = {
+      kind: "all" as const,
+      environmentIds: [
+        capable.environmentId,
+        environment("legacy", { snoozedOnMerge: false }).environmentId,
+      ],
+    };
+    expect(
+      hasThreadAutoSettleSnoozedOnMergeInScope(
+        [capable, environment("legacy", { snoozedOnMerge: false })],
+        scoped,
+      ),
+    ).toBe(false);
+    expect(
+      hasThreadAutoSettleSnoozedOnMergeInScope([capable], {
+        kind: "environment",
+        environmentIds: [capable.environmentId],
+      }),
+    ).toBe(true);
   });
 
   it.each([offline, loading])(

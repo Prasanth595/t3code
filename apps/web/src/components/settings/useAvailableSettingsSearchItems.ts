@@ -11,12 +11,12 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
-import { isConnectedWithConfig } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
+  hasThreadAutoSettleSnoozedOnMergeInScope,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
@@ -45,20 +45,10 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
-  const connectedWithConfig =
-    resolvedScope.kind === "unavailable"
-      ? []
-      : environments.filter(
-          (environment) =>
-            resolvedScope.environmentIds.includes(environment.environmentId) &&
-            isConnectedWithConfig(environment),
-        );
-  const hasThreadAutoSettleSnoozedOnMerge =
-    connectedWithConfig.length > 0 &&
-    connectedWithConfig.every(
-      (environment) =>
-        environment.serverConfig!.environment.capabilities.threadAutoSettleSnoozedOnMerge === true,
-    );
+  const hasThreadAutoSettleSnoozedOnMerge = hasThreadAutoSettleSnoozedOnMergeInScope(
+    environments,
+    resolvedScope,
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;

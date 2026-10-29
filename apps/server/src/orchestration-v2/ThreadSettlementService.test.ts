@@ -462,6 +462,18 @@ describe("autoSettlementSettingsKey", () => {
     });
     assert.notStrictEqual(inherits, never);
   });
+
+  it("changes when snoozed-on-merge is toggled", () => {
+    const off = ThreadSettlementService.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarAutoSettleSnoozedOnMerge: false,
+    });
+    const on = ThreadSettlementService.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarAutoSettleSnoozedOnMerge: true,
+    });
+    assert.notStrictEqual(off, on);
+  });
 });
 
 type AutoSettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }>;
@@ -747,6 +759,102 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("skips a snoozed thread with a merged link until snoozed-on-merge is enabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("snoozed-merged-link", {
+          snoozedAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          snoozedUntil: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+          pullRequests: [
+            {
+              host: "example.test",
+              repository: "owner/repository",
+              number: 42,
+              url: "https://example.test/owner/repository/pull/42",
+              source: "manual",
+              linkedAt: "2026-08-20T00:00:00.000Z",
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+              stack: null,
+            },
+          ],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleSnoozedOnMerge: false,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect(yield* Ref.get(fixture.commands)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles a snoozed thread with a merged link when snoozed-on-merge is enabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("snoozed-merged-link-opt-in", {
+          snoozedAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          snoozedUntil: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+          pullRequests: [
+            {
+              host: "example.test",
+              repository: "owner/repository",
+              number: 42,
+              url: "https://example.test/owner/repository/pull/42",
+              source: "manual",
+              linkedAt: "2026-08-20T00:00:00.000Z",
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+              stack: null,
+            },
+          ],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleSnoozedOnMerge: true,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+            thread.id,
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1480,6 +1588,25 @@ describe("isSnoozed", () => {
         nowMs: NOW_MS,
         autoSettleAfterDays: null,
         autoSettleOnMerge: true,
+        autoSettleSnoozedOnMerge: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("requires merge settlement to be enabled before snoozed-on-merge applies", () => {
+    const thread = shell({
+      ...snoozed,
+      status: "completed",
+      latestRunCompletedAt: at(-DAY_MS),
+    });
+
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: false,
         autoSettleSnoozedOnMerge: true,
       }),
     ).toBeNull();

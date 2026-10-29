@@ -1268,6 +1268,34 @@ interface AutoSettlementSearchEnvironment {
   readonly serverConfig: object | null;
 }
 
+export function hasThreadAutoSettleSnoozedOnMergeInScope(
+  environments: readonly AutoSettlementSearchEnvironment[],
+  scope: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+): boolean {
+  if (scope.kind === "unavailable") {
+    return false;
+  }
+  const connected = environments.filter(
+    (environment) =>
+      scope.environmentIds.includes(environment.environmentId) &&
+      environment.connection.phase === "connected" &&
+      environment.serverConfig !== null,
+  );
+  return (
+    connected.length > 0 &&
+    connected.every((environment) => {
+      const capabilities = (
+        environment.serverConfig as {
+          readonly environment?: {
+            readonly capabilities?: { readonly threadAutoSettleSnoozedOnMerge?: boolean };
+          };
+        }
+      ).environment?.capabilities;
+      return capabilities?.threadAutoSettleSnoozedOnMerge === true;
+    })
+  );
+}
+
 export function getThreadAutoSettlementSearchAvailability(
   environments: readonly AutoSettlementSearchEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
