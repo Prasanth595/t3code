@@ -5759,7 +5759,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "process cwd",
     "launch inline",
     "launch file",
-    "stalled settings",
+    "stalled lookup",
+    "reused endpoint",
+    "reused model",
   ])("uses the matching proxy reset from %s when Claude omits a reset time", (source) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -5797,15 +5799,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const launchSettings = JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hub.test/v1" } });
       if (source === "launch file")
         yield* fs.writeFileString(path.join(cwd, "launch.json"), launchSettings);
-      const readStarted = yield* Deferred.make<void>();
-      let stallSettingsRead = false;
-      const stalledFileSystem = {
-        ...fs,
-        readFileString: (filePath: string) =>
-          stallSettingsRead && filePath === path.join(configDir, "settings.json")
-            ? Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Effect.never))
-            : fs.readFileString(filePath),
-      };
+      const lookupStarted = yield* Deferred.make<void>();
       const harness = yield* makeWakeHarnessWithOptions({
         settings: {
           ...DEFAULT_CLAUDE_SETTINGS,
@@ -5819,11 +5813,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         environment: {
           CLAUDE_CONFIG_DIR: configDir,
           ANTHROPIC_BASE_URL:
-            source === "environment" ? "https://hub.test/v1" : "https://wrong.test",
+            source === "environment" || source.startsWith("reused") || source === "stalled lookup"
+              ? "https://hub.test/v1"
+              : "https://wrong.test",
         },
       }).pipe(
         Effect.provideService(HostProcess.WorkingDirectory, cwd),
-        Effect.provideService(FileSystem.FileSystem, stalledFileSystem),
+        Effect.provide(
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            resolveResetAt: (input) => {
+              assert.equal(input.endpoint, "https://hub.test/v1");
+              assert.equal(input.model, CLAUDE_TEST_MODEL_SELECTION.model);
+              if (source === "stalled lookup")
+                return Deferred.succeed(lookupStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                );
+              return Effect.succeed("2099-01-01T02:00:00.000Z");
+            },
+          }),
+        ),
       );
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
@@ -5836,11 +5844,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
           runtimePolicy: {
             ...CLAUDE_TEST_RUNTIME_POLICY,
-            cwd: source === "process cwd" || source === "stalled settings" ? null : cwd,
+            cwd: source === "process cwd" || source === "stalled lookup" ? null : cwd,
           },
         }),
       );
-      stallSettingsRead = source === "stalled settings";
+      if (source.startsWith("reused")) {
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        if (source === "reused endpoint")
+          yield* fs.writeFileString(
+            path.join(configDir, "settings.json"),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://wrong.test" } }),
+          );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-proxy-continuation"),
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION,
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: configDir },
+            text: "Background task completed.",
+            attachments: [],
+          }),
+        );
+      }
       yield* Queue.offerAll(harness.sdkMessages, [
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
@@ -5854,8 +5885,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           apiErrorStatus: 429,
         }),
       ]);
-      if (source === "stalled settings") {
-        yield* Deferred.await(readStarted);
+      if (source === "stalled lookup") {
+        yield* Deferred.await(lookupStarted);
         yield* TestClock.adjust("15 seconds");
       }
       const terminal = yield* Queue.take(harness.terminalReceipts);
@@ -5864,22 +5895,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(terminal.failure.class, "usage_limit");
       assert.equal(
         terminal.failure.resetAt,
-        source === "stalled settings" ? null : "2099-01-01T02:00:00.000Z",
+        source === "stalled lookup" ? null : "2099-01-01T02:00:00.000Z",
       );
-    }).pipe(
-      Effect.provide([
-        IdAllocator.layer,
-        McpProviderSessions.layer,
-        NodeServices.layer,
-        Layer.mock(UsageLimitSources.UsageLimitSources)({
-          resolveResetAt: (input) => {
-            assert.equal(input.endpoint, "https://hub.test/v1");
-            assert.isNotEmpty(input.model);
-            return Effect.succeed("2099-01-01T02:00:00.000Z");
-          },
-        }),
-      ]),
-    ),
+    }).pipe(Effect.provide([IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer])),
   );
 
   it.effect.each([

@@ -3964,6 +3964,7 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly proxyEndpoint: string | null;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -4379,10 +4380,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
-  const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(
-    function* (context: ActiveClaudeTurnContext) {
+  const resolveProxyEndpoint = Effect.fn("ClaudeAdapterV2.resolveProxyEndpoint")(
+    function* (queryCwd: string | null, launchSettings: ClaudeSdkSettings | undefined) {
       if (Option.isNone(usageLimitSources)) return null;
-      const cwd = context.input.runtimePolicy.cwd ?? workingDirectory;
+      const cwd = queryCwd ?? workingDirectory;
       const localDirectory = yield* localSettingsDirectory(cwd);
       let endpoint = adapterOptions.environment.ANTHROPIC_BASE_URL;
       const settingsPaths = [
@@ -4400,17 +4401,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         );
         endpoint = settings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
       }
-      const launchSettings = yield* readClaudeLaunchArgSettings({
-        settings: adapterOptions.settings,
-        cwd,
-        fileSystem,
-        path,
-      }).pipe(Effect.orElseSucceed(() => undefined));
-      endpoint = launchSettings?.env?.ANTHROPIC_BASE_URL ?? endpoint;
-      if (!endpoint) return null;
+      return launchSettings?.env?.ANTHROPIC_BASE_URL ?? endpoint ?? null;
+    },
+    Effect.timeout("15 seconds"),
+    Effect.orElseSucceed(() => null),
+  );
+
+  const proxyResetAt = Effect.fn("ClaudeAdapterV2.proxyResetAt")(
+    function* (liveQuery: ClaudeLiveQueryContext) {
+      if (Option.isNone(usageLimitSources) || !liveQuery.proxyEndpoint) return null;
       return yield* usageLimitSources.value.resolveResetAt({
-        endpoint,
-        model: compileClaudeModelSelection(context.input.modelSelection).apiModelId,
+        endpoint: liveQuery.proxyEndpoint,
+        model: liveQuery.selection.apiModelId,
       });
     },
     Effect.timeout("15 seconds"),
@@ -9270,7 +9272,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit" &&
               resetAt === null &&
               resultFailure.resetAt == null
-                ? yield* proxyResetAt(context)
+                ? yield* proxyResetAt(liveQuery)
                 : null;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
@@ -10000,6 +10002,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
+          const proxyEndpoint = yield* resolveProxyEndpoint(
+            turnInput.runtimePolicy.cwd,
+            launchArgSettings,
+          );
           const querySession = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
@@ -10037,6 +10043,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
+            proxyEndpoint,
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",
