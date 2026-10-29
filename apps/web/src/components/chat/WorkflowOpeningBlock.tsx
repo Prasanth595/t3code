@@ -1,3 +1,4 @@
+import { PROGRESS_CLASS_NAME } from "../ui/progress";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isTerminalSubagentStatus,
@@ -225,7 +226,7 @@ function WorkflowBudgetMeter({
       </p>
       {budget.limit !== null && budget.limit > 0 && budget.spent !== null ? (
         <progress
-          className="h-1 w-full"
+          className={cn("block h-1 w-full", PROGRESS_CLASS_NAME)}
           aria-label="Recorded workflow token usage"
           value={Math.min(budget.spent, budget.limit)}
           max={budget.limit}
