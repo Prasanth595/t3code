@@ -166,7 +166,11 @@ export function codexDefaultReasoningEffortOverride(model: string): "medium" | u
 }
 
 export function mapCodexModelCapabilities(
-  model: CodexSchema.V2ModelListResponse__Model,
+  model: Pick<
+    CodexSchema.V2ModelListResponse__Model,
+    "model" | "defaultReasoningEffort" | "supportedReasoningEfforts"
+  > &
+    Partial<CodexSchema.V2ModelListResponse__Model>,
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort ===
