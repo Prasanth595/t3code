@@ -89,7 +89,7 @@ describe("collectServerUpdateTargets", () => {
   it("waits for npm only for hosts that install from it or when the release may lack archives", () => {
     const hosts = [
       machine("archive-service", "0.0.41-nightly.20260914.1700", "boot-service"),
-      machine("npm-service", "0.0.41-nightly.20260914.1687", "boot-service"),
+      machine("npm-service", "0.0.41-nightly.20260914.1699", "boot-service"),
       machine("legacy-respawn", "0.1.4-nightly.20261027.3796", "respawn"),
       machine("desktop", "0.1.4-nightly.20261027.3796", "desktop-managed"),
     ];
