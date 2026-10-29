@@ -616,14 +616,20 @@ export function buildBulkUnpinContextMenuItem(input: {
   return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
 }
 
+export const SIDEBAR_THREAD_STATUS_LABELS = {
+  approval: "Needs approval",
+  input: "Needs input",
+  limited: "Usage limit",
+} as const;
+
 export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
     | "Completed"
     | "Failed"
-    | "Pending Approval"
-    | "Awaiting Input"
+    | typeof SIDEBAR_THREAD_STATUS_LABELS.approval
+    | typeof SIDEBAR_THREAD_STATUS_LABELS.input
     | "Guest Request"
     | "Waiting"
     | "Plan Ready";
@@ -633,8 +639,8 @@ export interface ThreadStatusPill {
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 5,
-  "Awaiting Input": 4,
+  [SIDEBAR_THREAD_STATUS_LABELS.approval]: 5,
+  [SIDEBAR_THREAD_STATUS_LABELS.input]: 4,
   "Guest Request": 3.75,
   Failed: 3.5,
   Working: 3,
@@ -1103,7 +1109,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return {
-      label: "Pending Approval",
+      label: SIDEBAR_THREAD_STATUS_LABELS.approval,
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
@@ -1112,7 +1118,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
     return {
-      label: "Awaiting Input",
+      label: SIDEBAR_THREAD_STATUS_LABELS.input,
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,

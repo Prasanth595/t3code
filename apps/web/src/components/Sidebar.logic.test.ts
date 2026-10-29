@@ -260,6 +260,27 @@ describe("resolveSidebarThreadStatus", () => {
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
 
   it("prioritizes awaiting input over a running runtime, below approval", () => {
+    const thread = {
+      ...idle,
+      runtime,
+      hasActionableProposedPlan: false,
+      interactionMode: "default" as const,
+      latestRun: null,
+      blockedOnThreadWait: true,
+    };
+    const inputPill = resolveThreadStatusPill({ thread: { ...thread, hasPendingUserInput: true } });
+    const approvalPill = resolveThreadStatusPill({
+      thread: { ...thread, hasPendingUserInput: true, hasPendingApprovals: true },
+    });
+    expect(inputPill).toMatchObject({ label: "Needs input", pulse: false });
+    expect(approvalPill).toMatchObject({ label: "Needs approval", pulse: false });
+    expect(resolveProjectStatusIndicator([inputPill, approvalPill])).toBe(approvalPill);
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, pendingSubagentRequest: "approval" } }),
+    ).toEqual(approvalPill);
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, pendingSubagentRequest: "user_input" } }),
+    ).toEqual(inputPill);
     expect(
       resolveSidebarThreadStatus({
         ...idle,

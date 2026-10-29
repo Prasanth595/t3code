@@ -14,7 +14,7 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
-import type { SidebarThreadStatus } from "../Sidebar.logic";
+import { SIDEBAR_THREAD_STATUS_LABELS, type SidebarThreadStatus } from "../Sidebar.logic";
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
@@ -61,17 +61,25 @@ export function sidebarThreadTopStatus(input: {
     case "waiting":
       return { label: "Waiting", icon: "waiting", className: "text-muted-foreground" };
     case "approval":
-      return { label: "Needs approval", icon: "approval", className: "text-warning-foreground" };
+      return {
+        label: SIDEBAR_THREAD_STATUS_LABELS.approval,
+        icon: "approval",
+        className: "text-warning-foreground",
+      };
     case "input":
       return {
-        label: "Needs input",
+        label: SIDEBAR_THREAD_STATUS_LABELS.input,
         icon: "input",
         className: "text-indigo-600 dark:text-indigo-300",
       };
     case "request":
       return { label: "Request", icon: "request", className: "text-guest-foreground" };
     case "limited":
-      return { label: "Usage limit", icon: "failed", className: "text-warning-foreground" };
+      return {
+        label: SIDEBAR_THREAD_STATUS_LABELS.limited,
+        icon: "failed",
+        className: "text-warning-foreground",
+      };
     case "failed":
       return { label: "Failed", icon: "failed", className: "text-error-foreground" };
     default:
