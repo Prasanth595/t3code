@@ -3649,7 +3649,7 @@ function providerFailureFromResult(
   identity = "",
 ): OrchestrationV2ProviderFailure | null {
   if (
-    failureHint === undefined &&
+    (failureHint === undefined || usageLimited) &&
     message.subtype === "success" &&
     message.is_error &&
     message.terminal_reason === "api_error"

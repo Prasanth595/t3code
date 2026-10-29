@@ -5812,6 +5812,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, code: "claude_quota_exhausted" },
     { status: 503, code: "claude_quota_unavailable" },
     { status: 429, code: "claude_quota_exhausted" },
+    { status: 429, code: "claude_quota_exhausted", assistantEvidence: true },
   ])("schedules gateway quota recovery for $code ($status)", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -5826,11 +5827,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         }),
       );
+      if (input.assistantEvidence) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000653",
+            error: "rate_limit",
+          }),
+        );
+      }
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000654",
-          result: `API Error: ${input.status} ${input.code}: No Claude account has quota for this model`,
+          result: input.assistantEvidence
+            ? `API Error: ${input.status} ${encodeJsonString({ error: { code: input.code, retryable: true, retry_after_seconds: 60 } })}`
+            : `API Error: ${input.status} ${input.code}: No Claude account has quota for this model`,
           terminalReason: "api_error",
           isError: true,
           apiErrorStatus: input.status,
@@ -5852,6 +5864,59 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : null,
         1,
       );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("restores quota backoff in a fresh adapter and clears it after success", () =>
+    Effect.gen(function* () {
+      let restored: OrchestrationV2ProviderThread | undefined;
+      let previousDelay = 0;
+      for (const attempt of [0, 1, 2]) {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: restored ?? harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`quota-restored-${attempt}`),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: `quota-restored-result-${attempt}`,
+            result: attempt === 2 ? "Finished." : "API Error: 503 claude_quota_exhausted: No quota",
+            ...(attempt === 2
+              ? {}
+              : { terminalReason: "api_error", isError: true, apiErrorStatus: 503 }),
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        const updated = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert(updated?.type === "provider_thread.updated");
+        restored = yield* decodeProviderThreadJson(
+          yield* encodeProviderThreadJson(updated.providerThread),
+        );
+        if (attempt < 2) {
+          assert(terminal.status === "failed");
+          const delay = Date.parse(terminal.failure.retryAt!) - DateTime.toEpochMillis(now);
+          assert.isAbove(delay, previousDelay);
+          assert.equal(restored.nativeMetadata?.claudeQuotaRetryCount, attempt + 1);
+          previousDelay = delay;
+        } else {
+          assert.equal(terminal.status, "completed");
+          assert.equal(restored.nativeMetadata?.claudeQuotaRetryCount, 0);
+        }
+      }
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -6774,6 +6774,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     (
       [
         "resume",
+        "retry-again",
+        "retry-stop-race",
+        "retry-manual",
         "queued-resume",
         "rearm",
         "snooze-race",
@@ -7259,6 +7262,146 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           yield* orchestrator.dispatch(freshResume!);
           yield* orchestrator.dispatch(freshResume!);
           assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        }
+        if (
+          scenario === "retry-again" ||
+          scenario === "retry-stop-race" ||
+          scenario === "retry-manual"
+        ) {
+          yield* orchestrator.dispatch(resume!);
+          const resumed = yield* orchestrator.getThreadProjection(threadId);
+          const continuation = resumed.runs.at(-1)!;
+          const firstError = resumed.turnItems.find((item) => item.type === "error")!;
+          assert(firstError.type === "error");
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          let failedRun = continuation;
+          if (scenario === "retry-manual") {
+            yield* events.write({
+              events: [
+                {
+                  id: EventId.make(`recovery:${deadlineKind}:retry-completed`),
+                  type: "run.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...continuation,
+                    status: "completed",
+                    completedAt: yield* DateTime.now,
+                  },
+                },
+              ],
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId,
+              commandId: CommandId.make(`recovery:${deadlineKind}:manual-after-retry`),
+              messageId: MessageId.make(`recovery:${deadlineKind}:manual-after-retry`),
+              text: "New work.",
+              attachments: [],
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            failedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+          }
+          const failedAt = yield* DateTime.now;
+          const retryAt = DateTime.formatIso(DateTime.add(failedAt, { minutes: 2 }));
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`recovery:${deadlineKind}:${scenario}:retry-failed`),
+                type: "run.updated",
+                threadId,
+                occurredAt: failedAt,
+                payload: { ...failedRun, status: "failed", completedAt: failedAt },
+              },
+              {
+                id: EventId.make(`recovery:${deadlineKind}:${scenario}:retry-error`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: failedAt,
+                payload: {
+                  ...firstError,
+                  id: TurnItemId.make(`recovery:${deadlineKind}:${scenario}:retry-error`),
+                  runId: failedRun.id,
+                  nodeId: failedRun.rootNodeId,
+                  ordinal: firstError.ordinal + 10,
+                  startedAt: failedAt,
+                  completedAt: failedAt,
+                  updatedAt: failedAt,
+                  failure: {
+                    class: "usage_limit",
+                    code: "claude_quota_exhausted",
+                    message: "Waiting for Claude quota.",
+                    retryable: true,
+                    retryAt,
+                  },
+                },
+              },
+            ],
+          });
+          const sweep = { now: yield* DateTime.now, autoResume: false, snooze: false };
+          const candidate = (yield* projections.getLimitRecoveryCandidates(sweep)).find(
+            (row) => row.id === threadId,
+          );
+          if (scenario === "retry-manual") {
+            assert.isUndefined(candidate);
+            return;
+          }
+          assert.isDefined(candidate);
+          const rearm = limitRecoveryCommand(candidate!, false, DateTime.toEpochMillis(sweep.now));
+          assert(rearm?.type === "thread.metadata.update" && rearm.limitRecovery != null);
+          if (scenario === "retry-stop-race") {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              threadId,
+              commandId: CommandId.make(`recovery:${deadlineKind}:stop-retry`),
+            });
+          }
+          yield* orchestrator.autoArmLimitRecovery({
+            commandId: rearm.commandId,
+            threadId,
+            limitRecovery: rearm.limitRecovery,
+          });
+          yield* TestClock.adjust("2 minutes");
+          const due = (yield* projections.getLimitRecoveryCandidates({
+            ...sweep,
+            now: yield* DateTime.now,
+          })).find((row) => row.id === threadId);
+          if (scenario === "retry-stop-race") {
+            assert.isUndefined(due);
+            return;
+          }
+          assert.isDefined(due);
+          const retry = limitRecoveryCommand(
+            due!,
+            false,
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
+          assert(retry?.type === "message.dispatch");
+          yield* orchestrator.dispatch(retry);
+          yield* orchestrator.dispatch(retry);
+          const recovered = yield* orchestrator.getThreadProjection(threadId);
+          assert.lengthOf(recovered.runs, 3);
+          const success = recovered.runs.at(-1)!;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`recovery:${deadlineKind}:retry-success`),
+                type: "run.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...success, status: "completed", completedAt: yield* DateTime.now },
+              },
+            ],
+          });
+          assert.isUndefined(
+            (yield* projections.getLimitRecoveryCandidates({
+              ...sweep,
+              now: yield* DateTime.now,
+            })).find((row) => row.id === threadId),
+          );
+          return;
         }
         const before = yield* orchestrator.getThreadProjection(threadId);
         if (resume !== null) {

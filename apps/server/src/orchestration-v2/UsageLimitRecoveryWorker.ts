@@ -35,7 +35,8 @@ export function limitRecoveryCommand(
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== recoveryAt) {
-    if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
+    const resume = autoResume || (recovery?.runId === thread.latestRunId && recovery.autoResume);
+    if (!resume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
@@ -43,7 +44,7 @@ export function limitRecoveryCommand(
       limitRecovery: {
         runId: thread.latestRunId,
         resetAt: recoveryAt,
-        autoResume,
+        autoResume: resume,
         snooze: snooze && resetMs > nowMs,
       },
     };
