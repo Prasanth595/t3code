@@ -213,4 +213,17 @@ it("does not request bodies for a default-collapsed metadata list until find ope
       collapsedFileKeys,
     }).map(({ target }) => target.input.request.file.path),
   ).toEqual([selected.path]);
+
+  const pairedFiles = [
+    { ...selected, path: "symlink" },
+    { ...selected, path: "symlink" },
+  ];
+  const pairedKeys = reviewFileIdentityKeys(pairedFiles);
+  expect(
+    reviewFileQueries({
+      ...input,
+      source: { ...source, files: pairedFiles },
+      collapsedFileKeys: new Set([pairedKeys[0]!]),
+    }).map(({ index }) => index),
+  ).toEqual([1]);
 });

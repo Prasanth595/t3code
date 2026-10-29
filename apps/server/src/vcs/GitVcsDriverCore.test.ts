@@ -1457,7 +1457,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.fnUntraced(function* (command) {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args.includes("--git-common-dir")
+              command.args.includes("--show-toplevel")
             ) {
               discoveries++;
               yield* Deferred.succeed(discoveryStarted, undefined);
@@ -1487,6 +1487,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fresh = yield* driver.getReviewDiffPreview(input);
         assert.equal(discoveries, 2);
         assert.equal(fresh.sources[1]!.headRef, "feature/fresh-review");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.remove(path.join(cwd, ".git"), { recursive: true });
+        assert.isEmpty((yield* driver.getReviewDiffPreview({ cwd })).sources);
+        yield* git(cwd, ["init", "-b", "replacement"]);
+        yield* initRepoWithCommit(cwd);
+        const replacement = yield* driver.getReviewDiffPreview({ cwd });
+        assert.equal(replacement.sources[1]!.headRef, "replacement");
       }),
     );
 
@@ -1561,9 +1569,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("loads repository-relative files from a nested project directory", () =>
+    it.effect("loads repository-relative files from nested directories and aliases", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
+        const directory = yield* makeTmpDir();
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const platform = yield* HostProcess.Platform;
+        const cwd = path.join(directory, platform === "win32" ? "repository" : "repository\n ");
+        yield* fileSystem.makeDirectory(cwd);
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["checkout", "-b", "feature/nested"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "committed\n");
@@ -1571,27 +1584,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "nested file"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "changed\n");
         yield* writeTextFile(cwd, "untracked.txt", "new\n");
-        const path = yield* Path.Path;
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const nestedCwd = path.join(cwd, "nested");
-        const preview = yield* driver.getReviewDiffPreview({
-          cwd: nestedCwd,
-          baseRef: initialBranch,
-        });
-        assert.equal(
-          preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
-          2,
-        );
-        for (const source of preview.sources) {
-          for (const file of source.files ?? []) {
-            const scoped = yield* driver.getReviewDiffPreview({
-              cwd: nestedCwd,
-              baseRef: initialBranch,
-              file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
-            });
-            const patch = scoped.sources.find((item) => item.kind === source.kind)!;
-            assert.deepStrictEqual(patch.files, [file]);
-            assert.include(patch.diff, `b/${file.path}`);
+        const projectDirectories = [nestedCwd];
+        if (symlinksSupported) {
+          const alias = path.join(directory, "alias");
+          yield* fileSystem.symlink(nestedCwd, alias);
+          projectDirectories.push(alias);
+        }
+        for (const projectDirectory of projectDirectories) {
+          const preview = yield* driver.getReviewDiffPreview({
+            cwd: projectDirectory,
+            baseRef: initialBranch,
+          });
+          assert.equal(
+            preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
+            2,
+          );
+          for (const source of preview.sources) {
+            for (const file of source.files ?? []) {
+              const scoped = yield* driver.getReviewDiffPreview({
+                cwd: projectDirectory,
+                baseRef: initialBranch,
+                file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
+              });
+              const patch = scoped.sources.find((item) => item.kind === source.kind)!;
+              assert.deepStrictEqual(patch.files, [file]);
+              assert.include(patch.diff, `b/${file.path}`);
+            }
           }
         }
       }),
@@ -1755,7 +1775,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "add source file"]);
         yield* git(cwd, ["config", "core.splitIndex", "true"]);
         yield* git(cwd, ["config", "splitIndex.sharedIndexExpire", "now"]);
-        yield* git(cwd, ["update-index", "--split-index"]);
+        yield* git(cwd, ["update-index", "--index-version", "4", "--split-index"]);
         const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
         const indexHashBefore = yield* git(cwd, ["hash-object", indexPath]);
         const gitDirValue = yield* git(cwd, ["rev-parse", "--git-dir"]);
@@ -1773,10 +1793,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
         const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
-        const indexHashAfter = yield* git(cwd, ["hash-object", indexPath]);
-        const sharedIndexesAfter = (yield* fileSystem.readDirectory(gitDir))
-          .filter((entry) => entry.startsWith("sharedindex."))
-          .sort();
 
         const source = preview.sources.find((candidate) => candidate.kind === "working-tree")!;
         assert.deepStrictEqual(source.files, [
@@ -1794,8 +1810,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(diff, "-three");
         assert.include(diff, "+THREE");
         assert.strictEqual(diff.match(/^diff --git /gm)?.length, 1);
-        assert.strictEqual(indexHashAfter, indexHashBefore);
-        assert.deepStrictEqual(sharedIndexesAfter, sharedIndexesBefore);
+        assert.strictEqual(yield* git(cwd, ["hash-object", indexPath]), indexHashBefore);
+        assert.deepStrictEqual(
+          (yield* fileSystem.readDirectory(gitDir))
+            .filter((entry) => entry.startsWith("sharedindex."))
+            .sort(),
+          sharedIndexesBefore,
+        );
       }),
     );
 
@@ -2481,6 +2502,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
 
         yield* Effect.exit(driver.statusDetailsLocal(planted));
+        yield* Effect.exit(driver.getReviewDiffPreview({ cwd: planted }));
         assert.isFalse(yield* fileSystem.exists(pathService.join(planted, "fsmonitor-runs")));
         assert.isTrue((yield* driver.statusDetailsLocal(cwd)).isRepo);
       }),

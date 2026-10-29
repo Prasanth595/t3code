@@ -60,7 +60,7 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
   ]);
-  const queries = reviewFileQueries({
+  const { files, fileKeys, queries } = reviewFileQueryPlan({
     environmentId,
     cwd,
     source,
@@ -77,11 +77,9 @@ export function useReviewFilePatches({
   );
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
-    const files = sortedReviewFiles(source);
-    const query = queries.find(({ index }) => files[index]?.path === path)?.query;
-    if (query) registry.refresh(query);
+    const target = queries.find(({ index }) => files[index]?.path === path)?.target;
+    if (target) registry.refresh(reviewEnvironment.diffFilePatch(target));
   });
-  const files = sortedReviewFiles(source);
   const occurrences = new Map<string, number>();
   const renderableFiles = source
     ? files.map((file, index): FileDiffMetadata => {
@@ -123,11 +121,15 @@ export function useReviewFilePatches({
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
     renderableFiles,
-    fileKeys: reviewFileIdentityKeys(source ? files : renderableFiles),
+    fileKeys: source ? fileKeys : reviewFileIdentityKeys(renderableFiles),
   };
 }
 
-export function reviewFileQueries({
+export function reviewFileQueries(input: Parameters<typeof reviewFileQueryPlan>[0]) {
+  return reviewFileQueryPlan(input).queries;
+}
+
+function reviewFileQueryPlan({
   environmentId,
   cwd,
   source,
@@ -179,9 +181,9 @@ export function reviewFileQueries({
                 },
               },
             };
-            return { index, target, query: reviewEnvironment.diffFilePatch(target) };
+            return { index, target };
           });
-  return queries;
+  return { files, fileKeys, queries };
 }
 
 export function reviewFileIdentityKey(

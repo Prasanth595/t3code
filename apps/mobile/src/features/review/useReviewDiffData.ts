@@ -21,6 +21,7 @@ import type {
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
+import * as Option from "effect/Option";
 import { reviewEnvironment } from "../../state/review";
 
 const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
@@ -32,6 +33,23 @@ const normalizedFiles = new WeakMap<
   ParsedFilePatch,
   { stat: ReviewDiffFileStat; diffHash: string; file: ReviewRenderableFile }
 >();
+
+export function createReviewParsedFilePatchAtom(
+  query: Atom.Atom<AsyncResult.AsyncResult<ReviewDiffPreviewSource, unknown>>,
+) {
+  return Atom.transform(query, (get) => {
+    const previous = Option.flatMap(get.self<ParsedFilePatch>(), AsyncResult.value);
+    return AsyncResult.map(get(query), (source) => ({
+      source,
+      parsed:
+        Option.isSome(previous) &&
+        previous.value.source.diff === source.diff &&
+        previous.value.source.diffHash === source.diffHash
+          ? previous.value.parsed
+          : buildReviewParsedDiff(source.diff, source.diffHash),
+    }));
+  });
+}
 
 function getCachedReviewFile(
   stat: ReviewDiffFileStat,
@@ -188,18 +206,7 @@ export function useReviewDiffData(input: {
           ),
     [environmentId, cwd, lazySource, requestedPaths, scope],
   );
-  const parsedQuery = useMemo(
-    () =>
-      Atom.family((query: ReturnType<typeof reviewEnvironment.diffFilePatch>) =>
-        Atom.map(query, (result) =>
-          AsyncResult.map(result, (source) => ({
-            source,
-            parsed: buildReviewParsedDiff(source.diff, source.diffHash),
-          })),
-        ),
-      ),
-    [],
-  );
+  const parsedQuery = useMemo(() => Atom.family(createReviewParsedFilePatchAtom), []);
   const patches = useAtomValue(
     useMemo(
       () => Atom.make((get) => queries.map((query) => (query ? get(parsedQuery(query)) : null))),

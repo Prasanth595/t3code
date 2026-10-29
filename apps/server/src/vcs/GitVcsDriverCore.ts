@@ -1398,6 +1398,49 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
   });
 
+  const parseWorktreeRoot = (cwd: string, result: GitVcsDriver.ExecuteGitResult) => {
+    // Git terminates --show-toplevel with exactly one "\n" on every platform (stdout is
+    // binary mode on Windows). Whitespace before it belongs to the path and must survive,
+    // because this root becomes the editor target for every repository-relative status path.
+    const output = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+    return result.exitCode === 0 && output.length > 0
+      ? path.normalize(path.isAbsolute(output) ? output : path.resolve(cwd, output))
+      : null;
+  };
+
+  const resolveRepositoryWorktree = Effect.fn("resolveRepositoryWorktree")(function* (cwd: string) {
+    const [worktreeRootResult, currentBranchResult] = yield* Effect.all(
+      [
+        executeGit(
+          "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
+          cwd,
+          ["rev-parse", "--show-toplevel"],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ),
+        executeGit(
+          "GitVcsDriver.resolveRepositoryPaths.currentBranch",
+          cwd,
+          ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ),
+      ],
+      { concurrency: 2 },
+    );
+    const worktreeRoot = parseWorktreeRoot(cwd, worktreeRootResult);
+    const currentBranchOutput = currentBranchResult.stdout.trim();
+    const currentBranch =
+      currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
+        ? currentBranchOutput
+        : null;
+    return { worktreeRoot, currentBranch };
+  });
+
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
@@ -1437,43 +1480,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const gitCommonDir = yield* fileSystem
       .realPath(resolvedGitCommonDir)
       .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
-    const [worktreeRootResult, currentBranchResult] = yield* Effect.all(
-      [
-        executeGit(
-          "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
-          cwd,
-          ["rev-parse", "--show-toplevel"],
-          {
-            timeoutMs: 5_000,
-            allowNonZeroExit: true,
-          },
-        ),
-        executeGit(
-          "GitVcsDriver.resolveRepositoryPaths.currentBranch",
-          cwd,
-          ["symbolic-ref", "--quiet", "--short", "HEAD"],
-          {
-            timeoutMs: 5_000,
-            allowNonZeroExit: true,
-          },
-        ),
-      ],
-      { concurrency: 2 },
-    );
-    // Git terminates --show-toplevel with exactly one "\n" on every platform (stdout is
-    // binary mode on Windows). Whitespace before it belongs to the path and must survive,
-    // because this root becomes the editor target for every repository-relative status path.
-    const worktreeRootOutput = worktreeRootResult.stdout.endsWith("\n")
-      ? worktreeRootResult.stdout.slice(0, -1)
-      : worktreeRootResult.stdout;
-    const worktreeRoot =
-      worktreeRootResult.exitCode === 0 && worktreeRootOutput.length > 0
-        ? path.normalize(
-            path.isAbsolute(worktreeRootOutput)
-              ? worktreeRootOutput
-              : path.resolve(cwd, worktreeRootOutput),
-          )
-        : null;
+    const { worktreeRoot, currentBranch } = yield* resolveRepositoryWorktree(cwd);
     // Git reports physical roots, so resolve project aliases before comparing.
     const isAtRepositoryRoot =
       worktreeRoot === null
@@ -1482,11 +1489,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
-    const currentBranchOutput = currentBranchResult.stdout.trim();
-    const currentBranch =
-      currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
-        ? currentBranchOutput
-        : null;
 
     return {
       gitCommonDir,
@@ -1524,8 +1526,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
   const normalizeRepositoryPathsCacheKey = (cwd: string) => path.normalize(path.resolve(cwd));
+  const resolveReviewRepositoryPaths = Effect.fn("resolveReviewRepositoryPaths")(function* (
+    cwd: string,
+  ) {
+    const repository = yield* resolveRepositoryWorktree(cwd);
+    // Preserve full discovery's bare/non-repository handling and diagnostic classification.
+    return repository.worktreeRoot === null
+      ? yield* resolveRepositoryPathsUncached(cwd)
+      : repository;
+  });
   // Share concurrent readers only; branch switches and repository replacement must remain fresh.
-  const reviewRepositoryPaths = yield* Cache.makeWith(resolveRepositoryPathsUncached, {
+  const reviewRepositoryPaths = yield* Cache.makeWith(resolveReviewRepositoryPaths, {
     capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
     timeToLive: () => Duration.zero,
   });
@@ -2972,12 +2983,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (!indexExists) {
       yield* executeGit("GitVcsDriver.review.emptyIndex", cwd, ["read-tree", "--empty"], { env });
     }
-    yield* executeGit(
-      "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.expandSplitIndex",
-      cwd,
-      [...tempIndexConfig, "update-index", "--no-split-index"],
-      { env },
-    );
     yield* executeGit(
       "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked",
       cwd,
