@@ -58,16 +58,15 @@ vi.mock("../../state/question-attachments", () => ({
 
 import { QuestionAttachments } from "./QuestionAttachments";
 
-const question = {
+const question: UserInputQuestion = {
   id: "colour",
   header: "Colour",
   question: "Which colour?",
   options: [{ label: "Blue", description: "Blue" }],
   multiSelect: false,
-} as unknown as UserInputQuestion;
+};
 
 let root: Root;
-const onChangeText = vi.fn();
 
 // `draft` is what the thread screen passes back; it can lag the input by a render.
 function render(draft: string) {
@@ -79,7 +78,7 @@ function render(draft: string) {
         questions={[question]}
         disabled={false}
         value={draft}
-        onChangeText={onChangeText}
+        onChangeText={() => {}}
       />,
     ),
   );
@@ -98,7 +97,6 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(document.createElement("div"));
   field.props = null;
-  onChangeText.mockClear();
 });
 
 afterEach(() => {

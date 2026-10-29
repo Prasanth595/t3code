@@ -64,18 +64,13 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
-  // The draft comes back through the thread screen's atom after the keystroke, sometimes several
-  // keystrokes late. Writing that older text into the iOS field replaces its marked text, which
-  // ends a 注音 or Pinyin composition. Keep the text local, skip late echoes of text this field
-  // sent, and adopt only outside edits, such as an option tap clearing the answer.
+  // Late draft echoes replace iOS marked text; ignore them while accepting outside edits.
   const [text, setText] = useState(props.value);
   const [previousValue, setPreviousValue] = useState(props.value);
   const [sentValues, setSentValues] = useState<ReadonlySet<string>>(() => new Set());
   if (props.value !== previousValue) {
     setPreviousValue(props.value);
-    if (props.value === text) {
-      setSentValues(new Set());
-    } else if (!sentValues.has(props.value)) {
+    if (props.value === text || !sentValues.has(props.value)) {
       setSentValues(new Set());
       setText(props.value);
     }
