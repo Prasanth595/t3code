@@ -36,6 +36,7 @@ export function QuestionAttachments(props: {
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
   value: string;
+  outsideChange: number;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
@@ -64,6 +65,25 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // Late draft echoes replace iOS marked text; ignore them while accepting outside edits.
+  const [text, setText] = useState(props.value);
+  const [previousValue, setPreviousValue] = useState(props.value);
+  const [previousOutsideChange, setPreviousOutsideChange] = useState(props.outsideChange);
+  const [sentValues, setSentValues] = useState<ReadonlySet<string>>(() => new Set());
+  const outsideChanged = props.outsideChange !== previousOutsideChange;
+  if (props.value !== previousValue || outsideChanged) {
+    setPreviousValue(props.value);
+    setPreviousOutsideChange(props.outsideChange);
+    if (outsideChanged || props.value === text || !sentValues.has(props.value)) {
+      setSentValues(new Set());
+      setText(props.value);
+    }
+  }
+  const changeText = (value: string) => {
+    setSentValues((current) => new Set(current).add(value));
+    setText(value);
+    props.onChangeText(value);
+  };
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -195,11 +215,11 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          value={text}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={changeText}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);

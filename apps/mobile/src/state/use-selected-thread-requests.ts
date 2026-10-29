@@ -73,11 +73,15 @@ function setUserInputDraftOption(
     ...current,
     [requestKey]: {
       ...current[requestKey],
-      [question.id]: togglePendingUserInputOptionSelection(
-        question,
-        seededDraft(current[requestKey], question),
-        value,
-      ),
+      [question.id]: {
+        ...togglePendingUserInputOptionSelection(
+          question,
+          seededDraft(current[requestKey], question),
+          value,
+        ),
+        customAnswerResetVersion:
+          (current[requestKey]?.[question.id]?.customAnswerResetVersion ?? 0) + 1,
+      },
     },
   });
 }
@@ -92,11 +96,14 @@ function setUserInputDraftCustomAnswer(
     ...current,
     [requestKey]: {
       ...current[requestKey],
-      [question.id]: setPendingUserInputCustomAnswer(
-        question,
-        seededDraft(current[requestKey], question),
-        customAnswer,
-      ),
+      [question.id]: {
+        ...setPendingUserInputCustomAnswer(
+          question,
+          seededDraft(current[requestKey], question),
+          customAnswer,
+        ),
+        customAnswerResetVersion: current[requestKey]?.[question.id]?.customAnswerResetVersion ?? 0,
+      },
     },
   });
 }
@@ -198,7 +205,7 @@ export function useSelectedThreadRequests() {
   const preparationCounts = useAtomValue(questionAttachmentPreparationAtom);
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   // Suggested answers are shown until the user edits them; only edits are stored.
-  const activePendingUserInputAnswerDrafts =
+  const activePendingUserInputAnswerDrafts: Record<string, PendingUserInputDraftAnswer> =
     activePendingUserInput && selectedThreadShell
       ? seedUserInputDraftAnswers(
           activePendingUserInput.questions,
@@ -325,7 +332,6 @@ export function useSelectedThreadRequests() {
       !selectedThreadShell ||
       !activePendingUserInput ||
       activePendingUserInput.responseCapability === "not_resumable" ||
-      !activePendingUserInputAnswers ||
       !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
     ) {
       return;
@@ -338,6 +344,18 @@ export function useSelectedThreadRequests() {
       "",
     );
     if (userInputResponsesInFlight.current.has(responseKey)) return;
+    const latestDrafts: Record<string, PendingUserInputDraftAnswer> = {
+      ...seedUserInputDraftAnswers(
+        activePendingUserInput.questions,
+        appAtomRegistry.get(userInputDraftsByRequestKeyAtom)[
+          userInputDraftKey(
+            selectedThreadShell.environmentId,
+            selectedThreadShell.id,
+            activePendingUserInput.requestId,
+          )
+        ] ?? {},
+      ),
+    };
     const attachmentsByQuestionId = new Map<
       string,
       import("@t3tools/contracts").UserInputAttachments[string]
@@ -351,6 +369,21 @@ export function useSelectedThreadRequests() {
       );
       if ((appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0) return;
       const attachments = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments ?? [];
+      const serverConfig = questionServerConfigs.get(selectedThreadShell.environmentId);
+      const uploadInput = {
+        environmentId: selectedThreadShell.environmentId,
+        attachments,
+        serverConfig: serverConfig ?? null,
+        states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+      };
+      latestDrafts[question.id] = {
+        ...latestDrafts[question.id],
+        attachmentCount: attachments.length,
+        attachmentsBlocked:
+          (attachments.length > 0 && serverConfig === undefined) ||
+          composerAttachmentsStillUploading(uploadInput) ||
+          composerAttachmentUploadBlockReason({ ...uploadInput, connected: true }) !== null,
+      };
       if (attachments.length === 0) continue;
       if (
         attachments.some(
@@ -376,6 +409,8 @@ export function useSelectedThreadRequests() {
         })),
       );
     }
+    const answers = buildPendingUserInputAnswers(activePendingUserInput.questions, latestDrafts);
+    if (!answers) return;
     userInputResponsesInFlight.current.add(responseKey);
     setRespondingUserInputId(activePendingUserInput.requestId);
     const result = await respondToUserInput({
@@ -383,7 +418,7 @@ export function useSelectedThreadRequests() {
       input: {
         threadId: selectedThreadShell.id,
         requestId: activePendingUserInput.requestId,
-        answers: activePendingUserInputAnswers,
+        answers,
         ...(attachmentsByQuestionId.size > 0
           ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
           : {}),

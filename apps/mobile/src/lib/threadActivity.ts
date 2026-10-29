@@ -84,6 +84,7 @@ export type PendingUserInput = ThreadPendingUserInput;
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionValues?: ReadonlyArray<string>;
   readonly customAnswer?: string;
+  readonly customAnswerResetVersion?: number;
   readonly attachmentCount?: number;
   readonly attachmentsBlocked?: boolean;
 }
