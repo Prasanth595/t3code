@@ -7449,18 +7449,19 @@ it.layer(layerWorkflowTurnTest)("workflow approval in the runtime composition", 
           if (first._tag !== "Failure") return;
           assert.equal(first.failure.reason, "unavailable");
           yield* click();
-          const sent = (yield* orchestrator.getThreadProjection(threadId)).messages.filter(
-            (message) => message.creationSource === "server",
-          );
+          const delivered = yield* orchestrator.getThreadProjection(threadId);
+          const sent = delivered.messages.filter((message) => message.creationSource === "server");
           assert.lengthOf(sent, 1);
           assert.equal(commandIds[0], commandIds[1]);
-          assert.notEqual(commandIds[1], commandIds[2]);
-          yield* click();
-          const repeated = (yield* orchestrator.getThreadProjection(threadId)).messages.filter(
-            (message) => message.creationSource === "server",
-          );
-          assert.lengthOf(repeated, 1);
-          assert.equal(repeated[0]!.id, sent[0]!.id);
+          assert.equal(commandIds[2], CommandId.make(`${commandIds[0]}:retry:1`));
+          // Later clicks walk the same ids and are answered by the accepted receipt.
+          yield* Effect.all([click(), click()], { concurrency: "unbounded" });
+          const repeated = yield* orchestrator.getThreadProjection(threadId);
+          const resent = repeated.messages.filter((message) => message.creationSource === "server");
+          assert.lengthOf(resent, 1);
+          assert.equal(resent[0]!.id, sent[0]!.id);
+          assert.lengthOf(repeated.runs, delivered.runs.length);
+          assert.deepEqual(new Set(commandIds), new Set(commandIds.slice(0, 3)));
         }),
     );
   }

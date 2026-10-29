@@ -2,7 +2,12 @@ import { expect, it } from "@effect/vitest";
 import { CommandId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { freshCommandId, sendWithFreshId } from "./WorkflowCommandRetry.ts";
+import {
+  freshCommandId,
+  NEXT_ID_ATTEMPTS,
+  sendWithFreshId,
+  sendWithNextId,
+} from "./WorkflowCommandRetry.ts";
 
 const base = CommandId.make("command:workflow-retry:base");
 
@@ -75,5 +80,44 @@ it.effect("mints a different id on every call", () =>
 
     expect(first).not.toBe(second);
     expect(first.startsWith(`${base}:retry:`)).toBe(true);
+  }),
+);
+
+it.effect("walks the same id sequence on every call, so an accepted id answers later calls", () =>
+  Effect.gen(function* () {
+    const rejected = new Set<CommandId>([base]);
+    const { sent, send } = makeSender((commandId) =>
+      rejected.has(commandId) ? { _tag: "OrchestratorCommandPreviouslyRejectedError" } : undefined,
+    );
+
+    expect(yield* sendWithNextId(base, send)).toBe("accepted");
+    expect(yield* sendWithNextId(base, send)).toBe("accepted");
+
+    const next = CommandId.make(`${base}:retry:1`);
+    expect(sent).toEqual([base, next, base, next]);
+  }),
+);
+
+it.effect("returns a refusal that is not tied to the id without moving to the next id", () =>
+  Effect.gen(function* () {
+    const { sent, send } = makeSender(() => ({ _tag: "OrchestratorDispatchError" }));
+
+    const error = yield* Effect.flip(sendWithNextId(base, send));
+
+    expect(error).toEqual({ _tag: "OrchestratorDispatchError" });
+    expect(sent).toEqual([base]);
+  }),
+);
+
+it.effect("stops after a bounded number of spent ids", () =>
+  Effect.gen(function* () {
+    const { sent, send } = makeSender(() => ({
+      _tag: "OrchestratorCommandPreviouslyRejectedError",
+    }));
+
+    const error = yield* Effect.flip(sendWithNextId(base, send));
+
+    expect(error._tag).toBe("OrchestratorCommandPreviouslyRejectedError");
+    expect(sent).toHaveLength(NEXT_ID_ATTEMPTS);
   }),
 );

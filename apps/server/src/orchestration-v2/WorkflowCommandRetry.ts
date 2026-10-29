@@ -1,7 +1,8 @@
 /**
  * A failed decide stores a rejection under the command id, and the dispatcher answers that id the
  * same way for good. Workflow stop and completion are idempotent in the domain, so a spent id can
- * be replaced by a fresh one; this module recognizes a spent id and mints its replacement.
+ * be replaced by a fresh one; this module recognizes a spent id and mints its replacement. A
+ * message is not idempotent, so its replacements follow a fixed sequence instead.
  */
 import { CommandId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -37,3 +38,25 @@ export const sendWithFreshId = Effect.fn("WorkflowCommandRetry.sendWithFreshId")
     Effect.catchIf(isCommandIdSpent, () => Effect.flatMap(freshCommandId(commandId), send)),
   );
 });
+
+/** How many ids `sendWithNextId` walks before it returns the last refusal. */
+export const NEXT_ID_ATTEMPTS = 8;
+
+/**
+ * For commands that must not run twice. When an id is spent, the next send uses the next id in a
+ * fixed sequence (`base`, `base:retry:1`, ...), so every caller walks the same ids: once one is
+ * accepted, a later call reaches it again and is answered from its receipt instead of running.
+ */
+export const sendWithNextId = <A, E extends { readonly _tag: string }, R>(
+  base: CommandId,
+  send: (commandId: CommandId) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => {
+  const attempt = (index: number): Effect.Effect<A, E, R> =>
+    send(index === 0 ? base : CommandId.make(`${base}:retry:${index}`)).pipe(
+      Effect.catchIf(
+        (error) => isCommandIdSpent(error) && index + 1 < NEXT_ID_ATTEMPTS,
+        () => attempt(index + 1),
+      ),
+    );
+  return attempt(0).pipe(Effect.withSpan("WorkflowCommandRetry.sendWithNextId"));
+};
