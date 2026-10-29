@@ -145,24 +145,23 @@ export function countContributors(
   pullRequests: ReadonlyMap<number, PullRequest>,
 ): number {
   const people = new Set<string>();
-  const names = new Set<string>();
-  for (const { author } of pullRequests.values()) {
-    if (!author || author.__typename === "Bot" || author.login.endsWith("[bot]")) continue;
-    people.add(author.login);
-    if (author.name) names.add(author.name);
-  }
   // A PR's squash commit carries its author's git name, which may differ from the profile name.
+  const prAuthorNames = new Set<string>();
+  const directAuthors: string[] = [];
   for (const commit of commits) {
-    if (pullRequestNumber(commit.subject) !== undefined) names.add(commit.authorName);
-  }
-  for (const commit of commits) {
-    if (
-      pullRequestNumber(commit.subject) === undefined &&
-      !commit.authorName.endsWith("[bot]") &&
-      !names.has(commit.authorName)
-    ) {
-      people.add(commit.authorName);
+    const number = pullRequestNumber(commit.subject);
+    const author = number === undefined ? undefined : pullRequests.get(number)?.author;
+    if (!author) {
+      directAuthors.push(commit.authorName);
+      continue;
     }
+    if (author.__typename === "Bot" || author.login.endsWith("[bot]")) continue;
+    people.add(author.login);
+    prAuthorNames.add(commit.authorName);
+    if (author.name) prAuthorNames.add(author.name);
+  }
+  for (const name of directAuthors) {
+    if (!name.endsWith("[bot]") && !prAuthorNames.has(name)) people.add(name);
   }
   return people.size;
 }
