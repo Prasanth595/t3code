@@ -109,6 +109,10 @@ no pending RPC response to send. The
 `user_input_request` turn items and runtime requests with `responseCapability: { type: "message" }`.
 Their execution nodes do not block the run. Web, desktop, and mobile use their normal question
 panels, and requests remain pending after a turn finishes, a provider exits, or the server restarts.
+The agent waits for an answer by calling the interruptible `clock.sleep` tool, so the adapter sets
+`agentWaiting` on the request while a sleep item runs; status surfaces then show the thread waiting
+for input instead of Working. The event sink drops the request's later `pending` repeats once it
+is answered.
 
 `runtime-request.respond` reads the persisted request and question item, validates required
 answers, and commits the resolution and a user message in one transaction. Repeating the same

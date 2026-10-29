@@ -1535,7 +1535,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
-  it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
+  it.effect("marks an asynchronous Codex question awaited while the agent sleeps on it", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "async-question-thread";
@@ -1573,6 +1573,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...(["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              label: `sleep ${method}`,
+              frame: {
+                method,
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622441000,
+                  completedAtMs: 1782622501000,
+                  item: { type: "sleep", id: "sleep-item", durationMs: 60_000 },
+                },
+              },
+            })),
             {
               type: "emit_inbound",
               label: "usage",
@@ -1612,9 +1626,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const requests = harness.events.flatMap((event) =>
           event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
         );
-        assert.lengthOf(requests, 1);
-        assert.equal(requests[0]?.status, "pending");
-        assert.deepEqual(requests[0]?.responseCapability, { type: "message" });
+        assert.deepEqual(
+          requests.map((request) => [request.status, request.responseCapability]),
+          [
+            ["pending", { type: "message" }],
+            ["pending", { type: "message", agentWaiting: true }],
+            ["pending", { type: "message" }],
+          ],
+        );
         const questionItem = harness.events.find(
           (event) =>
             event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
