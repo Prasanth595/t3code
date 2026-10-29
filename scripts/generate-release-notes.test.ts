@@ -1,8 +1,11 @@
 import { assert, it } from "@effect/vitest";
 
+import * as Option from "effect/Option";
+
 import {
   countContributors,
   isReleaseNoteCommit,
+  summaryText,
   type PullRequest,
 } from "./generate-release-notes.ts";
 
@@ -48,4 +51,15 @@ it("leaves mobile-only scopes out and keeps shared ones", () => {
   for (const [subject, kept] of Object.entries(subjects)) {
     assert.equal(isReleaseNoteCommit({ subject, authorName: "" }), kept, subject);
   }
+});
+
+it("uses model text only from a completed response", () => {
+  const output = [
+    { type: "message", content: [{ type: "output_text", text: " ## Highlights\nX " }] },
+  ];
+  assert.deepStrictEqual(
+    summaryText({ status: "completed", output }),
+    Option.some("## Highlights\nX"),
+  );
+  assert.deepStrictEqual(summaryText({ status: "incomplete", output }), Option.none());
 });

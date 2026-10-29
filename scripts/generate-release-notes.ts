@@ -29,10 +29,10 @@ You get the commit subjects merged since the last release, oldest first. Most en
 Output Markdown in exactly this shape and nothing else:
 
 ## Highlights
-2 to 4 short sentences. Name only the new features a user would care about most. Each feature gets a few words that make the benefit clear, not a description of how it works or where the button is.
+Up to 4 short sentences. Name only the new features a user would care about most. If no new feature matters to users, write one sentence about the most important fix. Each feature gets a few words that make the benefit clear, not a description of how it works or where the button is.
 
 ## Fixes
-- 5 to 10 bullets, one fix each, under 10 words, ending with the PR number like (#123).
+- Up to 10 bullets, one fix each, under 10 words, ending with the PR number like (#123). Fewer is fine. Never pad.
 - Each bullet names what was broken and says it works now. A user who hit the bug should recognize it.
 - Only list fixes from fix commits. New abilities go in Highlights or nowhere. Say "again" only if the commit says it.
 
@@ -261,6 +261,17 @@ const readFullChangelog = Effect.fn("generateReleaseNotes.readFullChangelog")(fu
   return (yield* decodeJson(GeneratedNotes)(response)).body;
 });
 
+export function summaryText(response: typeof SummaryResponse.Type): Option.Option<string> {
+  // An incomplete response can carry partial text; publishing it would cut the notes short.
+  if (response.status !== "completed") return Option.none();
+  const text = response.output
+    .flatMap((item) => item.content ?? [])
+    .flatMap((part) => (part.type === "output_text" && part.text ? [part.text] : []))
+    .join("")
+    .trim();
+  return text === "" ? Option.none() : Option.some(text);
+}
+
 const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: string) {
   const apiKey = yield* Config.Redacted("OPENAI_API_KEY");
   const httpClient = yield* HttpClient.HttpClient;
@@ -285,14 +296,7 @@ const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: 
       outputTokens: response.usage?.output_tokens,
     }),
   );
-  // An incomplete response can carry partial text; publishing it would cut the notes short.
-  if (response.status !== "completed") return Option.none<string>();
-  const text = response.output
-    .flatMap((item) => item.content ?? [])
-    .flatMap((part) => (part.type === "output_text" && part.text ? [part.text] : []))
-    .join("")
-    .trim();
-  return text === "" ? Option.none<string>() : Option.some(text);
+  return summaryText(response);
 });
 
 const command = Command.make(

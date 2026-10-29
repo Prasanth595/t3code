@@ -104,7 +104,7 @@ export function SidebarUpdateReleaseNotes({
           if (releaseNote.intro !== undefined) {
             return (
               <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-                {index > 0 ? (
+                {releaseNote.version !== state.availableVersion ? (
                   <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
                     {releaseNote.releasedAt
                       ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
