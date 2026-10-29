@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -19,6 +21,7 @@ import * as Stream from "effect/Stream";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -389,4 +392,42 @@ it.effect("a normal admission pass supersedes the single pending retry", () =>
       assert.equal(yield* Ref.get(failures), initial + 4);
     }),
   ),
+);
+
+it.effect("admits a ready workspace whose waiting update commits after the last slot frees", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* startParent;
+    const first = yield* delegate("running task");
+    const prepared = yield* delegate("ready task", { type: "root" });
+    const { run } = yield* firstRun(prepared);
+    assert.isUndefined(run.delegatedTaskId);
+    assert.isDefined(run.workspacePreparation);
+    yield* stop(first);
+    yield* TestClock.adjust(0);
+    const afterSequence = yield* orchestrator.getThreadEventSequence(prepared);
+    // Commit the release's stale full-limit decision after the terminal admission pass.
+    yield* sink.write({
+      commandId: CommandId.make("release:stale-admission"),
+      events: [
+        {
+          id: EventId.make("event:stale-admission"),
+          driver: ProviderDriverKind.make("codex"),
+          type: "run.updated",
+          threadId: prepared,
+          runId: run.id,
+          nodeId: run.rootNodeId!,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...run, admission: "waiting" },
+        },
+      ],
+    });
+    yield* TestClock.adjust(0);
+    const admitted = yield* firstRun(prepared);
+    assert.equal(admitted.run.status, "starting");
+    assert.equal(admitted.run.admission, "admitted");
+    assert.isAbove(yield* orchestrator.getThreadEventSequence(prepared), afterSequence);
+  }).pipe(Effect.provide(layerTest)),
 );

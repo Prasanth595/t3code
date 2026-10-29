@@ -13773,6 +13773,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ((stored.event.payload.delegatedTaskId !== undefined &&
             (stored.event.payload.status === "queued" ||
               stored.event.payload.status === "starting")) ||
+            (stored.event.payload.status === "preparing" &&
+              stored.event.payload.admission === "waiting" &&
+              stored.event.payload.workspacePreparation !== undefined) ||
             stored.event.payload.status === "waiting" ||
             stored.event.payload.status === "completed" ||
             stored.event.payload.status === "interrupted" ||
