@@ -244,6 +244,7 @@ export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities
 export const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
@@ -295,6 +296,7 @@ export const PullRequestViewerPermissions = Schema.Struct({
   updateMethods: Schema.optional(ForwardCompatibleArray(PullRequestUpdateMethod)),
   labels: Schema.optional(Schema.Boolean),
   editChangeRequest: Schema.optional(Schema.Boolean),
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -589,11 +591,9 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
-  /**
-   * The host would refuse an immediate merge by this viewer over rules beyond conflicts and draft
-   * state, such as unresolved conversations. Absent means the host does not report it.
-   */
+  /** Whether host rules block this viewer's immediate merge. Absent when the host does not report it. */
   mergeBlocked: Schema.optional(Schema.Boolean),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -751,6 +751,7 @@ export const PullRequestUpdateInput = Schema.Struct({
   ...PullRequestRef.fields,
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
   body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestUpdateInput = typeof PullRequestUpdateInput.Type;
 
