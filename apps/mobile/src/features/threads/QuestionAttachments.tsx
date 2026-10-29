@@ -36,6 +36,7 @@ export function QuestionAttachments(props: {
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
   value: string;
+  outsideChange: number;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
@@ -67,10 +68,13 @@ export function QuestionAttachments(props: {
   // Late draft echoes replace iOS marked text; ignore them while accepting outside edits.
   const [text, setText] = useState(props.value);
   const [previousValue, setPreviousValue] = useState(props.value);
+  const [previousOutsideChange, setPreviousOutsideChange] = useState(props.outsideChange);
   const [sentValues, setSentValues] = useState<ReadonlySet<string>>(() => new Set());
-  if (props.value !== previousValue) {
+  const outsideChanged = props.outsideChange !== previousOutsideChange;
+  if (props.value !== previousValue || outsideChanged) {
     setPreviousValue(props.value);
-    if (props.value === text || !sentValues.has(props.value)) {
+    setPreviousOutsideChange(props.outsideChange);
+    if (outsideChanged || props.value === text || !sentValues.has(props.value)) {
       setSentValues(new Set());
       setText(props.value);
     }

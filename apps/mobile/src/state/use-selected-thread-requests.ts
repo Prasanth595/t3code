@@ -73,11 +73,15 @@ function setUserInputDraftOption(
     ...current,
     [requestKey]: {
       ...current[requestKey],
-      [question.id]: togglePendingUserInputOptionSelection(
-        question,
-        seededDraft(current[requestKey], question),
-        value,
-      ),
+      [question.id]: {
+        ...togglePendingUserInputOptionSelection(
+          question,
+          seededDraft(current[requestKey], question),
+          value,
+        ),
+        customAnswerResetVersion:
+          (current[requestKey]?.[question.id]?.customAnswerResetVersion ?? 0) + 1,
+      },
     },
   });
 }
@@ -92,11 +96,14 @@ function setUserInputDraftCustomAnswer(
     ...current,
     [requestKey]: {
       ...current[requestKey],
-      [question.id]: setPendingUserInputCustomAnswer(
-        question,
-        seededDraft(current[requestKey], question),
-        customAnswer,
-      ),
+      [question.id]: {
+        ...setPendingUserInputCustomAnswer(
+          question,
+          seededDraft(current[requestKey], question),
+          customAnswer,
+        ),
+        customAnswerResetVersion: current[requestKey]?.[question.id]?.customAnswerResetVersion ?? 0,
+      },
     },
   });
 }
@@ -198,7 +205,7 @@ export function useSelectedThreadRequests() {
   const preparationCounts = useAtomValue(questionAttachmentPreparationAtom);
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   // Suggested answers are shown until the user edits them; only edits are stored.
-  const activePendingUserInputAnswerDrafts =
+  const activePendingUserInputAnswerDrafts: Record<string, PendingUserInputDraftAnswer> =
     activePendingUserInput && selectedThreadShell
       ? seedUserInputDraftAnswers(
           activePendingUserInput.questions,

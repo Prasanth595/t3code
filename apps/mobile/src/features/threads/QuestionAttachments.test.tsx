@@ -69,7 +69,7 @@ const question: UserInputQuestion = {
 let root: Root;
 
 // `draft` is what the thread screen passes back; it can lag the input by a render.
-function render(draft: string) {
+function render(draft: string, outsideChange = 0) {
   act(() =>
     root.render(
       <QuestionAttachments
@@ -78,6 +78,7 @@ function render(draft: string) {
         questions={[question]}
         disabled={false}
         value={draft}
+        outsideChange={outsideChange}
         onChangeText={() => {}}
       />,
     ),
@@ -147,6 +148,16 @@ describe("QuestionAttachments answer field", () => {
 
     render("a");
     render("");
+    expect(input().value).toBe("");
+
+    type("new answer");
+    render("", 1);
+    expect(input().value).toBe("");
+
+    type("a");
+    type("");
+    type("ab");
+    render("", 2);
     expect(input().value).toBe("");
   });
 });
