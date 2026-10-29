@@ -44,7 +44,7 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
 }
 
-const CROSS_TRACK_NOTE = "Switch tracks from the desktop app: Settings → About → Update track.";
+const CROSS_TRACK_NOTE = "Switch tracks in About → Update track";
 
 /** Hosts refuse a Stable/Nightly crossing outside a track switch, which checks the database first. */
 function refusedCrossing(
