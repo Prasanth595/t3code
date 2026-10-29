@@ -44,8 +44,17 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
 }
 
-// Hosts refuse a Stable/Nightly crossing outside a track switch, which checks the database first.
 const CROSS_TRACK_NOTE = "Switch tracks from the desktop app: Settings → About → Update track.";
+
+/** Hosts refuse a Stable/Nightly crossing outside a track switch, which checks the database first. */
+function refusedCrossing(target: ServerUpdateTarget, serverVersion: string | undefined): boolean {
+  return (
+    target.channel === undefined &&
+    target.selfUpdate !== null &&
+    serverVersion !== undefined &&
+    crossesReleaseTrack(serverVersion, target.targetVersion)
+  );
+}
 
 function CrossTrackNote() {
   return <span className="text-muted-foreground text-xs">{CROSS_TRACK_NOTE}</span>;
@@ -140,12 +149,14 @@ export function ServerUpdatesAction({
   readonly targets: ReadonlyArray<ServerUpdateTarget>;
 }) {
   const update = useServerUpdate();
+  const serverConfigs = useServerConfigs();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
   const eligible = targets.filter(
     (target) =>
       target.selfUpdate !== null &&
-      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
+      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate) &&
+      !refusedCrossing(target, serverConfigs.get(target.environmentId)?.environment.serverVersion),
   );
   const handleUpdate = async () => {
     if (pending.current) return;
@@ -289,10 +300,10 @@ export function ServerUpdateAction({
   }
 
   if (
-    channel === undefined &&
-    selfUpdate !== null &&
-    serverVersion !== undefined &&
-    crossesReleaseTrack(serverVersion, targetVersion)
+    refusedCrossing(
+      { environmentId, serverLabel, selfUpdate, targetVersion, channel },
+      serverVersion,
+    )
   ) {
     return <CrossTrackNote />;
   }
