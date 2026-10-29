@@ -1020,6 +1020,7 @@ it.effect.each([WS_METHODS.terminalOpen, WS_METHODS.terminalAttach])(
       );
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
         Layer.mock(ExternalLauncher.ExternalLauncher)({}),
         Layer.mock(UsageLimitSources.UsageLimitSources)({}),
