@@ -7,7 +7,7 @@ import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
 
 /**
- * Where a notice sits above the composer. The machine comes first, then what needs you; the
+ * Where a notice sits in the stack. The machine comes first, then what needs you; the
  * order is fixed so rows never trade places as notices come and go.
  */
 export type ComposerBannerGroup = "environment" | "attention";
