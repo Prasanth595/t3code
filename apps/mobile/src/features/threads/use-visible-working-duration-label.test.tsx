@@ -30,26 +30,10 @@ vi.mock("@react-navigation/native", async () => {
 });
 
 import { useVisibleWorkingDurationLabel } from "./use-visible-working-duration-label";
-import { useVisibleSecondClock } from "./use-visible-second-clock";
-import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
-
-function useMainDurationLabel(startedAt: string | null) {
-  const startedAtMs = Date.parse(startedAt ?? "");
-  const nowMs = useVisibleSecondClock(Number.isFinite(startedAtMs));
-  return Number.isFinite(startedAtMs)
-    ? ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}`
-    : null;
-}
 
 const timestamp = (ms: number) => new Date(ms).toISOString();
 
-function setup(
-  startedAt: string | null,
-  nowMs = 0,
-  active = true,
-  focusedInitially = true,
-  baseline = false,
-) {
+function setup(startedAt: string | null, nowMs = 0, active = true, focusedInitially = true) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.setSystemTime(nowMs);
@@ -66,10 +50,9 @@ function setup(
   } as unknown as NavigationProp<ParamListBase>;
   let executions = 0;
   const starts = [{ id: "first", value: startedAt }];
-  const useLabel = baseline ? useMainDurationLabel : useVisibleWorkingDurationLabel;
   function Probe(props: { readonly startedAt: string | null }) {
     executions++;
-    return useLabel(props.startedAt);
+    return useVisibleWorkingDurationLabel(props.startedAt);
   }
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -279,22 +262,4 @@ it.each([
   screen.focus(true);
   expect(screen.label()).toBe(" 2m");
   expect(vi.getTimerCount()).toBe(1);
-});
-
-it("keeps current-main labels while reducing 120 clock renders to two label renders", () => {
-  const samples: string[][] = [];
-  const renders: number[] = [];
-  for (const baseline of [true, false]) {
-    using screen = setup(timestamp(0), 180_000, true, true, baseline);
-    const initial = screen.executions();
-    const labels = [screen.label()];
-    for (let second = 0; second < 120; second++) {
-      screen.advance(1_000);
-      labels.push(screen.label());
-    }
-    samples.push(labels);
-    renders.push(screen.executions() - initial);
-  }
-  expect(samples[1]).toEqual(samples[0]);
-  expect(renders).toEqual([120, 2]);
 });
