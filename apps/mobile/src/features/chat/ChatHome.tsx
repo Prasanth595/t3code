@@ -9,6 +9,7 @@ import { useResolveClassNames } from "uniwind";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { EmptyOrb } from "../../components/ui/EmptyOrb";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import { IconButton } from "../../components/ui/IconButton";
@@ -16,6 +17,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { androidHomeFabPosition } from "../home/AndroidHomeFab.shared";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { ThreadAvatar } from "../threads/thread-avatar";
 import { chatListSections, chatPreview, chatTimeLabel } from "./chatList";
 import { miraChatHistory, useMiraChatHistory } from "./miraChat";
 
@@ -76,25 +78,34 @@ function ChatListRow(props: {
             open();
           }}
         >
-          <View className="px-5 py-3">
-            <View className="flex-row items-baseline gap-3">
-              <Text
-                className="min-w-0 flex-1 font-t3-semibold text-base text-foreground"
-                numberOfLines={1}
-              >
-                {chat.title}
-              </Text>
-              <Text className="text-xs tabular-nums text-foreground-tertiary">
-                {chatTimeLabel(chat.updatedAt, props.now)}
-              </Text>
+          <View className="flex-row items-center gap-3.5 px-5 py-3.5">
+            <ThreadAvatar
+              seed={chat.id}
+              title={chat.title}
+              indicator={null}
+              ringClassName="border-screen"
+            />
+            <View className="min-w-0 flex-1">
+              <View className="flex-row items-baseline gap-3">
+                <Text
+                  className="min-w-0 flex-1 font-t3-semibold text-base text-foreground"
+                  numberOfLines={1}
+                >
+                  {chat.title}
+                </Text>
+                <Text className="text-xs tabular-nums text-foreground-tertiary">
+                  {chatTimeLabel(chat.updatedAt, props.now)}
+                </Text>
+              </View>
+              {preview !== "" ? (
+                <Text className="mt-0.5 text-sm text-foreground-secondary" numberOfLines={1}>
+                  <Text className="font-t3-medium text-sm text-foreground-secondary">Tu: </Text>
+                  {preview}
+                </Text>
+              ) : null}
             </View>
-            {preview !== "" ? (
-              <Text className="mt-0.5 text-sm text-foreground-secondary" numberOfLines={2}>
-                {preview}
-              </Text>
-            ) : null}
           </View>
-          {props.last ? null : <View className="ml-5 h-px bg-border-subtle" />}
+          {props.last ? null : <View className="ml-[78px] h-px bg-border-subtle" />}
         </RowPressable>
       )}
     </ThreadSwipeable>
@@ -144,8 +155,9 @@ export function ChatHome() {
           <View className="flex-1 items-center justify-center px-4">
             <EmptyState
               variant="plain"
-              title="Niciun chat încă"
-              detail="Întreabă-o pe Mira orice. Chat-ul merge și fără un calculator conectat."
+              title="Nicio conversație încă"
+              detail="Pornește o conversație nouă."
+              illustration={<EmptyOrb />}
               actionLabel={Platform.OS === "android" ? undefined : "Chat nou"}
               onAction={Platform.OS === "android" ? undefined : newChat}
             />

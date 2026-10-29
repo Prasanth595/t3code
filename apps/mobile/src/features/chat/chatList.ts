@@ -46,9 +46,9 @@ export function chatTimeLabel(updatedAt: string, now: Date): string {
   return at >= startOfDay(now) ? TIME_FORMATTER.format(at) : DATE_FORMATTER.format(at);
 }
 
-/** The latest message as one plain line, with markdown marks and visuals reduced to words. */
+/** Your latest message as one plain line, with markdown marks and visuals reduced to words. */
 export function chatPreview(chat: SaasChatConversation): string {
-  const last = chat.messages.at(-1);
+  const last = chat.messages.findLast((message) => message.role === "user");
   if (last === undefined) return "";
   const text = chatVisualsAsText(last.content)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
