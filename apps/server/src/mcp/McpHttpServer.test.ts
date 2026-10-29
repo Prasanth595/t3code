@@ -1551,13 +1551,19 @@ it.effect.each([false, true])(
         const external: McpInvocationContext.McpInvocationScope = {
           ...provider,
           thread: undefined,
-          client: { sessionId: "external-workflow", label: "External", access: "auto" },
+          client: {
+            sessionId: "external-workflow",
+            label: "External",
+            access: "auto",
+            webOrigin: "https://mcp.example",
+          },
           capabilities: new Set(["orchestration", "workflows"]),
         };
         const Existing = Toolkit.make(
           Tool.make("delegate_task", {
             parameters: OrchestratorMcpDelegateTaskInput,
-            success: Schema.Boolean,
+            success: Schema.String,
+            dependencies: [McpInvocationContext.McpInvocationContext],
           }),
         );
         const Workflow = Toolkit.make(Tool.make("workflow_probe", { success: Schema.Boolean }));
@@ -1565,7 +1571,11 @@ it.effect.each([false, true])(
           McpHttpServer.toolkitRegistration(
             Existing,
             McpToolAccess.toLayer(Existing, {
-              delegate_task: McpToolAccess.reads(() => Effect.succeed(true)),
+              delegate_task: McpToolAccess.reads(() =>
+                Effect.map(McpInvocationContext.McpInvocationContext, (scope) =>
+                  McpInvocationContext.threadLinkFor(scope, threadId),
+                ),
+              ),
             }),
           ),
           McpHttpServer.toolkitRegistration(
@@ -1639,9 +1649,9 @@ it.effect.each([false, true])(
         const externalCall = yield* connect("external-workflow");
         for (const current of [issued, !issued, issued]) {
           yield* settings.updateSettings({ workflows: current });
-          for (const [call, enabled] of [
-            [providerCall, issued],
-            [externalCall, current],
+          for (const [call, enabled, link] of [
+            [providerCall, issued, "<t3-thread://v2/environment-mcp-test/thread-mcp-test>"],
+            [externalCall, current, "https://mcp.example/environment-mcp-test/thread-mcp-test"],
           ] as const) {
             const body = (yield* call("tools/list")) as {
               result: {
@@ -1657,6 +1667,13 @@ it.effect.each([false, true])(
                 body.result.tools.find((tool) => tool.name === "delegate_task")!.inputSchema
                   .properties,
             ).toBe(enabled);
+            const linked = yield* call("tools/call", {
+              name: "delegate_task",
+              arguments: { task: "Read the thread" },
+            });
+            expect(linked).toMatchObject({
+              result: { content: [{ type: "text", text: expect.stringContaining(link) }] },
+            });
             const called = yield* call("tools/call", { name: "workflow_probe", arguments: {} });
             if (enabled)
               expect(called).toMatchObject({
