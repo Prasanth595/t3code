@@ -195,7 +195,12 @@ it.effect.each([false, true])("agent context matches upstream when workflows=%s"
             mcpToolListJsonBytes: 45907,
           },
     );
-    if (!workflows) expect(measured).toEqual(budget);
+    if (!workflows) {
+      expect(
+        measured,
+        "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
+      ).toEqual(budget);
+    }
     const names = mcp.tools
       .filter(
         ({ annotations }) =>
