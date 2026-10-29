@@ -162,7 +162,7 @@ const attributionLayer = (options: StallAttributionOptions) =>
               }
               runFork(
                 Effect.logWarning(
-                  `factory event loop stalled for ${stallMs} ms; kind: ${kind} (cpu ${cpuMs} ms, load ${load1}, major faults ${majorPageFaults})${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}`,
+                  `factory event loop stalled for ${stallMs} ms${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}; kind: ${kind} (cpu ${cpuMs} ms, load ${load1}, major faults ${majorPageFaults})`,
                   {
                     stallMs,
                     profiled,

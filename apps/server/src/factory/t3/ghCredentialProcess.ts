@@ -17,8 +17,9 @@ const hostOf = (args: ReadonlyArray<string>) => {
  * Makes `gh auth token` survive an event-loop stall. Its 10 s timeout is wall-clock, so a
  * stalled loop can use it up while gh has already answered. A timed-out lookup runs once more
  * at 30 s; if that also times out, the output of the last success for the same command and
- * args is reused for up to 30 minutes. Any other failure forgets that output. Every other
- * operation passes through untouched.
+ * args is reused when it is at most 30 minutes old; upstream then caches it for its usual
+ * 5-minute token TTL. Any other failure forgets that output. Every other operation passes
+ * through untouched.
  *
  * The remembered output carries the token: it stays in memory and is never logged.
  */
