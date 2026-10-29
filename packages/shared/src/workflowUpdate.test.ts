@@ -10,6 +10,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import {
   applyWorkflowUpdate,
+  workflowLifecycleUpdate,
   mergeWorkflowPatch,
   workflowPatches,
   workflowJsonBytes,
@@ -39,6 +40,19 @@ const task = (workflow = empty): OrchestrationV2Subagent => ({
   workflow,
 });
 describe("workflow updates", () => {
+  it.each([
+    { progress: "Working" },
+    { completionDelivery: { state: "pending" as const, observedByRunId: null } },
+    { completionWake: "always" as const },
+  ])("keeps a full row when clearing optional lifecycle data: %j", (fields) => {
+    const next = task({ ...empty, revision: 1 });
+    const previous = { ...next, ...fields };
+    expect(workflowLifecycleUpdate(previous, next)).toBeUndefined();
+    const update = workflowLifecycleUpdate(next, previous);
+    expect(update).toBeDefined();
+    expect(applyWorkflowUpdate(next, update!)).toMatchObject(fields);
+  });
+
   it("preserves identities, omission, plan and complete histories across bounded bursts", () => {
     const next: OrchestrationV2SubagentWorkflow = {
       phases: [{ index: 0, title: "Audit" }],

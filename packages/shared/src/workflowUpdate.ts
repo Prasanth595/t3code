@@ -50,7 +50,13 @@ export function workflowLifecycleUpdate(
     updatedAt: _u,
     ...oldRest
   } = previous;
-  if (previous.workflow?.revision === undefined || JSON.stringify(rest) !== JSON.stringify(oldRest))
+  if (
+    previous.workflow?.revision === undefined ||
+    JSON.stringify(rest) !== JSON.stringify(oldRest) ||
+    (previous.progress !== undefined && progress === undefined) ||
+    (previous.completionDelivery !== undefined && completionDelivery === undefined) ||
+    (previous.completionWake !== undefined && completionWake === undefined)
+  )
     return undefined;
   return {
     id: next.id,
