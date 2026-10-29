@@ -485,6 +485,16 @@ function AdhdCard(props: {
   const openThread = () =>
     void router.navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
 
+  const startReply = () => {
+    // A suggested prompt or the question's own default starts as the draft, so a tweak is a small edit.
+    if (reply === "") {
+      setReply(
+        question?.initialAnswer ?? (wantsSuggestions ? (options[selected]?.label ?? "") : ""),
+      );
+    }
+    setReplying(true);
+  };
+
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     // A held key would otherwise answer the next card before it is read.
@@ -505,15 +515,8 @@ function AdhdCard(props: {
     else if (key === "arrowup" && options.length > 0) setHighlight(Math.max(selected - 1, 0));
     else if (key === " " && question?.multiSelect) togglePick(selected);
     else if (key === "e" || key === "enter") accept(selected);
-    else if (key === "r") {
-      // A suggested prompt or the question's own default starts as the draft, so a tweak is a small edit.
-      if (reply === "") {
-        setReply(
-          question?.initialAnswer ?? (wantsSuggestions ? (options[selected]?.label ?? "") : ""),
-        );
-      }
-      setReplying(true);
-    } else if (key === "backspace") snooze();
+    else if (key === "r") startReply();
+    else if (key === "backspace") snooze();
     else if (key === "escape") dismiss();
     else if (key === "o") openThread();
     else return;
@@ -678,12 +681,30 @@ function AdhdCard(props: {
             <Kbd>Space</Kbd> pick
           </span>
         ) : null}
-        <span className="flex items-center gap-1">
+        <button
+          type="button"
+          className="flex items-center gap-1 hover:text-foreground"
+          onClick={() => accept(selected)}
+        >
           <Kbd>E</Kbd> accept
-        </span>
-        <span className="flex items-center gap-1">
-          <Kbd>R</Kbd> reply
-        </span>
+        </button>
+        {replying ? (
+          <button
+            type="button"
+            className="flex items-center gap-1 hover:text-foreground"
+            onClick={sendReply}
+          >
+            <Kbd>Enter</Kbd> send
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="flex items-center gap-1 hover:text-foreground"
+            onClick={startReply}
+          >
+            <Kbd>R</Kbd> reply
+          </button>
+        )}
         <button
           type="button"
           className="flex items-center gap-1 hover:text-foreground"
