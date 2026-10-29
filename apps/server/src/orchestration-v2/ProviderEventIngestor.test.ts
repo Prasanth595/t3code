@@ -236,11 +236,12 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
       const refreshed = yield* Deferred.make<void>();
       const hubResetAt = "2026-10-30T05:00:00.000Z";
       const nativeResetAt = "2026-10-30T03:00:00.000Z";
-      const fallbackDrivers: ProviderDriverKind[] = [];
+      const fallbackLookups: Array<{ instanceId: ProviderInstanceId; driver: ProviderDriverKind }> =
+        [];
       const layerResetFallback = Layer.succeed(UsageLimitSources.UsageLimitResetFallback, {
-        resetAt: (driver) =>
+        resetAt: (lookup) =>
           Effect.sync(() => {
-            fallbackDrivers.push(driver);
+            fallbackLookups.push(lookup);
             return hubResetAt;
           }),
       });
@@ -337,7 +338,9 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           if (failureClass === "validation_error") assert.deepEqual(lookups, []);
         }
         assert.deepEqual(lookups, [instance.instanceId, instance.instanceId]);
-        assert.deepEqual(fallbackDrivers, [instance.driverKind]);
+        assert.deepEqual(fallbackLookups, [
+          { instanceId: instance.instanceId, driver: instance.driverKind },
+        ]);
         yield* Deferred.await(refreshed);
       }).pipe(
         Effect.provide(

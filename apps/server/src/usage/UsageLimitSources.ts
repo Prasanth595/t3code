@@ -4,6 +4,7 @@ import {
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
@@ -197,9 +198,29 @@ export function hubPoolResetAt(
   return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
 }
 
+/** CLIProxyAPI serves agents and management on one address, so an instance uses the hubs it names. */
+export function instanceHubIds(
+  settings: Pick<ServerSettings, "providerInstances" | "usageLimitSources">,
+  instanceId: ProviderInstanceId,
+): ReadonlySet<string> {
+  const instance = settings.providerInstances[instanceId];
+  if (!instance) return new Set();
+  const routing = JSON.stringify([instance.environment ?? [], instance.config ?? null]);
+  return new Set(
+    Object.entries(settings.usageLimitSources).flatMap(([id, config]) => {
+      if (!config.enabled || !URL.canParse(config.url)) return [];
+      const host = new URL(config.url).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`//${host}(?![\\w.:-])`, "i").test(routing) ? [id] : [];
+    }),
+  );
+}
+
 /** Supplies a reset time for usage limits a provider reports without one. */
 export class UsageLimitResetFallback extends Context.Reference<{
-  readonly resetAt: (driver: ProviderDriverKind) => Effect.Effect<string | null>;
+  readonly resetAt: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  }) => Effect.Effect<string | null>;
 }>("t3/usage/UsageLimitResetFallback", {
   defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
 }) {}
@@ -208,12 +229,24 @@ export const layerResetFallback = Layer.effect(
   UsageLimitResetFallback,
   Effect.gen(function* () {
     const sources = yield* UsageLimitSources;
+    const settingsService = yield* Settings.ServerSettingsService;
     return {
-      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver: ProviderDriverKind) {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly driver: ProviderDriverKind;
+      }) {
+        const settings = yield* settingsService.getSettings.pipe(Effect.option);
+        if (settings._tag === "None") return null;
+        const hubIds = instanceHubIds(settings.value, input.instanceId);
+        if (hubIds.size === 0) return null;
         // The terminal waits on this read, so a slow hub falls back to its last snapshot.
         yield* sources.refresh.pipe(Effect.timeoutOption("5 seconds"));
         const now = yield* DateTime.now;
-        return hubPoolResetAt(yield* sources.current, driver, DateTime.toEpochMillis(now));
+        return hubPoolResetAt(
+          (yield* sources.current).filter((source) => hubIds.has(source.id)),
+          input.driver,
+          DateTime.toEpochMillis(now),
+        );
       }),
     };
   }),

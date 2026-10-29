@@ -716,7 +716,10 @@ export const layer: Layer.Layer<
                 : input.event.failure;
               const fallbackResetAt =
                 reported.class === "usage_limit" && reported.resetAt == null
-                  ? yield* usageLimitResets.resetAt(input.event.driver)
+                  ? yield* usageLimitResets.resetAt({
+                      instanceId: input.providerInstanceId,
+                      driver: input.event.driver,
+                    })
                   : null;
               const failure =
                 fallbackResetAt === null ? reported : { ...reported, resetAt: fallbackResetAt };

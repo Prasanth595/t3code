@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
+  ProviderInstanceId,
   ServerConfigStreamEvent,
   UsageLimitSourceId,
   type ServerProviderUsageWindow,
@@ -150,5 +151,50 @@ describe("hubPoolResetAt", () => {
     },
   ])("returns $name", ({ sources, expected }) => {
     expect(UsageLimitSources.hubPoolResetAt(sources, codex, now)).toBe(expected);
+  });
+});
+
+describe("instanceHubIds", () => {
+  const source = (url: string, enabled = true) => ({
+    kind: "cliproxy" as const,
+    url,
+    managementKey: "key",
+    enabled,
+  });
+  const settings = {
+    usageLimitSources: {
+      [UsageLimitSourceId.make("fleet")]: source("https://hub.test:8443/"),
+      [UsageLimitSourceId.make("local")]: source("http://127.0.0.1:8317"),
+      [UsageLimitSourceId.make("off")]: source("https://off.test", false),
+    },
+    providerInstances: {
+      [ProviderInstanceId.make("claudeProxy")]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: [
+          { name: "ANTHROPIC_BASE_URL", value: "https://HUB.test:8443", sensitive: false },
+        ],
+      },
+      [ProviderInstanceId.make("codexProxy")]: {
+        driver: ProviderDriverKind.make("codex"),
+        config: {
+          launchArgs: `-c 'model_providers.p={base_url="http://127.0.0.1:8317/v1"}' https://off.test`,
+        },
+      },
+      [ProviderInstanceId.make("otherPort")]: {
+        driver: ProviderDriverKind.make("codex"),
+        config: { launchArgs: `-c 'model_providers.p={base_url="http://127.0.0.1:83170/v1"}'` },
+      },
+    },
+  };
+
+  it.each([
+    ["claudeProxy", ["fleet"]],
+    ["codexProxy", ["local"]],
+    ["otherPort", []],
+    ["missing", []],
+  ])("matches %s to the enabled hubs its settings name", (instanceId, expected) => {
+    expect([
+      ...UsageLimitSources.instanceHubIds(settings, ProviderInstanceId.make(instanceId)),
+    ]).toEqual(expected);
   });
 });

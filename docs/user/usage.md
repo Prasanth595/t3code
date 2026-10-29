@@ -147,8 +147,10 @@ the provider separately to send agent requests through the hub. Remove the hub f
 settings section when you no longer need it.
 
 CLIProxyAPI does not pass its reset time through Claude Code or Codex. When a Claude or Codex
-turn stops on a usage limit without one, and every account the hub pools for that provider is
-spent, the thread resets when the first of those accounts refills. **Resume at reset**, automatic
+account sends requests through the hub, its environment variables or launch arguments name the
+hub's address. If such an account stops on a usage limit without a reset time, and every account
+the hub pools for that provider is spent, the thread resets when the first of those accounts
+refills. **Resume at reset**, automatic
 resume, and snooze then work as they do for direct subscriptions.
 
 ## Subscription usage widget
