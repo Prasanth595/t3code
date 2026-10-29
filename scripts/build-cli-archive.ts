@@ -269,6 +269,40 @@ const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input:
   }
   yield* fs.makeDirectory(path.join(input.contentDir, "lib"));
   yield* fs.copyFile(source, path.join(input.contentDir, "lib/libatomic.so.1"));
+
+  // libatomic is GPL-3.0-or-later WITH GCC-exception-3.1, so its terms and source travel with it.
+  const owner = yield* spawner.string(
+    ChildProcess.make("dpkg-query", ["-S", yield* fs.realPath(source)]),
+  );
+  const pkg = /^([^:\s]+)(?::[^:\s]+)?: /.exec(owner)?.[1];
+  const versions = pkg
+    ? yield* spawner.string(
+        ChildProcess.make("dpkg-query", [
+          "-W",
+          "-f=${Version} ${source:Package} ${source:Version}",
+          pkg,
+        ]),
+      )
+    : "";
+  const [version, sourcePackage, sourceVersion] = versions.trim().split(" ");
+  if (!pkg || !version || !sourcePackage || !sourceVersion) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: `dpkg package for ${source}`,
+      hint: "The archive copies libatomic's license and source reference from its Ubuntu package.",
+    });
+  }
+  const header = [
+    `libatomic.so.1 is copied from the Ubuntu package ${pkg} ${version}.`,
+    `Source: https://launchpad.net/ubuntu/+source/${sourcePackage}/${sourceVersion}`,
+    "License: GPL-3.0-or-later WITH GCC-exception-3.1. The package copyright file and GPL-3 follow.",
+  ].join("\n");
+  const copyright = yield* fs.readFileString(`/usr/share/doc/${pkg}/copyright`);
+  const gpl3 = yield* fs.readFileString("/usr/share/common-licenses/GPL-3");
+  yield* fs.writeFileString(
+    path.join(input.contentDir, "lib/libatomic.so.1.LICENSE"),
+    `${header}\n\n${copyright}\n${gpl3}`,
+  );
+
   // RUNPATH resolves through symlinks and is not inherited by child processes, unlike LD_LIBRARY_PATH.
   yield* runCommand(
     ChildProcess.make("patchelf", ["--set-rpath", "$ORIGIN/lib", input.executablePath]),
