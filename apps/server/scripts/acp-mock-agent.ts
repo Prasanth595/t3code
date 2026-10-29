@@ -22,6 +22,7 @@ const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
+const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -269,7 +270,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     {
       configId: "mode",
       name: "Mode",
-      category: "mode",
+      category: modeOptionCategory,
       type: "select" as const,
       currentValue: currentModeId,
       options: availableModes.map((mode) => ({

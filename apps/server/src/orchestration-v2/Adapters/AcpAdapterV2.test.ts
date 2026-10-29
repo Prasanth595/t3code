@@ -910,6 +910,13 @@ describe("AcpAdapterV2", () => {
       planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
       buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
     },
+    {
+      // Without a `mode` category, T3 derives no mode state and only the config option switches.
+      modeIds: "Copilot URL collaboration_mode",
+      environment: { T3_ACP_COPILOT_MODES: "1", T3_ACP_MODE_OPTION_CATEGORY: "collaboration_mode" },
+      planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
+      buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    },
   ])(
     "refreshes ACP prompt instructions and native mode when the interaction mode changes ($modeIds mode ids)",
     ({ environment, planModeId, buildModeId }) =>
