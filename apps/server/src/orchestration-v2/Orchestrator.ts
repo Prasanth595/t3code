@@ -393,6 +393,7 @@ export interface OrchestratorV2Shape {
     ReadonlyArray<ThreadId>,
     OrchestratorV2Error
   >;
+  readonly countThreads: () => Effect.Effect<number, OrchestratorV2Error>;
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
     OrchestratorV2Error
@@ -13439,6 +13440,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError(shellProjectionError));
       },
     ),
+    countThreads: Effect.fn("OrchestratorV2.countThreads")(function () {
+      return projectionStore.countThreads().pipe(Effect.mapError(shellProjectionError));
+    }),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));
     }),
