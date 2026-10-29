@@ -1594,6 +1594,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
+        const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         const runtimeRestartRequired = yield* Ref.make(false);
@@ -6574,6 +6575,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
             yield* Ref.set(promptInstructionStates, new Map());
+            yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(providerTurns, new Map());
             yield* Ref.set(snapshot, {
@@ -7279,18 +7281,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
-          if (!isNativeSlashCommand) {
-            prompt.push({
-              type: "text",
-              text: buildRuntimeInstructions({
-                harness: flavor.runtimeHarness ?? driver,
-                model: turnInput.modelSelection.model,
-              }),
-            });
+          const runtimeInstructions = buildRuntimeInstructions({
+            harness: flavor.runtimeHarness ?? driver,
+            model: turnInput.modelSelection.model,
+          });
+          // The agent keeps its own history, so resend only after compaction or when the text changes.
+          const sendRuntimeInstructions =
+            !isNativeSlashCommand &&
+            (compactionMarker !== undefined ||
+              (yield* Ref.get(promptRuntimeInstructions)).get(sessionId) !== runtimeInstructions);
+          if (sendRuntimeInstructions) {
+            prompt.push({ type: "text", text: runtimeInstructions });
           }
           return {
             prompt,
             instructionState: text === messageText ? undefined : instructionState,
+            runtimeInstructions: sendRuntimeInstructions ? runtimeInstructions : undefined,
             compactionMarker,
           };
         });
@@ -7600,6 +7606,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (promptParts?.instructionState === undefined) return current;
                   const updated = new Map(current);
                   updated.set(requestedSessionId, promptParts.instructionState);
+                  return updated;
+                }),
+              ),
+              Effect.tap(() =>
+                Ref.update(promptRuntimeInstructions, (current) => {
+                  if (promptParts?.runtimeInstructions === undefined) return current;
+                  const updated = new Map(current);
+                  updated.set(requestedSessionId, promptParts.runtimeInstructions);
                   return updated;
                 }),
               ),

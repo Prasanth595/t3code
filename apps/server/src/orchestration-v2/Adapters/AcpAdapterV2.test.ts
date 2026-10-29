@@ -416,6 +416,7 @@ function assertReinjectedInstructions(
   assert.include(text, "## T3 Code browser");
   assert.include(text, "T3 Code orchestration");
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
+  assert.include(blocks[1]?.text ?? "", "<runtime_info>");
 }
 
 describe("AcpAdapterV2", () => {
@@ -959,6 +960,7 @@ describe("AcpAdapterV2", () => {
         ordinal: number,
         runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         messageText: string,
+        turnModelSelection: ModelSelection = modelSelection,
       ) {
         yield* runtime.startTurn(
           makeTurnInput({
@@ -969,6 +971,7 @@ describe("AcpAdapterV2", () => {
             now,
             ordinal,
             messageText,
+            modelSelection: turnModelSelection,
           }),
         );
         yield* runtime.events.pipe(
@@ -1006,15 +1009,15 @@ describe("AcpAdapterV2", () => {
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
       assert.include(firstDefault.prompt, "## T3 Code browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
+      assert.include(firstDefault.prompt, "<runtime_info>");
       assert.notInclude(
         firstDefault.methods,
         "session/set_config_option",
         "Build should preserve the agent's advertised mode default",
       );
-      assert.include(
-        (yield* runTurn(3, defaultPolicy, "Second default request.")).prompt,
-        "Second default request.",
-      );
+      const secondDefault = yield* runTurn(3, defaultPolicy, "Second default request.");
+      assert.equal(secondDefault.prompt, "Second default request.");
+      assert.equal(secondDefault.textBlockCount, 1);
 
       const planPolicy = policy("plan");
       const firstPlan = yield* runTurn(4, planPolicy, "Plan this change.");
@@ -1031,6 +1034,12 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
+      const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", {
+        instanceId,
+        model: "composer-2",
+      });
+      assert.equal(switchedModel.textBlockCount, 2);
+      assert.include(switchedModel.prompt, "as composer-2");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1054,7 +1063,7 @@ describe("AcpAdapterV2", () => {
           yield* runTurn("Continue after the second compaction."),
           "Continue after the second compaction.",
         );
-        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+        assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1069,14 +1078,13 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(yield* runTurn("/compact", "failed"), [
           { type: "text", text: "/compact" },
         ]);
-        assert.equal(
-          (yield* runTurn("Continue after failure."))[0]?.text,
-          "Continue after failure.",
-        );
+        assert.deepEqual(yield* runTurn("Continue after failure."), [
+          { type: "text", text: "Continue after failure." },
+        ]);
         assert.deepEqual(yield* runTurn("/compact"), [{ type: "text", text: "/compact" }]);
         assert.deepEqual(yield* runTurn("/repro-skill"), [{ type: "text", text: "/repro-skill" }]);
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
-        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+        assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -3285,9 +3293,11 @@ describe("AcpAdapterV2", () => {
         browserToolsAvailable: false,
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
+        protocolEvents,
         environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
       });
       const adapter = yield* makeAcpAdapterV2({
@@ -3419,6 +3429,15 @@ describe("AcpAdapterV2", () => {
         }
       }
       assert.equal(secondStatus, "completed");
+      const prompts = Array.from(yield* Queue.takeAll(protocolEvents))
+        .filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        )
+        .map(rawProtocolPromptTextBlocks);
+      assert.lengthOf(prompts, 2);
+      // The mock agent reuses its session id, so only the rollback reset resends these notes.
+      assert.include(prompts[1]?.at(-1)?.text ?? "", "<runtime_info>");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
