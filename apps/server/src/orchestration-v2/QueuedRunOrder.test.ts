@@ -47,7 +47,7 @@ describe("queued run delivery order", () => {
     const first = input("first", 0, originalNodeId);
     const second = input("second", 1, originalNodeId);
     const third = input("third", 2, originalNodeId);
-    const batch = [first, second, third];
+    const batch = [third, first, second];
 
     expect(foldedQueuedTurnItems(batch, { id: runId, userMessageId: first.messageId })).toEqual([
       second,
