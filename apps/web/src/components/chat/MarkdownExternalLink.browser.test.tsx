@@ -3,6 +3,7 @@ import { expect, it } from "vite-plus/test";
 import { render } from "../../../test/render";
 import "../../index.css";
 
+import { MarkdownLinkContext } from "./ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./MarkdownExternalLink";
 
 it.each(["plain", "formatted"] as const)(
@@ -19,8 +20,10 @@ it.each(["plain", "formatted"] as const)(
                     host="github.com"
                     plainText={kind === "plain" ? url : null}
                   >
-                    {url}
-                    {kind === "formatted" ? <strong> details</strong> : null}
+                    <MarkdownLinkContext value>
+                      {url}
+                      {kind === "formatted" ? <strong> details</strong> : null}
+                    </MarkdownLinkContext>
                   </MarkdownExternalLinkContent>
                 </a>
               </td>
@@ -40,6 +43,7 @@ it.each(["plain", "formatted"] as const)(
     expect(anchor.getAttribute("href")).toBe(longUrl);
     expect(anchor.textContent).toBe(longUrl + (kind === "formatted" ? " details" : ""));
     expect(anchor.querySelectorAll("*")).toHaveLength(initialElementCount);
+    if (kind === "formatted") expect(anchor.querySelector("strong")?.textContent).toBe(" details");
     expect(table.scrollWidth).toBeLessThanOrEqual(screen.container.firstElementChild!.clientWidth);
   },
 );

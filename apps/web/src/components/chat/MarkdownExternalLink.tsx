@@ -108,7 +108,7 @@ export function MarkdownExternalLinkContent({
 
   return (
     <>
-      <span className="whitespace-nowrap">
+      <span className="[overflow-wrap:anywhere]">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
