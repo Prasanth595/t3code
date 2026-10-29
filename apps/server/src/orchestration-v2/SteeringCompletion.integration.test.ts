@@ -448,6 +448,7 @@ const composerSelection = {
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
   canRestart = false,
+  workflows = false,
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -545,7 +546,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
     ProviderAdapterRegistry.layerSingle(adapter),
-    { runEffectWorker: false },
+    { runEffectWorker: false, configureMcp: workflows, serverSettings: { workflows } },
   );
   const startFirstTurn = Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1163,8 +1164,8 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
   ),
 );
 
-const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
-  const harness = yield* nextTurnSelectionHarness(name);
+const goalHarness = Effect.fn("goalHarness")(function* (name: string, workflows = false) {
+  const harness = yield* nextTurnSelectionHarness(name, false, workflows);
   const send = (id: string, text: string, delivery: "queue" | "auto") =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1374,8 +1375,10 @@ it.effect.each(["next", "/goal ship it"])(
 it.effect("a workflow request promoted into a compaction plans first and waits for approval", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { events, layer, send, read, started, steered, startFirstTurn } =
-        yield* goalHarness("compaction-workflow");
+      const { events, layer, send, read, started, steered, startFirstTurn } = yield* goalHarness(
+        "compaction-workflow",
+        true,
+      );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;

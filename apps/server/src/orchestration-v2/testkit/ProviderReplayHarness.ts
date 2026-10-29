@@ -197,6 +197,7 @@ export function runOrchestratorV2ProviderReplayScenario<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly configureMcp?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -241,6 +242,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly configureMcp?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -277,6 +279,7 @@ export function layerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly configureMcp?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -314,7 +317,8 @@ export function layerWithRegistry<Error>(
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const layerProvidedRegistry = registryLayer.pipe(
-    Layer.provide(Layer.merge(layerContinuationRequests, McpProviderSessions.layer)),
+    // Recorded provider queries predate server MCP; session capabilities still drive turn delivery.
+    Layer.provide(Layer.merge(layerContinuationRequests, Layer.fresh(McpProviderSessions.layer))),
   );
   const layerServerSettings = ServerSettings.layerTest({
     responseStreamingMode: "turn",
@@ -388,7 +392,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
   );
   const layerProviderSessionManagerProvided = ProviderSessionManager.layerWithOptions({
-    configureMcp: false,
+    configureMcp: options.configureMcp ?? false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -398,6 +402,8 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         McpProviderSessions.layer,
         McpSessionRegistryTestkit.layer,
+        layerServerConfig,
+        layerServerSettings,
         layerProviderEventIngestorProvided,
         layerStores,
       ),

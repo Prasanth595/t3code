@@ -259,6 +259,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
       databaseLayer: snapshotDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
+      configureMcp: input.serverSettings?.workflows === true,
       ...(input.serverSettings === undefined ? {} : { serverSettings: input.serverSettings }),
     }),
   );
@@ -337,7 +338,7 @@ describe("workflow trigger on the first turn after a restart", () => {
           resumedPrompts: [input.resumedPrompt, input.secondPrompt ?? SECOND_AFTER_RESTART],
           userMessagesAfterRestart: [input.typed, SECOND_AFTER_RESTART],
           continueThreadsAfterServerUpdate: false,
-          serverSettings: input.serverSettings,
+          serverSettings: { workflows: true, ...input.serverSettings },
         });
         // The stored message is what the person typed; the note is only in the provider prompt.
         assert.deepEqual(userTexts(projection), [

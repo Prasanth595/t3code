@@ -7,7 +7,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
-    issue: ({ threadId, providerInstanceId }) =>
+    issue: ({ threadId, providerInstanceId, browserToolsAvailable, capabilities }) =>
       Effect.succeed({
         config: {
           environmentId: EnvironmentId.make("environment:mcp-test"),
@@ -16,7 +16,8 @@ export const layer = Layer.succeed(
           providerInstanceId,
           endpoint: "http://127.0.0.1/mcp",
           authorizationHeader: `Bearer mcp-test:${threadId}`,
-          browserToolsAvailable: true,
+          browserToolsAvailable: browserToolsAvailable ?? true,
+          ...(capabilities === undefined ? {} : { capabilities }),
         },
       }),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
