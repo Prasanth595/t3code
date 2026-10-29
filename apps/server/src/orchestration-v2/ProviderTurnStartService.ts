@@ -96,6 +96,61 @@ const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
 
+export const nativeInputRunIdsForThread = (input: {
+  readonly acceptedAttempts: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "runId" | "providerThreadId" | "nativeThreadId">
+  >;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
+  readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+  readonly nativeThreadId: string | undefined;
+}) => {
+  const rolledBackRunIds = new Set(
+    input.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+  return new Set(
+    input.acceptedAttempts
+      .filter(
+        (attempt) =>
+          attempt.providerThreadId === input.providerThreadId &&
+          attempt.nativeThreadId !== undefined &&
+          attempt.nativeThreadId === input.nativeThreadId &&
+          !rolledBackRunIds.has(attempt.runId),
+      )
+      .map((attempt) => attempt.runId),
+  );
+};
+
+export const mixedNativeThreadRunIdsForThread = (
+  acceptedAttempts: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "runId" | "providerThreadId" | "nativeThreadId">
+  >,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+) => {
+  const nativeThreadIdsByRunId = new Map<RunId, Set<string>>();
+  const runsWithUnknownNativeThread = new Set<RunId>();
+  for (const attempt of acceptedAttempts) {
+    if (attempt.providerThreadId !== providerThreadId) continue;
+    if (attempt.nativeThreadId === undefined) {
+      runsWithUnknownNativeThread.add(attempt.runId);
+      continue;
+    }
+    const nativeThreadIds = nativeThreadIdsByRunId.get(attempt.runId) ?? new Set<string>();
+    nativeThreadIds.add(attempt.nativeThreadId);
+    nativeThreadIdsByRunId.set(attempt.runId, nativeThreadIds);
+  }
+  return new Set(
+    [...nativeThreadIdsByRunId]
+      .filter(
+        ([runId, nativeThreadIds]) =>
+          nativeThreadIds.size > 1 || runsWithUnknownNativeThread.has(runId),
+      )
+      .map(([runId]) => runId),
+  );
+};
+
+export const isNativeTranscriptHistoryKind = (kind: string) =>
+  kind === "user_message" || kind === "assistant_message" || kind === "command_execution";
+
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
  * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
@@ -348,7 +403,8 @@ export const layer: Layer.Layer<
                           message.id === source.userMessageId &&
                           (isCompactionCommandMessage(message) ||
                             parseGoalCommand(message) !== null),
-                      ))),
+                      )) ||
+                    (source.status === "completed" && handoff.delivery === undefined)),
               ))),
       );
       const nativeForkTransfer = projection.contextTransfers.find(
@@ -856,20 +912,26 @@ export const layer: Layer.Layer<
           (source) =>
             source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
         );
-        const nativeInputRunIds = new Set(
-          acceptedAttempts
-            .filter(
-              (source) =>
-                source.nativeThreadId !== undefined &&
-                source.nativeThreadId === loadedProviderThread.nativeThreadRef?.nativeId,
-            )
-            .map((source) => source.runId),
+        const nativeInputRunIds = nativeInputRunIdsForThread({
+          acceptedAttempts,
+          runs: projection.runs,
+          providerThreadId: providerThread.id,
+          nativeThreadId: loadedProviderThread.nativeThreadRef?.nativeId ?? undefined,
+        });
+        const mixedNativeThreadRunIds = mixedNativeThreadRunIdsForThread(
+          acceptedAttempts,
+          providerThread.id,
         );
         const legacyInputRunIds = new Set(
           acceptedAttempts
             .filter((source) => source.nativeThreadId === undefined)
             .map((source) => source.runId),
         );
+        const nativeThreadHasTurns =
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
         const legacyRecoveredRunIds = new Set(
           projection.runs
             .filter(
@@ -936,6 +998,8 @@ export const layer: Layer.Layer<
           coveredItemIds,
           acceptedAttempts,
           nativeInputRunIds,
+          mixedNativeThreadRunIds,
+          nativeThreadHasTurns,
           legacyInputRunIds,
           missedRuns,
           missedRunIds,
@@ -1248,9 +1312,9 @@ export const layer: Layer.Layer<
         sameNativeThread,
         handoffUsage,
         deliveredItemIds,
-        acceptedAttempts,
         nativeInputRunIds,
-        legacyInputRunIds,
+        mixedNativeThreadRunIds,
+        nativeThreadHasTurns,
         budget,
       } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
@@ -1383,9 +1447,68 @@ export const layer: Layer.Layer<
       );
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
+          const handoffsToDeliver = [...effectiveHandoffs, ...retryHandoff];
+          const canDeferHandoff =
+            sameNativeThread &&
+            nativeThreadHasTurns &&
+            retryHandoff.length === 0 &&
+            handoffsToDeliver.length > 0;
+          const omittedSourceRunIds = new Set(
+            handoffsToDeliver.flatMap((handoff) =>
+              (handoff.history?.omittedItems ?? 0) === 0
+                ? []
+                : projection.runs
+                    .filter(
+                      (source) =>
+                        source.providerThreadId !== null &&
+                        handoff.fromProviderThreadIds.includes(source.providerThreadId) &&
+                        source.ordinal >= handoff.coveredRunOrdinals.from &&
+                        source.ordinal <= handoff.coveredRunOrdinals.to,
+                    )
+                    .map((source) => source.id),
+            ),
+          );
+          const sourceItemsById =
+            canDeferHandoff && omittedSourceRunIds.size > 0
+              ? new Map(
+                  (yield* projectionStore.getTurnStartHistory(input.threadId, [
+                    ...omittedSourceRunIds,
+                  ])).map((item) => [item.id, item] as const),
+                )
+              : new Map<string, OrchestrationV2TurnItem>();
+          const itemIsInNativeThread = (item: {
+            readonly threadId: ThreadId;
+            readonly providerThreadId?: OrchestrationV2TurnItem["providerThreadId"];
+            readonly runId: OrchestrationV2TurnItem["runId"];
+            readonly type?: string;
+            readonly kind?: string;
+          }) =>
+            item.threadId === projection.thread.id &&
+            item.providerThreadId === providerThread.id &&
+            item.runId !== null &&
+            isNativeTranscriptHistoryKind(item.kind ?? item.type ?? "") &&
+            nativeInputRunIds.has(item.runId) &&
+            !mixedNativeThreadRunIds.has(item.runId);
+          const handoffIsAlreadyInNativeThread = (handoff: OrchestrationV2ContextHandoff) => {
+            const history = handoff.history;
+            if (!handoff.fromProviderThreadIds.includes(providerThread.id) || history === undefined)
+              return false;
+            const omittedItemIds = history.omittedItemIds ?? [];
+            return (
+              (history.messages.length > 0 || omittedItemIds.length > 0) &&
+              history.omittedItems === omittedItemIds.length &&
+              history.messages.every(itemIsInNativeThread) &&
+              omittedItemIds.every((itemId) => {
+                const item = sourceItemsById.get(itemId);
+                return item !== undefined && itemIsInNativeThread(item);
+              })
+            );
+          };
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: handoffsToDeliver,
             deferInline: compact || goalCommand,
+            deferIfOverBudget:
+              canDeferHandoff && handoffsToDeliver.every(handoffIsAlreadyInNativeThread),
             providerThread: runningProviderThread,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,
@@ -1500,11 +1623,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+        nativeThreadHasTurns,
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,

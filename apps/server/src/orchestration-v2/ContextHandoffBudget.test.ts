@@ -640,4 +640,32 @@ describe("handoff delivery", () => {
       assert.equal(calls, 0);
     }),
   );
+
+  it.effect("leaves a verified native-thread handoff pending when its wrapper cannot fit", () =>
+    Effect.gen(function* () {
+      let injections = 0;
+      let persists = 0;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 0,
+        deferIfOverBudget: true,
+        alreadyDeliveredItemIds: new Set(),
+        inject: () =>
+          Effect.sync(() => {
+            injections++;
+            return true;
+          }),
+        persist: () =>
+          Effect.sync(() => {
+            persists++;
+          }),
+      });
+
+      yield* result.delivered;
+      assert.equal(result.context, "");
+      assert.equal(injections, 0);
+      assert.equal(persists, 0);
+    }),
+  );
 });
