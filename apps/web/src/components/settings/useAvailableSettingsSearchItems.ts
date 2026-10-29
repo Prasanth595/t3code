@@ -11,7 +11,9 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
-import type { SettingsScopeSearch } from "./settingsScope";
+import { isConnectedWithConfig } from "./scopedSettings";
+import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
+import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
@@ -19,6 +21,8 @@ import {
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
+  const groups = useSettingsProjectGroups();
+  const resolvedScope = resolveSettingsScope(scopeSearch, groups, environments);
   // Explicit booleans keep flags out of the filter cache so environment updates do not rebuild the list.
   const hasEnvironment =
     environments.some((environment) => environment.serverConfig !== null) === true;
@@ -41,10 +45,14 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
-  const connectedWithConfig = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" && environment.serverConfig !== null,
-  );
+  const connectedWithConfig =
+    resolvedScope.kind === "unavailable"
+      ? []
+      : environments.filter(
+          (environment) =>
+            resolvedScope.environmentIds.includes(environment.environmentId) &&
+            isConnectedWithConfig(environment),
+        );
   const hasThreadAutoSettleSnoozedOnMerge =
     connectedWithConfig.length > 0 &&
     connectedWithConfig.every(
