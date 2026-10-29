@@ -25,79 +25,84 @@ interface Growth {
  * Heap growth is approximate: it includes other fibers' allocations and GC, so it names
  * suspects, not culprits. A spike lists what was open or just grew.
  */
-export const make = Effect.fnUntraced(function* (
-  tracer: Tracer.Tracer,
-  heapUsed: () => number = readHeapUsed,
-) {
-  const open = new Map<Tracer.Span, { readonly name: string; readonly startHeap: number }>();
-  const recent: Array<Growth> = [];
-  const samples: Array<number> = [];
-  let cooldown = 0;
+export const make = (tracer: Tracer.Tracer, heapUsed: () => number = readHeapUsed) =>
+  Effect.sync(() => {
+    const open = new Map<
+      Tracer.Span,
+      { readonly name: string; readonly startHeap: number; readonly startTick: number }
+    >();
+    const recent: Array<Growth> = [];
+    const samples: Array<number> = [];
+    let cooldown = 0;
+    let tick = 0;
 
-  const wrapped = Tracer.make({
-    ...(tracer.context === undefined ? {} : { context: tracer.context }),
-    span(options) {
-      const span = tracer.span(options);
-      const startHeap = heapUsed();
-      open.set(span, { name: options.name, startHeap });
-      const end = span.end.bind(span);
-      span.end = (endTime, exit) => {
-        open.delete(span);
-        const growthBytes = heapUsed() - startHeap;
-        if (growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES) {
-          span.attribute("memory.heap_growth_bytes", growthBytes);
-          recent.push({ name: options.name, growthBytes });
-          if (recent.length > RECENT_SPANS) recent.shift();
-        }
-        end(endTime, exit);
-      };
-      return span;
-    },
-  });
+    const wrapped = Tracer.make({
+      ...(tracer.context === undefined ? {} : { context: tracer.context }),
+      span(options) {
+        const span = tracer.span(options);
+        const startHeap = heapUsed();
+        open.set(span, { name: options.name, startHeap, startTick: tick });
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          open.delete(span);
+          const growthBytes = heapUsed() - startHeap;
+          if (growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES) {
+            span.attribute("memory.heap_growth_bytes", growthBytes);
+            recent.push({ name: options.name, growthBytes });
+            if (recent.length > RECENT_SPANS) recent.shift();
+          }
+          end(endTime, exit);
+        };
+        return span;
+      },
+    });
 
-  // Untraced: it runs every second and only emits a span when the heap spikes.
-  const sample = Effect.fnUntraced(function* () {
-    const heap = heapUsed();
-    samples.push(heap);
-    if (samples.length > SPIKE_WINDOW_SAMPLES) samples.shift();
-    if (cooldown > 0) {
-      cooldown--;
-      return;
-    }
-    const growthBytes = heap - Math.min(...samples);
-    if (growthBytes < SPIKE_GROWTH_BYTES) return;
-    cooldown = SPIKE_COOLDOWN_SAMPLES;
-    const suspects = [
-      ...[...open.values()].map(({ name, startHeap }) => ({ name, growthBytes: heap - startHeap })),
-      ...recent,
-    ]
-      .filter((suspect) => suspect.growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES)
-      .toSorted((left, right) => right.growthBytes - left.growthBytes)
-      .slice(0, REPORTED_SPANS)
-      .map(({ name, growthBytes }) => `${name} +${Math.round(growthBytes / MB)} MB`);
-    recent.length = 0;
-    yield* Effect.logWarning(
-      `heap grew ${Math.round(growthBytes / MB)} MB in ${samples.length} s`,
-    ).pipe(
-      Effect.withSpan("server.heap.spike", {
-        root: true,
-        level: "Warn",
-        attributes: {
-          heapUsedMb: Math.round(heap / MB),
-          growthMb: Math.round(growthBytes / MB),
-          suspects,
-        },
-      }),
+    // Untraced: it runs every second and only emits a span when the heap spikes.
+    const sample = Effect.fnUntraced(function* () {
+      const heap = heapUsed();
+      tick++;
+      samples.push(heap);
+      if (samples.length > SPIKE_WINDOW_SAMPLES) samples.shift();
+      if (cooldown > 0) {
+        cooldown--;
+        return;
+      }
+      const growthBytes = heap - Math.min(...samples);
+      if (growthBytes < SPIKE_GROWTH_BYTES) return;
+      cooldown = SPIKE_COOLDOWN_SAMPLES;
+      const suspects = [
+        // Spans open since before the window, such as subscriptions, would claim all of its growth.
+        ...[...open.values()]
+          .filter(({ startTick }) => tick - startTick <= samples.length)
+          .map(({ name, startHeap }) => ({ name, growthBytes: heap - startHeap })),
+        ...recent,
+      ]
+        .filter((suspect) => suspect.growthBytes >= SPAN_GROWTH_ATTRIBUTE_BYTES)
+        .toSorted((left, right) => right.growthBytes - left.growthBytes)
+        .slice(0, REPORTED_SPANS)
+        .map(({ name, growthBytes }) => `${name} +${Math.round(growthBytes / MB)} MB`);
+      recent.length = 0;
+      // A span, not a log: this fiber starts before the server logger is provided.
+      yield* Effect.void.pipe(
+        Effect.withSpan("server.heap.spike", {
+          root: true,
+          level: "Warn",
+          attributes: {
+            heapUsedMb: Math.round(heap / MB),
+            growthMb: Math.round(growthBytes / MB),
+            suspects,
+          },
+        }),
+      );
+    });
+
+    const run: Effect.Effect<void, never, Scope.Scope> = sample().pipe(
+      Effect.andThen(Effect.sleep("1 second")),
+      Effect.forever,
+      Effect.withTracer(wrapped),
+      Effect.forkScoped,
+      Effect.asVoid,
     );
+
+    return { tracer: wrapped, run };
   });
-
-  const run: Effect.Effect<void, never, Scope.Scope> = sample().pipe(
-    Effect.andThen(Effect.sleep("1 second")),
-    Effect.forever,
-    Effect.withTracer(wrapped),
-    Effect.forkScoped,
-    Effect.asVoid,
-  );
-
-  return { tracer: wrapped, run };
-});
