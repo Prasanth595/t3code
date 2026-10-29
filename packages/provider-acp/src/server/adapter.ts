@@ -7634,36 +7634,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
-              Effect.tap(() =>
-                Ref.update(promptInstructionStates, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const updated = new Map(current);
-                  updated.set(requestedSessionId, promptParts.instructionState);
-                  return updated;
-                }),
-              ),
-              Effect.tap(() =>
-                Ref.update(promptRuntimeInstructions, (current) => {
-                  if (promptParts?.runtimeInstructions === undefined) return current;
-                  const updated = new Map(current);
-                  updated.set(requestedSessionId, promptParts.runtimeInstructions);
-                  return updated;
-                }),
-              ),
-              Effect.tap(() =>
-                Ref.update(compactionMarkers, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const observedMarker = promptParts.compactionMarker;
-                  if (
-                    observedMarker === undefined ||
-                    current.get(requestedSessionId) !== observedMarker
-                  )
-                    return current;
-                  const updated = new Map(current);
-                  updated.delete(requestedSessionId);
-                  return updated;
-                }),
-              ),
               // Wire settlement precedes the completion callback's permit request so
               // settled-soft classification can observe the native return even when
               // the completion fiber has not yet set promptSettled under the permit.
@@ -7674,6 +7644,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    // Record delivery only for the current runtime. A replacement can reuse
+                    // this session id after clearing what was sent to it.
+                    yield* Ref.update(promptInstructionStates, (current) => {
+                      if (promptParts?.instructionState === undefined) return current;
+                      const updated = new Map(current);
+                      updated.set(requestedSessionId, promptParts.instructionState);
+                      return updated;
+                    });
+                    yield* Ref.update(promptRuntimeInstructions, (current) => {
+                      if (promptParts?.runtimeInstructions === undefined) return current;
+                      const updated = new Map(current);
+                      updated.set(requestedSessionId, promptParts.runtimeInstructions);
+                      return updated;
+                    });
+                    yield* Ref.update(compactionMarkers, (current) => {
+                      if (promptParts?.instructionState === undefined) return current;
+                      const observedMarker = promptParts.compactionMarker;
+                      if (
+                        observedMarker === undefined ||
+                        current.get(requestedSessionId) !== observedMarker
+                      )
+                        return current;
+                      const updated = new Map(current);
+                      updated.delete(requestedSessionId);
+                      return updated;
+                    });
                     if (context.finalized || followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
