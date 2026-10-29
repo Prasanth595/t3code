@@ -243,11 +243,13 @@ function SelectRow(props: {
 function WebhookFilterRows(props: {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   readonly disabled: boolean;
-  readonly onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
+  readonly onChange: (
+    update: (filters: ReadonlyArray<WebhookFilterDraft>) => ReadonlyArray<WebhookFilterDraft>,
+  ) => void;
 }) {
-  const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
-    props.onChange(
-      props.filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)),
+  const update = (id: WebhookFilterDraft["id"], patch: Partial<WebhookFilterDraft>) =>
+    props.onChange((filters) =>
+      filters.map((filter) => (filter.id === id ? { ...filter, ...patch } : filter)),
     );
   return (
     <>
@@ -260,7 +262,9 @@ function WebhookFilterRows(props: {
               accessibilityLabel={`Remove filter ${index + 1}`}
               disabled={props.disabled}
               hitSlop={8}
-              onPress={() => props.onChange(removeWebhookFilterDraft(props.filters, filter.id))}
+              onPress={() =>
+                props.onChange((filters) => removeWebhookFilterDraft(filters, filter.id))
+              }
               className="active:opacity-70"
             >
               <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
@@ -271,7 +275,7 @@ function WebhookFilterRows(props: {
             value={filter.path}
             placeholder="body.action"
             disabled={props.disabled}
-            onChange={(path) => update(index, { path })}
+            onChange={(path) => update(filter.id, { path })}
           />
           <SelectRow
             label="Test"
@@ -283,7 +287,7 @@ function WebhookFilterRows(props: {
             }))}
             onSelect={(id) => {
               const known = WEBHOOK_FILTER_OPS.find((option) => option.op === id);
-              if (known) update(index, { op: known.op });
+              if (known) update(filter.id, { op: known.op });
             }}
           />
           {filter.op === "exists" ? null : (
@@ -292,7 +296,7 @@ function WebhookFilterRows(props: {
               value={filter.value}
               placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
               disabled={props.disabled}
-              onChange={(value) => update(index, { value })}
+              onChange={(value) => update(filter.id, { value })}
             />
           )}
         </View>
@@ -301,7 +305,13 @@ function WebhookFilterRows(props: {
         <Pressable
           accessibilityRole="button"
           disabled={props.disabled}
-          onPress={() => props.onChange([...props.filters, emptyWebhookFilterDraft()])}
+          onPress={() =>
+            props.onChange((filters) =>
+              filters.length < MAX_WEBHOOK_FILTERS
+                ? [...filters, emptyWebhookFilterDraft()]
+                : filters,
+            )
+          }
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
         >
           <Text textRole="body" className="min-w-0 flex-1 text-foreground">
@@ -613,18 +623,21 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
               if (navigation.isFocused()) navigation.goBack();
             }}
             onChangeEnvironment={(target) => {
-              if (target.environmentId === editor.environmentId) return;
-              setEditor({
-                environmentId: target.environmentId,
-                environmentLabel: target.label,
-                draft: {
-                  ...draftForEnvironment(target.environmentId),
-                  title: editor.draft.title,
-                  prompt: editor.draft.prompt,
-                  schedule: editor.draft.schedule,
-                  enabled: editor.draft.enabled,
-                },
-              });
+              setEditor((current) =>
+                !current || target.environmentId === current.environmentId
+                  ? current
+                  : {
+                      environmentId: target.environmentId,
+                      environmentLabel: target.label,
+                      draft: {
+                        ...draftForEnvironment(target.environmentId),
+                        title: current.draft.title,
+                        prompt: current.draft.prompt,
+                        schedule: current.draft.schedule,
+                        enabled: current.draft.enabled,
+                      },
+                    },
+              );
             }}
           />
         ) : (
@@ -1092,10 +1105,10 @@ function TaskForm({
               <WebhookFilterRows
                 filters={draft.schedule.filters}
                 disabled={saving}
-                onChange={(filters) =>
+                onChange={(update) =>
                   setDraft((current) => ({
                     ...current,
-                    schedule: { ...current.schedule, filters },
+                    schedule: { ...current.schedule, filters: update(current.schedule.filters) },
                   }))
                 }
               />

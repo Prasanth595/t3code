@@ -97,7 +97,10 @@ vi.mock("../../lib/modelOptions", () => ({
   resolveDefaultableModelSelection: () => null,
   resolveNewTaskModelSelection: () => null,
 }));
-vi.mock("../../state/session", () => ({ readEnvironmentScope: () => true }));
+vi.mock("../../state/session", () => ({
+  readEnvironmentScope: () => true,
+  usePreparedConnection: () => ({ _tag: "None" }),
+}));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     scheduledTasksLive: () => ({}),
@@ -212,5 +215,15 @@ describe("scheduled task batched edits", () => {
         schedule: { type: "interval", everyMs: 3_600_000 },
       }),
     });
+  });
+  it("keeps every webhook filter added before React commits", () => {
+    act(() => button("On webhook").click());
+    act(() => {
+      button("Add filter").click();
+      button("Add filter").click();
+    });
+    expect(
+      appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current?.draft.schedule.filters,
+    ).toHaveLength(2);
   });
 });
