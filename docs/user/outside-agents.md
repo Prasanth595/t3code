@@ -110,6 +110,10 @@ runs in the project folder unless you pass `--worktree <base-branch>`. `send`
 never interrupts: a busy thread gets the message as its next turn. Pass `-` as
 the message to read it from stdin.
 
+To pick the model, pass `--provider` and `--model`; add `--effort` for its
+reasoning level, such as `--effort high`. An effort the model does not offer
+fails before the thread starts and lists the ones it does.
+
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.

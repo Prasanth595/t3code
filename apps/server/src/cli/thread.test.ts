@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { type ThreadTools, waitForRun } from "./thread.ts";
+import { resolveEffortOption, type ThreadTools, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -71,5 +71,70 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       runId,
       status: "completed",
     });
+  }),
+);
+
+const capabilities = (models: ReadonlyArray<unknown>) => ({
+  parentThreadId: null,
+  inheritedProviderInstanceId: null,
+  inheritedModel: null,
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  providers: [
+    {
+      providerInstanceId: "claudeAgent",
+      driverKind: "claudeAgent",
+      displayName: null,
+      models,
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+  ],
+  features: {
+    appOwnedSubagents: true,
+    asyncPolling: true,
+    cancellation: true,
+    batchThreadCreation: true,
+    threadManagement: true,
+    incrementalThreadRead: true,
+    scheduledTasks: true,
+    maxBatchThreads: 10,
+  },
+});
+
+const opus = {
+  id: "claude-opus-5-5",
+  options: [
+    { id: "fastMode", values: [false, true] },
+    { id: "effort", values: ["low", "medium", "high"], default: "medium" },
+  ],
+};
+
+it.effect("--effort sets the model's own reasoning option id", () =>
+  Effect.gen(function* () {
+    const { tools } = scriptedTools({ orchestrator_capabilities: [capabilities([opus])] });
+
+    const option = yield* resolveEffortOption(tools, {
+      provider: "claudeAgent",
+      model: "claude-opus-5-5",
+      effort: "high",
+    });
+
+    assert.deepStrictEqual(option, { id: "effort", value: "high" });
+  }),
+);
+
+it.effect("--effort rejects a level the model does not offer", () =>
+  Effect.gen(function* () {
+    const { tools } = scriptedTools({ orchestrator_capabilities: [capabilities([opus])] });
+
+    const error = yield* resolveEffortOption(tools, {
+      provider: "claudeAgent",
+      model: "claude-opus-5-5",
+      effort: "xhigh",
+    }).pipe(Effect.flip);
+
+    assert.strictEqual(error.message, "--effort for claude-opus-5-5 is one of: low, medium, high.");
   }),
 );

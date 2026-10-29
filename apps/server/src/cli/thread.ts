@@ -1,4 +1,5 @@
 import {
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -13,6 +14,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/shared/model";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -306,6 +308,46 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   return containing.project;
 });
 
+/**
+ * Providers name their reasoning option differently (`effort`, `reasoningEffort`,
+ * ...), so the level is checked against the model's catalog entry.
+ */
+export const resolveEffortOption = Effect.fn("cli.thread.resolveEffortOption")(function* (
+  tools: ThreadTools,
+  input: { readonly provider: string; readonly model: string; readonly effort: string },
+) {
+  const capabilities = yield* tools.call(
+    "orchestrator_capabilities",
+    { search: input.model },
+    OrchestratorMcpCapabilitiesResult,
+  );
+  const model = capabilities.providers
+    .find((provider) => provider.providerInstanceId === input.provider)
+    ?.models.find((candidate) => candidate.id === input.model);
+  if (model === undefined) {
+    return yield* new ThreadUsageError({
+      detail: `No model ${input.model} on provider ${input.provider} to set --effort for.`,
+    });
+  }
+  const option = REASONING_EFFORT_OPTION_IDS.map((id) =>
+    model.options?.find(
+      (candidate) =>
+        candidate.id === id && candidate.values.every((value) => typeof value === "string"),
+    ),
+  ).find((candidate) => candidate !== undefined);
+  if (option === undefined) {
+    return yield* new ThreadUsageError({
+      detail: `${input.model} has no reasoning effort to set.`,
+    });
+  }
+  if (!option.values.includes(input.effort)) {
+    return yield* new ThreadUsageError({
+      detail: `--effort for ${input.model} is one of: ${option.values.join(", ")}.`,
+    });
+  }
+  return { id: option.id, value: input.effort };
+});
+
 /** Every item on a timeline view, oldest first. */
 const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   tools: ThreadTools,
@@ -551,6 +593,10 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Model slug. Defaults to the project's default model."),
     Flag.optional,
   ),
+  effort: Flag.String("effort").pipe(
+    Flag.withDescription("Reasoning level, such as low or high. Pass with --model."),
+    Flag.optional,
+  ),
   worktree: Flag.String("worktree").pipe(
     Flag.withDescription(
       "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
@@ -572,6 +618,9 @@ const threadStartCommand = Command.make("start", {
       if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
         return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
       }
+      if (Option.isSome(flags.effort) && Option.isNone(flags.model)) {
+        return yield* new ThreadUsageError({ detail: "--effort needs --provider and --model." });
+      }
       const title = yield* decodeTitle(
         Option.getOrElse(flags.title, () => titleFromMessage(message)),
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
@@ -579,6 +628,22 @@ const threadStartCommand = Command.make("start", {
         flags,
         Effect.fn("cli.thread.start")(function* (tools) {
           const project = yield* resolveProject(tools, flags.project);
+          let modelSelection: Record<string, unknown> | undefined;
+          if (Option.isSome(flags.provider) && Option.isSome(flags.model)) {
+            const selection = { instanceId: flags.provider.value, model: flags.model.value };
+            modelSelection = Option.isSome(flags.effort)
+              ? {
+                  ...selection,
+                  options: [
+                    yield* resolveEffortOption(tools, {
+                      provider: selection.instanceId,
+                      model: selection.model,
+                      effort: flags.effort.value,
+                    }),
+                  ],
+                }
+              : selection;
+          }
           const launched = yield* tools.call(
             "t3_thread_launch",
             {
@@ -586,14 +651,7 @@ const threadStartCommand = Command.make("start", {
               title,
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
-              ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
-                ? {
-                    modelSelection: {
-                      instanceId: flags.provider.value,
-                      model: flags.model.value,
-                    },
-                  }
-                : {}),
+              ...(modelSelection === undefined ? {} : { modelSelection }),
             },
             ThreadLaunchResult,
           );
