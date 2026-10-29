@@ -4645,17 +4645,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Codex agents wait on an async question's answer with the interruptible clock.sleep tool.
         const markAsyncQuestionsAwaited = Effect.fn("CodexAdapterV2.markAsyncQuestionsAwaited")(
           function* (context: ActiveCodexTurnContext, agentWaiting: boolean) {
-            for (const request of context.asyncQuestions.values()) {
+            for (const [id, request] of context.asyncQuestions) {
+              if (
+                request.responseCapability.type === "message" &&
+                (request.responseCapability.agentWaiting === true) === agentWaiting
+              )
+                continue;
+              const runtimeRequest: OrchestrationV2RuntimeRequest = {
+                ...request,
+                responseCapability: agentWaiting
+                  ? { type: "message", agentWaiting }
+                  : { type: "message" },
+              };
+              context.asyncQuestions.set(id, runtimeRequest);
               yield* emitProviderEvent({
                 type: "runtime_request.updated",
                 driver: CODEX_PROVIDER,
                 threadId: context.projectionThreadId,
-                runtimeRequest: {
-                  ...request,
-                  responseCapability: agentWaiting
-                    ? { type: "message", agentWaiting }
-                    : { type: "message" },
-                },
+                runtimeRequest,
               });
             }
           },
@@ -5885,6 +5892,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return false;
               }
               input.context.fileChangeKindsByItem.clear();
+              // Stop or failure can end the turn before the sleep item completes.
+              yield* markAsyncQuestionsAwaited(input.context, false);
               input.context.asyncQuestions.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
                 const retry = current.get(input.context.providerTurnId);
