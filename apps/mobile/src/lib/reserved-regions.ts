@@ -23,6 +23,21 @@ export interface NativeLayoutMetrics {
   readonly bottomBarInset?: number;
 }
 
+export function deriveContentSideInsets(metrics: NativeLayoutMetrics | null) {
+  if (!metrics) return { left: 0, right: 0 };
+  let left = metrics.safeArea.left;
+  let right = metrics.width - metrics.safeArea.right;
+  for (const region of metrics.reservedRegions) {
+    if (region.kind !== "division" || region.height < metrics.height / 2) continue;
+    const x = Math.max(left, region.x);
+    const endX = Math.min(right, region.x + region.width);
+    if (endX <= x || x <= left || endX >= right) continue;
+    if (right - endX >= x - left) left = endX;
+    else right = x;
+  }
+  return { left, right: metrics.width - right };
+}
+
 export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
   if (!metrics) return { left: 0, right: 0, bottom: 0 };
   let left = metrics.safeArea.left;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "./reserved-regions";
+import {
+  deriveBottomControlInsets,
+  deriveContentSideInsets,
+  type NativeLayoutMetrics,
+} from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
 
 const innerDisplay: NativeLayoutMetrics = {
@@ -62,6 +66,47 @@ describe("bottom controls around reserved regions", () => {
         ],
       }),
     ).toEqual({ left: 68, right: 72, bottom: 0 });
+  });
+});
+
+describe("content side insets around reserved regions", () => {
+  it("keeps transcript text on the wider side of a book fold", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [{ kind: "division", x: 456, y: 0, width: 48, height: 560 }],
+      }),
+    ).toEqual({ left: 8, right: 504 });
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 800,
+        reservedRegions: [{ kind: "division", x: 240, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 280, right: 72 });
+  });
+
+  it("keeps only the safe area when a native column already ends at the division", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 456,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 455.75, y: 0, width: 0.25, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 0 });
+  });
+
+  it("ignores a horizontal fold and bottom cameras", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [
+          { kind: "division", x: 0, y: 240, width: 960, height: 40 },
+          { kind: "occlusion", x: 8, y: 510, width: 60, height: 50 },
+        ],
+      }),
+    ).toEqual({ left: 8, right: 72 });
   });
 });
 
