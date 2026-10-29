@@ -86,6 +86,12 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
+const INPUT_STATUS_LABEL: StatusLabel = {
+  label: "Input",
+  icon: "questionmark.bubble",
+  className: "text-adaptive-indigo-600-300",
+  iconTintClassName: "accent-adaptive-indigo-600-300",
+};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -93,12 +99,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
-  input: {
-    label: "Input",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
+  input: INPUT_STATUS_LABEL,
   request: {
     label: "Request",
     icon: "person.crop.circle",
@@ -1131,6 +1132,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
                 ) : null}
               </Text>
+              {thread.hasPendingAsyncQuestion === true ? (
+                <SymbolView
+                  name={INPUT_STATUS_LABEL.icon}
+                  size={13}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.iconTintClassName
+                      : INPUT_STATUS_LABEL.iconTintClassName
+                  }
+                  type="monochrome"
+                  weight="semibold"
+                />
+              ) : null}
             </View>
           ) : (
             <Text

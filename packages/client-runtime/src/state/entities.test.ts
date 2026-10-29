@@ -40,6 +40,7 @@ describe("V2 client presentation", () => {
     };
     const active = presentThreadShell(environmentId, running);
     expect(active.hasPendingUserInput).toBe(false);
+    expect(active.hasPendingAsyncQuestion).toBe(true);
     expect(isThreadWorking(active)).toBe(true);
     expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
 
@@ -49,6 +50,7 @@ describe("V2 client presentation", () => {
       status: "completed",
     });
     expect(completed.hasPendingUserInput).toBe(true);
+    expect(completed.hasPendingAsyncQuestion).toBe(false);
     expect(isThreadWorking(completed)).toBe(false);
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
@@ -68,6 +70,7 @@ describe("V2 client presentation", () => {
         },
       });
       expect(shell.hasPendingUserInput).toBe(true);
+      expect(shell.hasPendingAsyncQuestion).toBe(false);
       expect(isThreadWorking(shell)).toBe(false);
     }
   });

@@ -531,6 +531,21 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
+const INPUT_STATUS = {
+  label: "Input",
+  icon: "input",
+  className: "text-indigo-600 dark:text-indigo-300",
+} as const;
+
+function AsyncQuestionMarker(props: { className: string }) {
+  return (
+    <TopStatusIcon
+      icon={INPUT_STATUS.icon}
+      className={cn(INPUT_STATUS.className, props.className)}
+    />
+  );
+}
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
@@ -740,11 +755,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className: "text-warning-foreground",
             }
           : status === "input"
-            ? {
-                label: "Input",
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
+            ? INPUT_STATUS
             : status === "request"
               ? {
                   label: "Request",
@@ -777,6 +788,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                       : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const showsAsyncQuestion = thread.hasPendingAsyncQuestion === true && !isWokeStatus;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -997,7 +1009,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel:
+      topStatus && showsAsyncQuestion
+        ? `${topStatus.label}, question waiting`
+        : (topStatus?.label ?? null),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1305,6 +1320,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       >
                         <TopStatusIcon icon={topStatus.icon} className="size-3" />
                         {topStatus.label}
+                        {showsAsyncQuestion ? <AsyncQuestionMarker className="size-3" /> : null}
                       </span>
                     ) : (
                       <span className="text-xs">
@@ -1496,6 +1512,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                               <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
                             </span>
                           ) : null}
+                          {showsAsyncQuestion ? <AsyncQuestionMarker className="size-4" /> : null}
                         </span>
                       )
                     ) : (

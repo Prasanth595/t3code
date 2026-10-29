@@ -158,6 +158,8 @@ export interface EnvironmentThreadShell {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /** An async question the agent keeps working past; the thread stays Working. */
+  readonly hasPendingAsyncQuestion?: boolean;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
@@ -282,6 +284,9 @@ export function presentThreadShell(
     runtime?.status === "preparing" ||
     runtime?.status === "starting" ||
     runtime?.status === "running";
+  const hasPendingQuestion = thread.pendingRuntimeRequest?.kind === "user_input";
+  const questionHoldsThread =
+    hasPendingQuestion && (thread.pendingRuntimeRequest?.blocking !== false || !runtimeIsWorking);
   return {
     environmentId,
     id: thread.id,
@@ -315,9 +320,8 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput:
-      thread.pendingRuntimeRequest?.kind === "user_input" &&
-      (thread.pendingRuntimeRequest.blocking !== false || !runtimeIsWorking),
+    hasPendingUserInput: questionHoldsThread,
+    hasPendingAsyncQuestion: hasPendingQuestion && !questionHoldsThread,
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
