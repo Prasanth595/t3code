@@ -316,9 +316,10 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     const devices = byPlatform.flatMap((entry) => entry ?? []);
     // A platform with nothing to offer is usually its workers reconnecting; caching that would
     // hide it for the TTL, so only a catalog with devices on every platform is kept.
-    catalog = byPlatform.every((entry) => entry === null || entry.length > 0)
-      ? { at: now, devices }
-      : null;
+    catalog =
+      devices.length > 0 && byPlatform.every((entry) => entry === null || entry.length > 0)
+        ? { at: now, devices }
+        : null;
     return devices;
   });
 

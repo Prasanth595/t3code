@@ -323,6 +323,8 @@ describe("Simlock device host", () => {
       const scope = yield* Scope.make();
       const host = yield* makeHost(pool, config(), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
+      pool.setCatalog({ platforms: [] });
+      expect((yield* ready.devices.list).devices).toEqual([]);
       // Mid-reconnect, the gateway knows the Android models but no worker that makes them.
       pool.setCatalog({
         platforms: [
