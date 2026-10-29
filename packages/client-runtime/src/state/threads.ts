@@ -230,7 +230,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     retained?.sequence ??
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
   const initialState: EnvironmentThreadState = retained
-    ? { ...cachedThreadState(retained.state), sequence: initialSequence }
+    ? cachedThreadState(retained.state)
     : {
         data: cachedThread,
         status: statusWithoutLiveData(cachedThread),
@@ -801,7 +801,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ),
           );
           if (result._tag !== "loaded") return result;
-          if (complete) yield* remember;
+          if (complete) yield* applyLock.withPermits(1)(remember);
           nextCursor = keepPaging ? page.nextCursor : null;
         }
         if (nextCursor === null) return { _tag: "loaded" } as const;
