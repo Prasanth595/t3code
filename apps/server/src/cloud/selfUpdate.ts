@@ -20,7 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 
-import { CLI_RELEASE_BASE_URL_ENV, cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
+import { CLI_RELEASE_BASE_URL_ENV, crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -104,9 +104,7 @@ export function trackSwitchBlockReason(input: {
   /** Read only for a crossing; undefined when the database cannot be read. */
   readonly databaseMigration: () => number | undefined;
 }): string | null {
-  const from = cliReleaseChannelOf(input.serverVersion);
-  const to = cliReleaseChannelOf(input.targetVersion);
-  if (from === to || from === "preview" || to === "preview") return null;
+  if (!crossesReleaseTrack(input.serverVersion, input.targetVersion)) return null;
   const databaseMigration = input.databaseMigration();
   if (input.targetDatabaseMigration === undefined || databaseMigration === undefined) {
     return `Cannot confirm this database works with t3@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
