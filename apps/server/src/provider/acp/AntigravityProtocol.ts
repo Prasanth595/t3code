@@ -216,6 +216,50 @@ export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
+function antigravityReadPath(update: {
+  readonly locations?: ReadonlyArray<{ readonly path: string }> | null;
+  readonly rawInput?: unknown;
+}): string | undefined {
+  const location = update.locations?.[0]?.path;
+  if (location) return location;
+  const input = update.rawInput;
+  if (!Predicate.isObject(input)) return undefined;
+  const target = input.absolute_path ?? input.AbsolutePath ?? input.path;
+  return typeof target === "string" && target ? target : undefined;
+}
+
+/**
+ * The agent never completes a subagent's `client_view_file` call, then fails every open call
+ * with the next unrelated step error. Report reads T3 served as completed instead.
+ */
+export function makeAntigravityReadRepair() {
+  const openReads = new Map<string, { readonly path: string; served: boolean }>();
+  return {
+    served: (path: string) => {
+      const read = [...openReads.values()].find((entry) => entry.path === path && !entry.served);
+      if (read) read.served = true;
+    },
+    repair: (
+      notification: EffectAcpSchema.SessionNotification,
+    ): EffectAcpSchema.SessionNotification => {
+      const update = notification.update;
+      if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+        return notification;
+      }
+      const path = update.kind === "read" ? antigravityReadPath(update) : undefined;
+      if (path !== undefined && !openReads.has(update.toolCallId)) {
+        openReads.set(update.toolCallId, { path, served: false });
+      }
+      if (update.status !== "completed" && update.status !== "failed") return notification;
+      const read = openReads.get(update.toolCallId);
+      openReads.delete(update.toolCallId);
+      if (update.status === "completed" || read?.served !== true) return notification;
+      const { rawOutput: _stepError, ...rest } = update;
+      return { ...notification, update: { ...rest, status: "completed" } };
+    },
+  };
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
