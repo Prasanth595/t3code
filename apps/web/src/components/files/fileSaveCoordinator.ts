@@ -85,7 +85,8 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     const succeeded = result._tag === "Success";
     let confirmed = false;
     if (succeeded) {
-      this.confirmedRevision = revision;
+      // A discard while this write was in flight already retired newer revisions.
+      this.confirmedRevision = Math.max(this.confirmedRevision, revision);
       confirmed = this.options.onConfirmed(contents) !== false;
     }
 

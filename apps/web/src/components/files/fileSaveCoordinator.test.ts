@@ -46,6 +46,32 @@ describe("FileSaveCoordinator", () => {
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
   });
 
+  it("does not write a draft discarded while an earlier write was in flight", async () => {
+    vi.useFakeTimers();
+    const firstWrite = deferred();
+    const persist = vi
+      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
+      .mockReturnValueOnce(firstWrite.promise);
+    const onPendingChange = vi.fn();
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange,
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("first");
+    await vi.advanceTimersByTimeAsync(500);
+    coordinator.change("discarded");
+    coordinator.discard();
+    firstWrite.resolve(AsyncResult.success(undefined));
+    await vi.runAllTimersAsync();
+
+    expect(persist.mock.calls).toEqual([["first"]]);
+    expect(coordinator.unconfirmedContents).toBeNull();
+    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
+  });
+
   it("saves an edit made inside the debounce window when the editor closes", async () => {
     vi.useFakeTimers();
     const persist = vi

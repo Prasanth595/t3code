@@ -486,6 +486,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(creation).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         expect(yield* fileSystem.readFileString(absolutePath)).toBe("# Rules\n");
         expect(yield* fileSystem.exists(missingPath)).toBe(false);
+
+        const deleted = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: missingPath, contents: "# New\n", expectedContents: "" })
+          .pipe(Effect.flip);
+        expect(deleted).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(yield* fileSystem.exists(missingPath)).toBe(false);
       }),
     );
 

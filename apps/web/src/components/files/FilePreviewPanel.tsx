@@ -1035,7 +1035,9 @@ export default function FilePreviewPanel({
   );
   const canEditFile =
     attachment === undefined &&
-    (relativePath === null || !isHostPath(relativePath) || file.supportsConditionalWrite);
+    (relativePath === null ||
+      !isHostPath(relativePath) ||
+      (file.supportsConditionalWrite && file.data?.truncated !== true));
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0);
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
   // Folder links fail file reads; retain mutation refresh to detect conversion to files. Host folders own
