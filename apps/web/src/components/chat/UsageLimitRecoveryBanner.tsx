@@ -37,7 +37,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     title: failurePresentation?.title ?? "Usage limit reached",
     description:
       failurePresentation?.kind === "provider_capacity"
-        ? (props.failure?.message ?? "Provider at capacity")
+        ? `${props.failure?.message ?? "Provider at capacity"}${resetAt ? ` Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}.` : ""}`
         : resetAt
           ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
           : "Reset time unavailable; retry manually",

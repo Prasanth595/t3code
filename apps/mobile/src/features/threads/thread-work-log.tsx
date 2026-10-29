@@ -897,7 +897,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       : null;
     const label = warning
       ? failurePresentation.kind === "provider_capacity"
-        ? failurePresentation.title
+        ? `${failurePresentation.title}${resetTime ? `. Retry after ${resetTime}.` : ""}`
         : `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (

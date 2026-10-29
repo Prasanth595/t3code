@@ -70,6 +70,9 @@ describe("UsageLimitRecoveryCard", () => {
   });
 
   it("shows provider capacity detail and keeps the reset resume action", () => {
+    using _format = vi
+      .spyOn(Date.prototype, "toLocaleString")
+      .mockReturnValue("Jan 31, 1970, 00:00");
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: 0 });
     const container = document.createElement("div");
@@ -87,6 +90,7 @@ describe("UsageLimitRecoveryCard", () => {
     );
 
     expect(container.textContent).toContain(message);
+    expect(container.textContent).toContain("Resets Jan 31, 1970, 00:00.");
     expect(
       [...container.querySelectorAll("button")].find(
         (button) => button.textContent === "Resume at reset",

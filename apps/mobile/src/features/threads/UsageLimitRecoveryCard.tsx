@@ -42,11 +42,14 @@ export function UsageLimitRecoveryCard({
     code: thread.runtime.lastErrorCode ?? null,
     message: thread.runtime.lastError ?? "",
   });
+  const resetTime = resetAt
+    ? DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()
+    : null;
   const recoveryDescription =
     failurePresentation.kind === "provider_capacity"
-      ? `${failurePresentation.title}. ${thread.runtime.lastError ?? ""}`
-      : resetAt
-        ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+      ? `${failurePresentation.title}. ${thread.runtime.lastError ?? ""}${resetTime ? ` Resets ${resetTime}.` : ""}`
+      : resetTime
+        ? `Usage limit resets ${resetTime}.`
         : "The provider did not report a reset time. Retry manually when your limit is available.";
   const snoozed =
     recovery?.snooze === true &&

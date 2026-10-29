@@ -34,21 +34,26 @@ describe("usageLimitRecoveryBannerItem", () => {
     );
   });
 
-  it("shows the provider capacity message and keeps the reset recovery actions", () => {
-    const message =
-      "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
-    const item = usageLimitRecoveryBannerItem({
-      runId: RunId.make("run-capacity"),
-      resetAt: new Date(stoppedAt.getTime() + 30_000).toISOString(),
-      stoppedAt: stoppedAt.toISOString(),
-      snoozedUntil: null,
-      recovery: null,
-      timestampFormat: "24-hour",
-      failure: { class: "usage_limit", code: "provider.rate-limit", message },
-      onChange: async () => {},
-    });
+  it.each([null, new Date(2026, 9, 20, 17, 30)])(
+    "shows provider capacity detail with the reported reset %s",
+    (resetAt) => {
+      using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());
+      const message =
+        "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
+      const item = usageLimitRecoveryBannerItem({
+        runId: RunId.make("run-capacity"),
+        resetAt: resetAt?.toISOString() ?? null,
+        stoppedAt: stoppedAt.toISOString(),
+        snoozedUntil: null,
+        recovery: null,
+        timestampFormat: "24-hour",
+        failure: { class: "usage_limit", code: "provider.rate-limit", message },
+        onChange: async () => {},
+      });
 
-    expect(item.description).toBe(message);
-    expect(item.actions).not.toBeNull();
-  });
+      expect(item.description).toBe(resetAt ? `${message} Resets 17:30.` : message);
+      if (resetAt) expect(item.actions).not.toBeNull();
+      else expect(item.actions).toBeNull();
+    },
+  );
 });
