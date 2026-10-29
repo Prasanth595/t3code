@@ -39,7 +39,6 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import ThreadSidebar from "./Sidebar";
-import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -47,8 +46,8 @@ import {
   clampThreadSidebarWidth,
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
-  resolveThreadSidebarMinimumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
+  THREAD_SIDEBAR_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
 import {
@@ -374,7 +373,12 @@ function SidebarControl() {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center [[data-panel-animations=true]_&]:motion-safe:transition-[left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+        // Open, it trails the sidebar's top row above the New thread button; collapsed, it
+        // returns to the window corner.
+        isSidebarVisible && !isMobile
+          ? "left-[calc(var(--sidebar-width)-2.25rem-1px)]"
+          : "left-[var(--workspace-controls-left)] ml-px",
         isMobile && mobileSheetMounted && "hidden",
       )}
       data-sidebar-control=""
@@ -415,9 +419,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
-  const [brandWidth, setBrandWidth] = useState(0);
-  const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
-  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
+  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
@@ -436,7 +438,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : {}
   ) as CSSProperties;
   const sidebarProviderStyle = {
-    "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
+    "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, THREAD_SIDEBAR_MIN_WIDTH, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
   } as CSSProperties;
@@ -449,7 +451,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <Sidebar
           side="left"
           collapsible="offcanvas"
@@ -459,7 +460,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           aria-label="Threads"
           resizable={{
             maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
+            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
             shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
               nextWidth <= currentWidth ||
               wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,

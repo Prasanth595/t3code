@@ -21,7 +21,7 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/ui/AppText";
 import { androidWorkspaceDestinationAnimation } from "./lib/android-workspace-navigation";
-import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
+import { getStageBadgeHeaderOptions } from "./components/HeaderStageBadge";
 import { WorkspaceConnectionStatusProvider } from "./features/home/WorkspaceConnectionTitle";
 import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
 import {
@@ -620,7 +620,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...FIXED_DUO_HEADER,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
-        ...getCompactBrandHeaderOptions(),
+        ...getStageBadgeHeaderOptions(),
       },
     }),
     PullRequest: createNativeStackScreen({

@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
+import { HeaderStageBadge } from "../../components/HeaderStageBadge";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -865,7 +865,7 @@ function ThreadNavigationSidebarPane(
               size="pageTitle"
               brand={
                 <View className="h-11 flex-1 justify-center">
-                  <CompactBrandTitle allowFontScaling={false} />
+                  <HeaderStageBadge allowFontScaling={false} />
                 </View>
               }
             />
