@@ -21,8 +21,9 @@ import * as ProcessRunner from "../processRunner.ts";
 const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
 const AGENTS_PARENT_SLICE = "app-t3code.slice";
-// Low weights yield CPU and disk to the server only under contention. TasksMax
-// keeps agents below logind's 33% per-user task limit, leaving forks for the server.
+// Low weights yield CPU and disk to the server under contention, where the user manager
+// has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
+// below logind's 33% per-user task limit, leaving forks for the server.
 const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
 
 export function ownedAgentSlice(stateDir: string): string {
