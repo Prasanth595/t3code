@@ -604,15 +604,23 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           false,
         );
 
+        // The harness leaves an empty folder where the link was skipped.
+        yield* fs.makeDirectory(cliLink, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect((yield* fs.stat(cliLink)).type).toBe("Directory");
+
         yield* fs.makeDirectory(cliSkills, { recursive: true });
-        yield* fs.makeDirectory(path.dirname(cliLink), { recursive: true });
-        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
         yield* fs.remove(configLink);
         yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
+
+        yield* fs.remove(cliLink);
+        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
 
         yield* fs.remove(cliSkills, { recursive: true });
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
