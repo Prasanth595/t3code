@@ -87,6 +87,8 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  const disabledReason = getDesktopUpdateDisabledReason(state);
+  if (disabledReason) return disabledReason;
   if (
     state.notAppliedVersion !== undefined &&
     (state.status === "available" || state.status === "downloaded") &&

@@ -90,3 +90,19 @@ describe("canCheckForUpdate", () => {
     ).toBe(true);
   });
 });
+
+describe("unavailable updates", () => {
+  it.each([null, "", "  ", "Updates disabled by policy."])(
+    "explains disabled updates: %s",
+    (message) => {
+      expect(
+        getDesktopUpdateButtonTooltip({
+          ...baseState,
+          enabled: false,
+          status: "disabled",
+          message,
+        }),
+      ).toBe(message?.trim() || "Automatic updates are not available in this build.");
+    },
+  );
+});
