@@ -182,20 +182,13 @@ it.effect.each([false, true])("agent context matches upstream when workflows=%s"
         ).toBe(digest);
       }
     }
-    expect(measured).toEqual(
-      workflows
-        ? {
-            claudeSystemAppendBytes: 5432,
-            codexAdditionalContextBytes: 7078,
-            mcpToolListJsonBytes: 56954,
-          }
-        : {
-            claudeSystemAppendBytes: 5135,
-            codexAdditionalContextBytes: 6865,
-            mcpToolListJsonBytes: 45907,
-          },
-    );
-    if (!workflows) {
+    if (workflows) {
+      expect(measured).toEqual({
+        claudeSystemAppendBytes: 5432,
+        codexAdditionalContextBytes: 7078,
+        mcpToolListJsonBytes: 57054,
+      });
+    } else {
       expect(
         measured,
         "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",

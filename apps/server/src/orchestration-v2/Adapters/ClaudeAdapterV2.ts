@@ -135,7 +135,10 @@ import {
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
-import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
+import {
+  claudeLaunchArgDirectories,
+  discoverClaudeSkills,
+} from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -1485,6 +1488,8 @@ export function makeClaudeQueryOptions(input: {
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
+    // claudeLaunchArgDirectories reads every --add-dir into additionalDirectories.
+    "add-dir": _launchArgAddDir,
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
     "append-system-prompt": launchArgAppendSystemPrompt,
@@ -1607,6 +1612,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.workflowMember === true && input.workflowResultsDir !== undefined
       ? [input.workflowResultsDir]
       : []),
+    ...claudeLaunchArgDirectories(input.settings?.launchArgs),
   ];
   const withDirectories =
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };

@@ -236,6 +236,21 @@ function makeClaudeTestTurnInput(input: {
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
+    "-- --thinking-display omitted",
+    "--thinking-display summarized -- --thinking-display omitted",
+  ])("does not treat operands after -- as SDK flags: %s", (launchArgs) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+    });
+    assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
+    assert.equal(options.extraArgs?.["thinking-display"], "summarized");
+  });
+
+  it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
     ["--dangerously-skip-permissions --permission-mode plan", "plan"],
@@ -263,15 +278,42 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         attachmentsDir: "/state/attachments",
         workflowResultsDir: "/state/workflow-results",
         permissionMode: "default",
-        settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+        settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--add-dir ../shared" },
         ...(workflowMember ? { workflowMember: true } : {}),
       });
     assert.deepEqual(query(true).additionalDirectories, [
       "/workspace",
       "/state/attachments",
       "/state/workflow-results",
+      "../shared",
     ]);
-    assert.deepEqual(query(false).additionalDirectories, ["/workspace", "/state/attachments"]);
+    assert.deepEqual(query(false).additionalDirectories, [
+      "/workspace",
+      "/state/attachments",
+      "../shared",
+    ]);
+  });
+
+  it("passes every --add-dir launch directory to Claude", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-add-dir",
+      resume: false,
+      cwd: "/workspace",
+      attachmentsDir: "/attachments",
+      settings: {
+        ...AUTO_COMPACT_CLAUDE_SETTINGS,
+        launchArgs: "--add-dir ../apps ../lib --verbose --add-dir=/shared",
+      },
+    });
+    assert.deepEqual(options.additionalDirectories, [
+      "/workspace",
+      "/attachments",
+      "../apps",
+      "../lib",
+      "/shared",
+    ]);
+    assert.isUndefined(options.extraArgs?.["add-dir"]);
   });
 
   it("gives delegated children Claude's subagent prompt cache TTL", () => {

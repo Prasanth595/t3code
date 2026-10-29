@@ -240,7 +240,7 @@ const GIT_REFUSAL =
 
 type WorktreeInspection =
   | { readonly kind: "absent" }
-  | { readonly kind: "kept"; readonly reason: string }
+  | { readonly kind: "kept"; readonly reason: string; readonly waitForStop: boolean }
   | { readonly kind: "clear"; readonly headSha: string; readonly project: ProjectRoot };
 
 export class StorageCleanup extends Context.Service<
@@ -816,7 +816,11 @@ const make = Effect.gen(function* () {
     readonly now: number;
   }) {
     const { worktreePath, owner, group, members, deleted, project, projects, roots, rules } = input;
-    const kept = (reason: string): WorktreeInspection => ({ kind: "kept", reason });
+    const kept = (reason: string, waitForStop = false): WorktreeInspection => ({
+      kind: "kept",
+      reason,
+      waitForStop,
+    });
     if (!(yield* fs.exists(worktreePath))) return { kind: "absent" } satisfies WorktreeInspection;
     if (deleted && !rules.worktreeOnDelete) return kept("no rules apply");
     if (members.length > 1 && worktreeOwner(members) === undefined)
@@ -826,10 +830,10 @@ const make = Effect.gen(function* () {
       owner.branch === null ||
       !group.every((member) => storageCleanupThreadIdle(member, input.now))
     )
-      return kept("thread is running or has pending work");
+      return kept("thread is running or has pending work", true);
     if (group.some((member) => member.branch !== owner.branch))
       return kept("a subagent thread's branch differs from this worktree's branch");
-    if (hasTerminal(worktreePath)) return kept("open terminal");
+    if (hasTerminal(worktreePath)) return kept("open terminal", true);
     // Compare canonical roots while allowing symlinked parents, never symlinked worktree directories.
     const realPath = yield* fs.realPath(worktreePath);
     const realParent = yield* fs.realPath(path.dirname(worktreePath));
@@ -853,7 +857,7 @@ const make = Effect.gen(function* () {
             SETTLE_SCRIPT_GRACE_MS,
       )
     )
-      return kept(SETTLED_MOMENTS_AGO_REASON);
+      return kept(SETTLED_MOMENTS_AGO_REASON, true);
     const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
     return { kind: "clear", headSha: head.commitSha, project } satisfies WorktreeInspection;
   });
@@ -925,7 +929,10 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
   ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
+    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled))
+      return { waiting: false, kept: [] };
+    let waiting = false;
+    const kept: string[] = [];
     const roots = yield* managedRoots(serverSettings);
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
@@ -985,7 +992,15 @@ const make = Effect.gen(function* () {
         bytes: null,
         files: null,
       };
-      const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
+      const keep = (reason: string) => {
+        if (deleted && settings.worktreeOnDelete) kept.push(worktreePath);
+        entries.push({ ...entry, reason: sentence(reason) });
+      };
+      // Reasons a provider session stop or finished deletion work can clear.
+      const waitForStop = (reason: string) => {
+        if (deleted && settings.worktreeOnDelete) waiting = true;
+        return reason;
+      };
       yield* Effect.gen(function* () {
         const inspection = yield* inspectWorktree({
           worktreePath,
@@ -1001,7 +1016,8 @@ const make = Effect.gen(function* () {
           now,
         });
         if (inspection.kind === "absent") return;
-        if (inspection.kind === "kept") return keep(inspection.reason);
+        if (inspection.kind === "kept")
+          return keep(inspection.waitForStop ? waitForStop(inspection.reason) : inspection.reason);
         const { headSha } = inspection;
         const checkedProject = inspection.project;
         const old =
@@ -1106,7 +1122,7 @@ const make = Effect.gen(function* () {
           const projectCheckout = yield* projectCheckoutBlock(worktreePath, checkedProject);
           if (projectCheckout !== null) return projectCheckout;
           const latestGroup = yield* worktreeGroup(worktreePath);
-          if (hasTerminal(worktreePath)) return "open terminal";
+          if (hasTerminal(worktreePath)) return waitForStop("open terminal");
           if (deleted) {
             if (
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
@@ -1116,11 +1132,19 @@ const make = Effect.gen(function* () {
             // Durable deletion cleanup must succeed or be explicitly cancelled before removing its checkout.
             const pendingCleanup = yield* effectOutbox.hasThreadEffects({
               threadIds: [thread.id],
-              statuses: ["pending", "running", "failed"],
+              statuses: ["pending", "running"],
             });
-            if (pendingCleanup) return "thread deletion is still pending";
+            if (pendingCleanup) return waitForStop("thread deletion is still pending");
+            // Failed effects never retry, so only running work can finish and free the path.
+            if (
+              yield* effectOutbox.hasThreadEffects({
+                threadIds: [thread.id],
+                statuses: ["failed"],
+              })
+            )
+              return "thread deletion is still pending";
           }
-          return yield* activityBlock({
+          const activity = yield* activityBlock({
             worktreePath,
             owner: thread,
             deleted,
@@ -1128,6 +1152,7 @@ const make = Effect.gen(function* () {
             latestGroup,
             now,
           });
+          return activity === null ? null : waitForStop(activity);
         });
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
@@ -1183,6 +1208,7 @@ const make = Effect.gen(function* () {
               outcome: "failed",
               reason: cleanupFailureReason(error),
             });
+            if (deleted && settings.worktreeOnDelete) kept.push(worktreePath);
             yield* Effect.logWarning("storage cleanup failed for worktree", {
               threadId: thread.id,
               error,
@@ -1196,6 +1222,7 @@ const make = Effect.gen(function* () {
       yield* projectStore.list({ includeDeleted: true }),
       entries,
     );
+    return { waiting, kept };
   });
 
   const removeInactiveWorktree = Effect.fn("StorageCleanup.removeInactiveWorktree")(
@@ -1360,8 +1387,10 @@ const make = Effect.gen(function* () {
     removed: { files: number; bytes: number },
   ) {
     if (days === null || !(yield* fs.exists(root))) return removed;
+    // A symlinked parent (a linked T3 home) is fine; a symlinked folder is not.
     const realRoot = yield* fs.realPath(root);
-    if (realRoot !== path.resolve(root)) return removed;
+    const realParent = yield* fs.realPath(path.dirname(root));
+    if (realRoot !== path.join(realParent, path.basename(root))) return removed;
     const visit = Effect.fn("StorageCleanup.visitFiles")(function* (
       directory: string,
     ): Effect.fn.Return<void, PlatformError | ServerSettingsError> {
@@ -1389,14 +1418,21 @@ const make = Effect.gen(function* () {
   });
 
   const reportRef = yield* SubscriptionRef.make<StorageCleanupReport | null>(null);
+  // Only deleted threads' worktrees wait on session stops: any stop while one waits, or a stop inside one kept for another reason.
+  // A deletion stays pending until a sweep that started after it finishes.
+  let deletedWorktreeWaits = true;
+  let keptDeletedWorktrees: ReadonlyArray<string> = [];
+  let deletions = 0;
+  let sweptDeletions = 0;
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
     trigger: StorageCleanupReport["trigger"],
   ) {
+    const deletionsAtStart = deletions;
     const now = yield* Clock.currentTimeMillis;
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
     const entries: StorageCleanupReportEntry[] = [];
-    yield* cleanWorktrees(serverSettings, now, entries).pipe(
+    const deletedWorktrees = yield* cleanWorktrees(serverSettings, now, entries).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           entries.push({
@@ -1411,9 +1447,13 @@ const make = Effect.gen(function* () {
             files: null,
           });
           yield* Effect.logWarning("worktree cleanup failed", { error });
+          return { waiting: true, kept: [] };
         }),
       ),
     );
+    deletedWorktreeWaits = deletedWorktrees.waiting;
+    keptDeletedWorktrees = deletedWorktrees.kept;
+    sweptDeletions = deletionsAtStart;
     for (const category of [
       {
         kind: "browser-artifacts" as const,
@@ -1554,14 +1594,25 @@ const make = Effect.gen(function* () {
       }),
     );
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" ||
-          (event.type === "provider-session.updated" &&
-            (event.payload.status === "stopped" || event.payload.status === "error"))) &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
+      Stream.runForEach(events, (event) => {
+        if (event.type === "thread.deleted") deletions++;
+        else if (
+          event.type !== "provider-session.updated" ||
+          (event.payload.status !== "stopped" && event.payload.status !== "error")
+        )
+          return Effect.void;
+        else if (!deletedWorktreeWaits && deletions === sweptDeletions) {
+          if (
+            !keptDeletedWorktrees.some((worktreePath) =>
+              sameOrInside(worktreePath, event.payload.cwd),
+            )
+          )
+            return Effect.void;
+        }
+        return anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
           ? requestSweep
-          : Effect.void,
-      ).pipe(
+          : Effect.void;
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),
         ),
