@@ -13,10 +13,6 @@ function ClosingPositioner({ open, style, ...props }: ComponentProps<"div"> & { 
   return <div {...props} style={open ? style : { ...style, ...openPlacement }} />;
 }
 
-/**
- * Positioner `render` that keeps a closing popup where it was. Base UI keeps tracking the anchor
- * through the exit animation, so a trigger that resizes on pick would drag the fading popup along.
- */
 export function renderClosingPositioner(props: ComponentProps<"div">, state: { open: boolean }) {
   return <ClosingPositioner {...props} open={state.open} />;
 }
