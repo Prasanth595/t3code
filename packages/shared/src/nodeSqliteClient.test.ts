@@ -238,6 +238,27 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
   ),
 );
 
+it.effect("serves another read while a read-only transaction is open", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const other = yield* Effect.forkChild(
+        Deferred.await(opened).pipe(Effect.andThen(countEntries(sql).pipe(SqliteClient.readOnly))),
+      );
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Deferred.succeed(opened, undefined);
+            // One shared reader would make this join wait on the transaction forever.
+            assert.equal(yield* Fiber.join(other), 1);
+          }),
+        )
+        .pipe(SqliteClient.readOnly);
+    }),
+  ),
+);
+
 // regression: #19226 read-only transactions run on the separate reader connection
 it.effect("rejects a write in a read-only transaction", () =>
   withReaderClient((sql) =>
