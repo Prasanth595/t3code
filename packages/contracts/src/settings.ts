@@ -1056,8 +1056,18 @@ export const WorktreeCleanupRules = Schema.Struct({
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
+  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
+const WorktreeCleanupRulesPatchFields = {
+  worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
+  worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+  worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
+  worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
+  worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
+  worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+  worktreeRequireIntegrated: Schema.optionalKey(Schema.Boolean),
+};
 
 export const WorktreeCleanup = Schema.NullOr(
   Schema.Union([
@@ -1218,6 +1228,7 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1589,26 +1600,14 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({ mode: Schema.Literal("off") }),
         Schema.Struct({
           mode: Schema.Literal("custom"),
-          rules: Schema.Struct({
-            worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
-            worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-            worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-            worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-            worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-            worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-          }),
+          rules: Schema.Struct(WorktreeCleanupRulesPatchFields),
         }),
       ]),
     ),
   ),
   storageCleanup: Schema.optionalKey(
     Schema.Struct({
-      worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
-      worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-      worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-      worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-      worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-      worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+      ...WorktreeCleanupRulesPatchFields,
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
     }),
