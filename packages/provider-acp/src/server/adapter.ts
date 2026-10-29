@@ -3693,9 +3693,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 updated.delete(context.nativeThreadId);
                 return updated;
               });
+              // A completion projected at turn end must not swallow the agent's later real one.
               yield* markSessionCompacted(
                 context.nativeThreadId,
-                toolCall.toolCallId.slice("acp-compaction:".length),
+                projectedStatus === undefined
+                  ? toolCall.toolCallId.slice("acp-compaction:".length)
+                  : undefined,
               );
             }
           } else if (mcpIdentity !== undefined) {

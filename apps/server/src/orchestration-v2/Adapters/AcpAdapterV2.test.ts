@@ -1084,6 +1084,7 @@ describe("AcpAdapterV2", () => {
         const { runTurn, idleSessionUpdate, idleCopilotSessionEvent } =
           yield* makeInstructionCompactionHarness({
             T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
+            T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
           });
         yield* runTurn("Start work.");
         yield* runTurn("Continue until context compacts.");
@@ -1151,6 +1152,20 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(yield* runTurn("Continue after child compaction."), [
           { type: "text", text: "Continue after child compaction." },
         ]);
+        yield* runTurn("End this turn while compaction is still running.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the turn ended mid-compaction."),
+          "Continue after the turn ended mid-compaction.",
+        );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-13",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the compaction really finished."),
+          "Continue after the compaction really finished.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
