@@ -37,6 +37,7 @@ import { isMissingExecutable } from "@t3tools/source-control-core/server/discove
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeGitVcsDriverCore,
+  PATCH_RENDER_CONFIG_ARGS,
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
@@ -1321,6 +1322,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation,
         cwd: input.cwd,
         args: [
+          ...PATCH_RENDER_CONFIG_ARGS,
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
