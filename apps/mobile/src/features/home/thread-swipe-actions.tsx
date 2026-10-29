@@ -676,11 +676,15 @@ function SwipeActionButton(props: {
       </View>
       <Animated.View
         style={[
-          { height: 14, justifyContent: "center", paddingTop: props.compact ? 0 : 2 },
+          { minHeight: 14, justifyContent: "center", paddingTop: props.compact ? 0 : 2 },
           labelStyle,
         ]}
       >
-        <Text className="text-3xs font-t3-medium text-foreground-muted" numberOfLines={1}>
+        <Text
+          adjustsFontSizeToFit
+          className="text-3xs font-t3-medium text-foreground-muted"
+          numberOfLines={1}
+        >
           {props.label}
         </Text>
       </Animated.View>
