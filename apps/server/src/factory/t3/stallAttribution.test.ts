@@ -19,6 +19,7 @@ import { useTempDirs } from "../ledger/testSupport.ts";
 import type { TrackedSpanReport } from "../observability/spanRegistry.ts";
 import {
   makeWithStallAttribution,
+  stallKind,
   stallProfileOptedIn,
   withStallAttribution,
 } from "./stallAttribution.ts";
@@ -349,8 +350,9 @@ describe("withStallAttribution busy or starved", () => {
       Effect.gen(function* () {
         const logsDir = tempDir();
         const base = yield* Effect.service(Tracer.Tracer);
-        // The detector ticks on its real timer; the test moves its clock and usage readings.
-        let now = 0;
+        // The detector ticks on its real timer; the test moves its clock and usage readings. The
+        // clock starts at the real one so the span registry can place spans in the stall window.
+        let now = performance.now();
         let usage = { cpuMicros: 0, majorPageFaults: 0 };
         const decorated = makeWithStallAttribution({
           intervalMs: 10,
@@ -381,6 +383,8 @@ describe("withStallAttribution busy or starved", () => {
           });
           return [first, yield* Deferred.await(warnings[1]!)] as const;
         }).pipe(
+          // A span in flight puts span lists in the warning, so the kind must come after them.
+          Effect.withSpan("StallKindTest.wait", { root: true }),
           Effect.provide(
             decorated.pipe(
               Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
@@ -388,14 +392,11 @@ describe("withStallAttribution busy or starved", () => {
           ),
           Effect.scoped,
         );
-        assert.include(
-          busy,
-          "factory event loop stalled for 4000 ms; kind: busy (cpu 3000 ms, load 21.25, major faults 2)",
-        );
-        assert.include(
-          starved,
-          "factory event loop stalled for 4000 ms; kind: starved (cpu 200 ms, load 21.25, major faults 7)",
-        );
+        assert.match(busy, /^factory event loop stalled for 4000 ms[;\s]/);
+        assert.include(busy, "StallKindTest.wait");
+        assert.isTrue(busy.endsWith("; kind: busy (cpu 3000 ms, load 21.25, major faults 2)"));
+        assert.match(starved, /^factory event loop stalled for 4000 ms[;\s]/);
+        assert.isTrue(starved.endsWith("; kind: starved (cpu 200 ms, load 21.25, major faults 7)"));
         const records = stallRecords(logsDir);
         assert.deepStrictEqual(
           records.map(({ stallMs, cpuMs, cpuSource, majorPageFaults, load1, kind }) => ({
@@ -427,6 +428,13 @@ describe("withStallAttribution busy or starved", () => {
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("stallKind", () => {
+  it("is busy from half the stall in CPU, starved below it", () => {
+    assert.strictEqual(stallKind({ cpuMs: 2000, stallMs: 4000 }), "busy");
+    assert.strictEqual(stallKind({ cpuMs: 1999, stallMs: 4000 }), "starved");
+  });
 });
 
 describe("stallProfileOptedIn", () => {

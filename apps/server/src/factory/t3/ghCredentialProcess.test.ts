@@ -5,12 +5,14 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { VcsProcessInput, VcsProcessOutput } from "../../vcs/VcsProcess.ts";
-import { decorate } from "./ghCredentialProcess.ts";
+import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "../../vcs/VcsProcess.ts";
+import { decorate, layer } from "./ghCredentialProcess.ts";
 
 const TOKEN = "gho_fakeTokenThatMustNeverBeLogged";
 
@@ -57,50 +59,90 @@ const fakeInner = (replies: Array<Reply>) => {
   return { calls, service: { run } };
 };
 
-/** Every log line the effect writes, message and annotations, as text. */
+/** Every log line the effect writes, with its message, annotations and spans, as JSON. */
 const captureLogs = () => {
   const lines: Array<string> = [];
-  const logger = Logger.make<unknown, void>(({ message, logLevel }) => {
-    lines.push(`${logLevel} ${JSON.stringify(message)}`);
+  const logger = Logger.map(Logger.formatJson, (line) => {
+    lines.push(line);
   });
   return { lines, layer: Logger.layer([logger]) };
 };
 
 describe("ghCredentialProcess.decorate", () => {
-  it.effect("(a) retries a timed-out credential lookup once with a 30 s timeout", () =>
-    Effect.gen(function* () {
-      const inner = fakeInner([fail(timeout()), ok]);
-      const decorated = decorate(inner.service);
-      const output = yield* decorated.run(credentialInput);
-      assert.strictEqual(output.stdout, success.stdout);
-      assert.strictEqual(inner.calls.length, 2);
-      assert.strictEqual(inner.calls[1]!.timeoutMs, 30_000);
-      assert.deepStrictEqual({ ...inner.calls[1]!, timeoutMs: 10_000 }, credentialInput);
-    }),
+  it.effect(
+    "(a) retries a timed-out credential lookup once with a 30 s timeout, and remembers that success",
+    () =>
+      Effect.gen(function* () {
+        const inner = fakeInner([fail(timeout()), ok, fail(timeout()), fail(timeout(30_000))]);
+        const decorated = decorate(inner.service);
+        const output = yield* decorated.run(credentialInput);
+        assert.strictEqual(output.stdout, success.stdout);
+        assert.strictEqual(inner.calls.length, 2);
+        assert.strictEqual(inner.calls[1]!.timeoutMs, 30_000);
+        assert.deepStrictEqual({ ...inner.calls[1]!, timeoutMs: 10_000 }, credentialInput);
+        const fallback = yield* decorated.run(credentialInput);
+        assert.strictEqual(fallback.stdout, success.stdout);
+      }),
   );
 
   it.effect(
-    "(b) reuses the output read 10 min earlier after two timeouts, and warns once without the token",
+    "(b) reuses the output read 10 min earlier after two timeouts, and warns once with the host and age",
     () =>
       Effect.gen(function* () {
         const logs = captureLogs();
         const inner = fakeInner([ok, fail(timeout()), fail(timeout(30_000))]);
         const decorated = decorate(inner.service);
-        yield* decorated.run(credentialInput);
-        yield* TestClock.adjust("10 minutes");
-        const output = yield* decorated.run(credentialInput).pipe(Effect.provide(logs.layer));
-        assert.strictEqual(output.stdout, success.stdout);
+        yield* Effect.gen(function* () {
+          yield* decorated.run(credentialInput);
+          yield* TestClock.adjust("10 minutes");
+          const output = yield* decorated.run(credentialInput);
+          assert.strictEqual(output.stdout, success.stdout);
+        }).pipe(Effect.provide(logs.layer));
         assert.strictEqual(inner.calls.length, 3);
-        const warnings = logs.lines.filter((line) => line.startsWith("Warn"));
+        const warnings = logs.lines.filter((line) => line.includes('"WARN"'));
         assert.strictEqual(warnings.length, 1);
         assert.include(
           warnings[0]!,
           "gh credential lookup timed out twice; reusing the credential read 600 s ago",
         );
-        assert.include(warnings[0]!, "github.com");
-        // (f) the token is in no captured line.
-        assert.isFalse(logs.lines.some((line) => line.includes(TOKEN)));
+        assert.include(warnings[0]!, '"host":"github.com"');
       }),
+  );
+
+  it.effect("(f) writes the token into no log line on the success, retry or fallback path", () =>
+    Effect.gen(function* () {
+      const logs = captureLogs();
+      const inner = fakeInner([ok, fail(timeout()), ok, fail(timeout()), fail(timeout(30_000))]);
+      const decorated = decorate(inner.service);
+      yield* Effect.gen(function* () {
+        yield* decorated.run(credentialInput);
+        yield* decorated.run(credentialInput);
+        yield* TestClock.adjust("1 minute");
+        yield* decorated.run(credentialInput);
+      }).pipe(Effect.withSpan("credential lookups"), Effect.provide(logs.layer));
+      assert.strictEqual(inner.calls.length, 5);
+      assert.isNotEmpty(logs.lines);
+      assert.isFalse(logs.lines.some((line) => line.includes(TOKEN)));
+    }),
+  );
+
+  it.effect("falls back at exactly 30 minutes and fails 1 ms later", () =>
+    Effect.gen(function* () {
+      const inner = fakeInner([
+        ok,
+        fail(timeout()),
+        fail(timeout(30_000)),
+        fail(timeout()),
+        fail(timeout(30_000)),
+      ]);
+      const decorated = decorate(inner.service);
+      yield* decorated.run(credentialInput);
+      yield* TestClock.adjust("30 minutes");
+      assert.strictEqual((yield* decorated.run(credentialInput)).stdout, success.stdout);
+      yield* TestClock.adjust("1 millis");
+      const error = yield* Effect.flip(decorated.run(credentialInput));
+      assert.deepStrictEqual(error, timeout(30_000));
+    }),
   );
 
   it.effect("(c) fails with the timeout when the last success is 31 min old", () =>
@@ -198,5 +240,23 @@ describe("ghCredentialProcess.decorate", () => {
       assert.strictEqual(inner.calls.length, 1);
       assert.strictEqual(inner.calls[0], input);
     }),
+  );
+});
+
+describe("ghCredentialProcess.layer", () => {
+  // Live: the process timeout runs on the clock, which it.effect would freeze.
+  it.live("provides a VcsProcess whose credential lookup retries a real timed-out process", () =>
+    Effect.gen(function* () {
+      const vcs = yield* VcsProcess;
+      // Answers after 300 ms: the 100 ms first attempt times out, the 30 s retry reads it.
+      const output = yield* vcs.run({
+        ...credentialInput,
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.stdout.write('ok'), 300)"],
+        cwd: process.cwd(),
+        timeoutMs: 100,
+      });
+      assert.strictEqual(output.stdout, "ok");
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(NodeServices.layer)))),
   );
 });

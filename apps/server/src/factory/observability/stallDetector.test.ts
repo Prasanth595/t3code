@@ -64,9 +64,13 @@ describe("startStallDetector", () => {
     try {
       const stall = await new Promise<Stall>((resolve) => {
         stop = startStallDetector({ intervalMs: 10, thresholdMs: 100, onStall: resolve });
-        // Spin rather than wait, so the stall burns CPU on this thread.
-        const until = performance.now() + 250;
-        while (performance.now() < until) {}
+        // Spin until this process has used 150 ms of CPU, however loaded the machine is.
+        const start = process.cpuUsage();
+        const spent = () => {
+          const { user, system } = process.cpuUsage(start);
+          return (user + system) / 1000;
+        };
+        while (spent() < 150) {}
       });
       expect(stall.cpuMs).toBeGreaterThanOrEqual(100);
       expect(["thread", "process"]).toContain(stall.cpuSource);
