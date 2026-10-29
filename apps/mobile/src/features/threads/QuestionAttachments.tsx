@@ -64,6 +64,28 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // The draft reaches this field through the thread screen a render after the input reports a
+  // keystroke. Feeding that older value back to iOS replaces marked text, which ends an active
+  // IME composition. Keep the text local and ignore echoes of values this field already sent;
+  // adopt only edits that came from outside, such as an option tap clearing the answer.
+  const [text, setText] = useState(props.value);
+  const [previousValue, setPreviousValue] = useState(props.value);
+  const [reportedValues, setReportedValues] = useState<ReadonlySet<string>>(() => new Set());
+  if (props.value !== previousValue) {
+    setPreviousValue(props.value);
+    if (props.value === text) {
+      // The parent caught up with the latest local edit; older echoes are obsolete.
+      setReportedValues(new Set());
+    } else if (!reportedValues.has(props.value)) {
+      setReportedValues(new Set());
+      setText(props.value);
+    }
+  }
+  const changeText = (value: string) => {
+    setReportedValues((current) => new Set(current).add(value));
+    setText(value);
+    props.onChangeText(value);
+  };
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -195,11 +217,11 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          value={text}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={changeText}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);
