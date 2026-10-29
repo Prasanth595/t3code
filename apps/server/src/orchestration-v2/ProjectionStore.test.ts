@@ -1374,6 +1374,62 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #25621 SQLite rejects statements with more than 32,766 bound parameters
+it.effect("reads a shell snapshot with more threads than SQLite allows bound parameters", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const projectId = ProjectId.make("project:many-threads");
+    const threadId = ThreadId.make("thread:many:0");
+    yield* store.apply({
+      id: EventId.make("event:many:created"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId,
+        title: "Many threads",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const threadCount = 32_768;
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${threadCount - 1})
+      INSERT INTO orchestration_v2_projection_threads (
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, archived_at, deleted_at, payload_json, provider_instance_id
+      )
+      SELECT 'thread:many:' || n.i, t.project_id, t.title, t.default_provider, t.runtime_mode,
+        t.interaction_mode, t.created_at, t.updated_at, t.archived_at, t.deleted_at,
+        json_set(t.payload_json, '$.id', 'thread:many:' || n.i), t.provider_instance_id
+      FROM n CROSS JOIN orchestration_v2_projection_threads t
+      WHERE t.thread_id = ${threadId}
+    `;
+
+    const snapshot = yield* store.getShellSnapshot({ projectId, location: "active" });
+    assert.strictEqual(snapshot.threads.length, threadCount);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
