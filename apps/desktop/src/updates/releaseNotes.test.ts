@@ -28,6 +28,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       releaseNotes: [
         {
           version: "0.0.36-nightly.20260828.1213",
+          releasedAt: "2026-08-28",
           items: [
             "fix(opencode): handle child approvals, stops, and model catalogs by @human in #8480",
             "fix(web): keep long task drawers usable on small screens by @human in #8313",
@@ -108,6 +109,23 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.releaseNotes).toEqual([
       { version: "1.2.4", items: changes.toReversed(), totalItems: 8 },
       { version: "1.2.3", items: changes.toReversed(), totalItems: 8 },
+    ]);
+  });
+
+  it("dates the offered release from the feed and older nightlies by their build day", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        { version: "0.0.41-nightly.20260914.1707", note: "- Nightly change 2" },
+        { version: "0.0.41-nightly.20260913.1700", note: "- Nightly change 1" },
+      ],
+      "0.0.41-nightly.20260914.1707",
+      "nightly",
+      "2026-09-14T18:30:00.000Z",
+    );
+
+    expect(result.releaseNotes.map(({ releasedAt }) => releasedAt)).toEqual([
+      "2026-09-14T18:30:00.000Z",
+      "2026-09-13",
     ]);
   });
 

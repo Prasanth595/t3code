@@ -288,7 +288,7 @@ export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
   totalItems: number;
-  /** ISO time the update feed reports for this version. Only the offered version has one. */
+  /** ISO time from the update feed for the offered version, else `YYYY-MM-DD` from a prerelease version. */
   releasedAt?: string;
   /** Generated summaries only: the highlights paragraph. `items` then holds the fixes. */
   intro?: string;

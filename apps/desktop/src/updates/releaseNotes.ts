@@ -152,6 +152,15 @@ function extractReleaseNoteItems(note: string | null | undefined): ExtractedRele
   return { items: items.toReversed(), totalItems };
 }
 
+// The update feed dates only the offered version; prerelease versions carry their UTC build day.
+const PRERELEASE_BUILD_DAY = /-(?:nightly|preview)\.(\d{4})(\d{2})(\d{2})\.\d+$/;
+
+function resolveReleasedAt(version: string, offeredVersion: string, releaseDate?: string) {
+  if (version === offeredVersion && releaseDate) return releaseDate;
+  const day = PRERELEASE_BUILD_DAY.exec(version);
+  return day ? `${day[1]}-${day[2]}-${day[3]}` : undefined;
+}
+
 interface NormalizedDesktopUpdateReleaseNotes {
   readonly releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   readonly omittedReleaseCount: number;
@@ -175,6 +184,7 @@ export function normalizeDesktopUpdateReleaseNotes(
   const normalizedNotes = rawNotes.flatMap((entry) => {
     const { items, totalItems, intro, stats } = extractReleaseNoteItems(entry.note);
     if (totalItems === 0) return [];
+    const releasedAt = resolveReleasedAt(entry.version, fallbackVersion, releaseDate);
     return [
       {
         version: entry.version,
@@ -182,7 +192,7 @@ export function normalizeDesktopUpdateReleaseNotes(
         totalItems,
         ...(intro ? { intro } : {}),
         ...(stats ? { stats } : {}),
-        ...(releaseDate && entry.version === fallbackVersion ? { releasedAt: releaseDate } : {}),
+        ...(releasedAt ? { releasedAt } : {}),
       },
     ];
   });

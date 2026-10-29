@@ -19,6 +19,18 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
   });
 }
 
+/** Feed times read "3h ago"; build days from a prerelease version read "today" or "2d ago". */
+function formatReleaseAge(releasedAt: string): string {
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releasedAt);
+  if (!day) return formatRelativeTimeLabel(releasedAt);
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days = Math.round(
+    (today - Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]))) / 86_400_000,
+  );
+  return days <= 0 ? "today" : `${days}d ago`;
+}
+
 function ReleaseLink({
   children,
   releaseUrl,
@@ -70,7 +82,7 @@ export function SidebarUpdateReleaseNotes({
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
                 {releasedAt
-                  ? `${state.availableVersion} · ${formatRelativeTimeLabel(releasedAt)}`
+                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt)}`
                   : state.availableVersion}
               </div>
             ) : null}
@@ -93,7 +105,9 @@ export function SidebarUpdateReleaseNotes({
               <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
                 {index > 0 ? (
                   <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
-                    {releaseNote.version}
+                    {releaseNote.releasedAt
+                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
+                      : releaseNote.version}
                   </h3>
                 ) : null}
                 <p className="break-words text-xs leading-5 text-popover-foreground">
