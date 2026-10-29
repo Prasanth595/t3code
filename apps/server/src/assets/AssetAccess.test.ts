@@ -25,6 +25,7 @@ import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effec
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { signPayload } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -462,7 +463,7 @@ describe("AssetAccess", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-absolute-" });
-        for (const extension of ["png", "mp4", "wav"]) {
+        for (const extension of ["png", "mp4", "wav", "html"]) {
           const target = path.join(root, `target.${extension}`);
           const alias = path.join(root, `alias.${extension}`);
           yield* fs.writeFileString(target, "preview bytes");
@@ -476,6 +477,36 @@ describe("AssetAccess", () => {
           expect(
             yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
           ).toMatchObject({ kind: "file", path: yield* fs.realPath(target) });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps absolute HTML drafts outside the workspace exact-file scoped",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-root-" });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-outside-" });
+        const target = path.join(outside, "index.html");
+        const alias = path.join(root, "alias.html");
+        yield* fs.writeFileString(target, "<p>outside</p>");
+        yield* fs.writeFileString(path.join(outside, "style.css"), "body {}");
+        yield* fs.symlink(target, alias);
+        for (const requestedPath of [target, alias]) {
+          const result = yield* issueAssetUrl({
+            resource: { _tag: "draft-workspace-file", cwd: root, path: requestedPath },
+            workspaceRoot: root,
+          });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const token = suffix.slice(0, separator);
+          expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toMatchObject({
+            kind: "file",
+            path: yield* fs.realPath(target),
+          });
+          expect(yield* resolveAsset(token, "style.css")).toBeNull();
         }
       }).pipe(Effect.provide(layerTest)),
   );
@@ -966,6 +997,7 @@ describe("AssetAccess", () => {
         for (const resource of [
           { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: entryPath },
           { _tag: "draft-workspace-file" as const, cwd: root, path: entryPath },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: path.join(root, entryPath) },
         ]) {
           const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
           const entryUrl = new URL(issued.relativeUrl, "http://preview.test");
@@ -999,16 +1031,54 @@ describe("AssetAccess", () => {
           }
         }
       }
-      for (const entryPath of [".output/public/index.html", "site #1/.preview/.index.HTM"]) {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const signingSecret = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+      const legacyClaims = {
+        version: 1,
+        kind: "workspace-file",
+        workspaceRoot: yield* fileSystem.realPath(root),
+        baseRelativePath: "site #1/pages",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+      const legacyPayload = Buffer.from(JSON.stringify(legacyClaims)).toString("base64url");
+      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, signingSecret)}`;
+      expect(yield* resolveAsset(legacyToken, "style.css")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(path.join(nestedDirectory, "style.css")),
+      });
+      expect(yield* resolveAsset(legacyToken, ".hidden/private.css")).toBeNull();
+      for (const entryPath of [
+        ".output/public/index.html",
+        "site #1/.preview/.index.HTM",
+        ".output/public/.nested/index.html",
+      ]) {
         yield* fileSystem.makeDirectory(path.dirname(path.join(root, entryPath)), {
           recursive: true,
         });
         yield* fileSystem.writeFileString(path.join(root, entryPath), "<p>hidden entry</p>");
-        const siblingPath = path.join(path.dirname(entryPath), "private.css");
-        yield* fileSystem.writeFileString(path.join(root, siblingPath), "private");
+        const entryDirectory = path.dirname(entryPath);
+        for (const relativePath of [
+          "style.css",
+          "assets/nested.css",
+          ".private.css",
+          ".hidden/private.css",
+          "private.db",
+        ]) {
+          const filePath = path.join(root, entryDirectory, relativePath);
+          yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fileSystem.writeFileString(filePath, "asset");
+        }
+        const unrelatedPath = `${entryDirectory}-other/style.css`;
+        yield* fileSystem.makeDirectory(path.dirname(path.join(root, unrelatedPath)), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(path.join(root, unrelatedPath), "unrelated");
+        const parentPath = path.join(entryDirectory, "..", "private.css");
+        yield* fileSystem.writeFileString(path.join(root, parentPath), "private");
         for (const resource of [
           { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: entryPath },
           { _tag: "draft-workspace-file" as const, cwd: root, path: entryPath },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: path.join(root, entryPath) },
         ]) {
           const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
           const entryUrl = new URL(issued.relativeUrl, "http://preview.test");
@@ -1019,11 +1089,31 @@ describe("AssetAccess", () => {
             kind: "file",
             path: yield* fileSystem.realPath(path.join(root, entryPath)),
           });
+          for (const reference of [
+            "style.css",
+            "assets/nested.css",
+            path.relative(entryDirectory, "report.css").split(path.sep).join("/"),
+          ]) {
+            const resourceUrl = new URL(reference, entryUrl);
+            const dependencyPath = resourceUrl.pathname.slice(
+              `${ASSET_ROUTE_PREFIX}/${token}/`.length,
+            );
+            expect(yield* resolveAsset(token, dependencyPath)).toEqual({
+              kind: "file",
+              path: yield* fileSystem.realPath(path.resolve(root, entryDirectory, reference)),
+            });
+          }
           for (const deniedPath of [
-            siblingPath,
+            `${entryDirectory}/.private.css`,
+            `${entryDirectory}/.hidden/private.css`,
+            `${entryDirectory}/private.db`,
+            unrelatedPath,
+            ...(parentPath.split(path.sep).some((segment) => segment.startsWith("."))
+              ? [parentPath]
+              : []),
             ".hidden/private.css",
             ".env",
-            `${path.dirname(entryPath)}/../private.css`,
+            `${entryDirectory}/%2e%2e/private.css`,
             "private.db",
             "escape.css",
           ]) {
@@ -1040,6 +1130,16 @@ describe("AssetAccess", () => {
           const outside = yield* fileSystem.makeTempDirectoryScoped({
             prefix: "t3-entry-outside-",
           });
+          const dependencyPath = path.join(entryDirectory, "style.css");
+          yield* fileSystem.writeFileString(path.join(outside, "outside.css"), "outside");
+          yield* fileSystem.remove(path.join(root, dependencyPath));
+          yield* fileSystem.symlink(
+            path.join(outside, "outside.css"),
+            path.join(root, dependencyPath),
+          );
+          expect(
+            yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), dependencyPath),
+          ).toBeNull();
           const outsidePath = path.join(outside, "index.html");
           yield* fileSystem.writeFileString(outsidePath, "outside");
           yield* fileSystem.remove(path.join(root, entryPath));
