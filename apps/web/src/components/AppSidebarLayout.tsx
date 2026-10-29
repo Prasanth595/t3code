@@ -32,7 +32,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
-import { useIsMobile } from "../hooks/useMediaQuery";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -405,7 +405,7 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const preferredSidebarSide = useClientSettings((settings) => settings.sidebarSide);
-  const isMobile = useIsMobile();
+  const isMobile = useMediaQuery("max-md");
   const sidebarSide = isMobile ? "left" : preferredSidebarSide;
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
