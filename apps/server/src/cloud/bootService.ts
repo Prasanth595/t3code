@@ -195,6 +195,7 @@ export interface BootServiceManager {
   readonly unitPath: string;
   readonly render: (plan: BootServicePlan) => string;
   readonly stop: ReadonlyArray<BootServiceStep>;
+  readonly resetFailed: ReadonlyArray<BootServiceStep>;
   readonly activate: ReadonlyArray<BootServiceStep>;
   readonly restart: ReadonlyArray<BootServiceStep>;
   /** Queue a restart owned by the manager, since stopping would kill the caller. */
@@ -236,6 +237,14 @@ function systemdManager(input: {
         command: "systemctl",
         args: ["--user", "stop", BOOT_SERVICE_UNIT_FILE],
         timeout: STOP_STEP_TIMEOUT,
+      },
+    ],
+    resetFailed: [
+      {
+        step: "clearing the failed service state",
+        command: "systemctl",
+        // This exact glob matches only the owned loaded unit; an unloaded unit is a no-op.
+        args: ["--user", "reset-failed", "[t]3code.service"],
       },
     ],
     activate: [
@@ -312,6 +321,7 @@ function launchdManager(input: {
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
+    resetFailed: [],
     activate: [
       // A persisted `launchctl disable` override refuses bootstrap; clear it.
       {
@@ -851,6 +861,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
+        if (installed) {
+          yield* runSteps(manager.resetFailed);
+        }
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
       }
@@ -879,11 +892,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
-      yield* runSteps(manager.handoff);
+      yield* runSteps([...manager.resetFailed, ...manager.handoff]);
       return "queued" as const;
     }
     yield* runSteps(manager.stop);
-    yield* runSteps(manager.activate).pipe(
+    yield* runSteps([...manager.resetFailed, ...manager.activate]).pipe(
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
     );
     yield* fs.remove(restartPendingPath, { force: true });
