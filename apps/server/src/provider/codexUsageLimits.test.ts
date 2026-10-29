@@ -261,9 +261,47 @@ describe("mergeCodexRateLimits", () => {
   });
 });
 
-import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
+import {
+  codexUsageLimitResetAt,
+  parseCodexErrorMessageResetAt,
+} from "./codexUsageLimits.ts";
+
+describe("parseCodexErrorMessageResetAt", () => {
+  const baseNow = Date.parse("2026-10-29T22:00:00.000Z");
+
+  it("extracts reset time from standard Codex usage limit messages with ordinal dates", () => {
+    const msg =
+      "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 30th, 2026 12:31 AM.";
+    expect(parseCodexErrorMessageResetAt(msg, baseNow)).toBe(
+      new Date(Date.parse("Oct 30, 2026 12:31 AM")).toISOString(),
+    );
+  });
+
+  it("extracts reset time from non-ordinal date strings", () => {
+    const msg = "Please try again at Nov 5, 2026 03:00 PM.";
+    expect(parseCodexErrorMessageResetAt(msg, baseNow)).toBe(
+      new Date(Date.parse("Nov 5, 2026 03:00 PM")).toISOString(),
+    );
+  });
+
+  it("extracts duration strings and adds to current timestamp", () => {
+    const msg = "Usage limit reached. Please try again in 1 hour 30 minutes.";
+    const expectedMs = baseNow + (1 * 60 + 30) * 60 * 1000;
+    expect(parseCodexErrorMessageResetAt(msg, baseNow)).toBe(
+      new Date(expectedMs).toISOString(),
+    );
+  });
+
+  it("returns null for non-retry messages", () => {
+    expect(parseCodexErrorMessageResetAt("Server error occurred", baseNow)).toBeNull();
+    expect(parseCodexErrorMessageResetAt(null, baseNow)).toBeNull();
+    expect(parseCodexErrorMessageResetAt(undefined, baseNow)).toBeNull();
+  });
+});
 
 describe("codexUsageLimitResetAt", () => {
+  const nowMs = Date.parse("2026-10-29T22:00:00.000Z");
+
   it("waits for every exhausted window and never invents an unknown reset", () => {
     expect(
       codexUsageLimitResetAt({
@@ -275,5 +313,29 @@ describe("codexUsageLimitResetAt", () => {
     expect(
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
     ).toBeNull();
+  });
+
+  it("recovers reset time from failureMessage when usedPercent is below 100%", () => {
+    const msg =
+      "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 30th, 2026 12:31 AM.";
+    // With 70% used and snapshot reset aligning with the message, precision is preserved
+    const snapshot = {
+      limitId: "codex",
+      primary: { usedPercent: 70, resetsAt: 1793316669, windowDurationMins: 300 },
+      secondary: { usedPercent: 27, resetsAt: 1793885436, windowDurationMins: 10080 },
+    };
+    expect(codexUsageLimitResetAt(snapshot, msg, nowMs)).toBe(
+      "2026-10-29T23:31:09.000Z",
+    );
+  });
+
+  it("accepts near-exhausted windows (>= 99%) when future reset is known", () => {
+    const snapshot = {
+      limitId: "codex",
+      primary: { usedPercent: 99, resetsAt: 1793316669, windowDurationMins: 300 },
+    };
+    expect(codexUsageLimitResetAt(snapshot, null, nowMs)).toBe(
+      "2026-10-29T23:31:09.000Z",
+    );
   });
 });

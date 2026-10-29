@@ -4321,8 +4321,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+            const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
+              const resetAt = codexUsageLimitResetAt(snapshot, item.failure.message);
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
                 ...item,
@@ -4506,16 +4507,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
             if (!payload.willRetry) {
+              const failureMessage =
+                payload.error.additionalDetails?.trim() || payload.error.message;
+              const isUsageLimit = codexUsageLimitError(
+                notificationCode,
+                payload.error.codexErrorInfo,
+              );
+              const resetAt = isUsageLimit
+                ? codexUsageLimitResetAt(
+                    yield* Ref.get(rateLimitSnapshot),
+                    failureMessage,
+                  )
+                : null;
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    message: failureMessage,
                     code: notificationCode,
-                    class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
-                      ? "usage_limit"
-                      : "provider_error",
+                    class: isUsageLimit ? "usage_limit" : "provider_error",
+                    ...(resetAt ? { resetAt } : {}),
                   }),
                   payload.error,
                 ),
@@ -5617,7 +5629,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                        resetAt:
+                          failure.resetAt ??
+                          codexUsageLimitResetAt(
+                            yield* Ref.get(rateLimitSnapshot),
+                            failure.message,
+                          ),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5654,7 +5671,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                      codexUsageLimitResetAt(
+                        yield* Ref.get(rateLimitSnapshot),
+                        event.failure.message,
+                      ),
                   },
                 }
               : event;

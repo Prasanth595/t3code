@@ -187,17 +187,113 @@ export function mergeCodexRateLimits(
 }
 
 /** All exhausted windows must reset before a continuation can run. */
+export function parseCodexErrorMessageResetAt(
+  message: string | null | undefined,
+  nowMs = Date.now(),
+): string | null {
+  if (!message || typeof message !== "string") return null;
+
+  // Format: "try again at Oct 30th, 2026 12:31 AM" or "try again at Oct 30, 2026 12:31 AM"
+  const dateMatch =
+    /try again at ([A-Za-z]+ \d{1,2})(?:st|nd|rd|th)?,? (\d{4} \d{1,2}:\d{2}(?::\d{2})? (?:AM|PM))/i.exec(
+      message,
+    );
+  if (dateMatch) {
+    const ms = Date.parse(`${dateMatch[1]}, ${dateMatch[2]}`);
+    if (Number.isFinite(ms)) {
+      const dt = DateTime.make(ms);
+      if (Option.isSome(dt)) return DateTime.formatIso(dt.value);
+    }
+  }
+
+  // Format: "try again at 12:31 AM" (time only, roll over to tomorrow if earlier than now)
+  const timeMatch =
+    /try again at (\d{1,2}:\d{2}(?::\d{2})? (?:AM|PM))/i.exec(message);
+  if (timeMatch) {
+    const todayStr = new Date(nowMs).toDateString();
+    const candidateMs = Date.parse(`${todayStr} ${timeMatch[1]}`);
+    if (Number.isFinite(candidateMs)) {
+      const resetMs =
+        candidateMs > nowMs ? candidateMs : candidateMs + 24 * 60 * 60 * 1000;
+      const dt = DateTime.make(resetMs);
+      if (Option.isSome(dt)) return DateTime.formatIso(dt.value);
+    }
+  }
+
+  // Format: "try again in X hours Y minutes" or "try again after X hours Y minutes"
+  const durationMatch =
+    /try again (?:in|after) (?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?/i.exec(
+      message,
+    );
+  if (durationMatch && (durationMatch[1] || durationMatch[2])) {
+    const hours = parseInt(durationMatch[1] || "0", 10);
+    const mins = parseInt(durationMatch[2] || "0", 10);
+    const resetMs = nowMs + (hours * 60 + mins) * 60 * 1000;
+    const dt = DateTime.make(resetMs);
+    if (Option.isSome(dt)) return DateTime.formatIso(dt.value);
+  }
+
+  return null;
+}
+
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
+  failureMessage?: string | null,
+  nowMs = Date.now(),
 ): string | null {
-  if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
-  if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
-  return windows.reduce<string | null>(
-    (latest, window) =>
-      latest === null || Date.parse(window.resetsAt!) > Date.parse(latest)
-        ? window.resetsAt!
-        : latest,
-    null,
-  );
+  if (snapshot) {
+    const windows = codexRateLimitsToWindows(snapshot).filter(
+      (window) => window.usedPercent >= 100,
+    );
+    if (windows.length > 0 && windows.every((window) => window.resetsAt)) {
+      return windows.reduce<string | null>(
+        (latest, window) =>
+          latest === null || Date.parse(window.resetsAt!) > Date.parse(latest)
+            ? window.resetsAt!
+            : latest,
+        null,
+      );
+    }
+
+    // Codex can refuse a turn when the reported percentage lags or sits near quota.
+    // Accept near-exhausted windows (>= 99%) whose reset is in the future.
+    const nearWindows = codexRateLimitsToWindows(snapshot).filter(
+      (window) =>
+        window.usedPercent >= 99 &&
+        window.resetsAt &&
+        Date.parse(window.resetsAt) > nowMs,
+    );
+    if (nearWindows.length > 0) {
+      return nearWindows.reduce<string | null>(
+        (latest, window) =>
+          latest === null || Date.parse(window.resetsAt!) > Date.parse(latest)
+            ? window.resetsAt!
+            : latest,
+        null,
+      );
+    }
+  }
+
+  // Fallback to error message parsing if the turn failure carried a retry string.
+  if (failureMessage) {
+    const parsedReset = parseCodexErrorMessageResetAt(failureMessage, nowMs);
+    if (parsedReset) {
+      // If snapshot has an unexpired window within 2 minutes of the parsed timestamp,
+      // prefer the high-precision seconds from the snapshot window.
+      if (snapshot) {
+        const parsedMs = Date.parse(parsedReset);
+        for (const window of codexRateLimitsToWindows(snapshot)) {
+          if (
+            window.resetsAt &&
+            Math.abs(Date.parse(window.resetsAt) - parsedMs) <= 120_000
+          ) {
+            return window.resetsAt;
+          }
+        }
+      }
+      return parsedReset;
+    }
+  }
+
+  return null;
 }
