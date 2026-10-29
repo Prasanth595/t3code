@@ -38,7 +38,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  readonly clientFileSystem?: boolean;
+  readonly clientFileReads?: boolean;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
@@ -57,10 +57,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientCapabilities: {
-        fs: {
-          readTextFile: input.clientFileSystem === true,
-          writeTextFile: input.clientFileSystem === true,
-        },
+        // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
+        fs: { readTextFile: input.clientFileReads === true, writeTextFile: false },
         terminal: false,
       },
       transformStdout: makeAntigravityStdoutTransform(
