@@ -416,6 +416,38 @@ describe("Antigravity tool results", () => {
 });
 
 describe("Antigravity served reads", () => {
+  const flush = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "failed",
+        rawOutput: "Tool execution failed",
+      },
+    }).update;
+
+  it("credits a read T3 served before the agent announced it", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_late",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    expect(flush(reads, "call_late")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_late",
+      status: "completed",
+    });
+  });
+
   it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
     const reads = makeAntigravityReadRepair();
     const announce = (toolCallId: string) =>
@@ -434,16 +466,7 @@ describe("Antigravity served reads", () => {
     reads.reset();
     announce("call_current");
     reads.attempted("/repo/a.ts", true);
-    const flushed = reads.repair({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "call_current",
-        status: "failed",
-        rawOutput: "Tool execution failed",
-      },
-    });
-    expect(flushed.update).toEqual({
+    expect(flush(reads, "call_current")).toEqual({
       sessionUpdate: "tool_call_update",
       toolCallId: "call_current",
       status: "completed",

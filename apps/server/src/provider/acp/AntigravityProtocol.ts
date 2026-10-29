@@ -238,17 +238,25 @@ function antigravityClientReadPath(update: {
  * with the next unrelated step error. Report reads T3 served as completed instead.
  */
 export function makeAntigravityReadRepair() {
-  const openReads = new Map<string, { readonly path: string; outcome?: "served" | "refused" }>();
+  type Outcome = "served" | "refused";
+  const openReads = new Map<string, { readonly path: string; outcome?: Outcome }>();
+  // The agent runs a client tool in a background task, so its request can precede the announcement.
+  const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
   return {
     /** Earlier turns' rows are already settled, and their unanswered reads must not take credit. */
-    reset: () => openReads.clear(),
+    reset: () => {
+      openReads.clear();
+      earlyOutcomes.length = 0;
+    },
     /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
     attempted: (path: string, served: boolean) => {
+      const outcome = served ? "served" : "refused";
       for (const read of openReads.values()) {
         if (read.path !== path || read.outcome !== undefined) continue;
-        read.outcome = served ? "served" : "refused";
+        read.outcome = outcome;
         return;
       }
+      earlyOutcomes.push({ path, outcome });
     },
     repair: (
       notification: EffectAcpSchema.SessionNotification,
@@ -259,7 +267,9 @@ export function makeAntigravityReadRepair() {
       }
       const path = antigravityClientReadPath(update);
       if (path !== undefined && !openReads.has(update.toolCallId)) {
-        openReads.set(update.toolCallId, { path });
+        const early = earlyOutcomes.findIndex((entry) => entry.path === path);
+        const outcome = early === -1 ? undefined : earlyOutcomes.splice(early, 1)[0]?.outcome;
+        openReads.set(update.toolCallId, outcome === undefined ? { path } : { path, outcome });
       }
       if (update.status !== "completed" && update.status !== "failed") return notification;
       const read = openReads.get(update.toolCallId);
