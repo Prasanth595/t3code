@@ -122,7 +122,7 @@ export function threadHasQueuedTurnStart(
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt"
+    "createdAt" | "latestUserAuthoredMessageAt" | "snoozedAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -139,7 +139,12 @@ function pullRequestSettles(
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
   if (Number.isNaN(pullRequestAtMs)) return false;
-  return pullRequestAtMs >= userAnchorMs;
+  if (pullRequestAtMs < userAnchorMs) return false;
+  const snoozedAtMs = toMillis(thread.snoozedAt);
+  if (pullRequest.state === "merged" && snoozedAtMs !== null && pullRequestAtMs < snoozedAtMs) {
+    return false;
+  }
+  return true;
 }
 
 export function isAutoSettlementCandidate(

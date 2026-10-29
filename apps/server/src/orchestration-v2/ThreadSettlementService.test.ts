@@ -1462,4 +1462,26 @@ describe("isSnoozed", () => {
       }),
     ).toEqual(at(-DAY_MS));
   });
+
+  it("ignores a merge that finished before the current snooze started", () => {
+    const thread = shell({
+      ...snoozed,
+      status: "completed",
+      latestRunCompletedAt: at(-DAY_MS),
+    });
+
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: {
+          state: "merged",
+          mergedAt: DateTime.formatIso(at(-3 * DAY_MS)),
+        },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+        autoSettleSnoozedOnMerge: true,
+      }),
+    ).toBeNull();
+  });
 });

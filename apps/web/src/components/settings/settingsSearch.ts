@@ -70,6 +70,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresThreadAutoSettleSnoozedOnMerge?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -81,6 +82,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasThreadAutoSettleSnoozedOnMerge: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -506,6 +508,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "auto-settle-merged-threads",
     searchTerms: ["snooze pull request merge auto-settle sidebar wake"],
     requiresThreadAutoSettlement: true,
+    requiresThreadAutoSettleSnoozedOnMerge: true,
     scope: "project-defaults",
   },
   {
@@ -1334,6 +1337,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresThreadAutoSettleSnoozedOnMerge ||
+        availability.hasThreadAutoSettleSnoozedOnMerge) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

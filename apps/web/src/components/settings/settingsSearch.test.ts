@@ -113,6 +113,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasThreadAutoSettleSnoozedOnMerge: false,
     });
 
     const gatedIds = new Set<string>([
@@ -133,6 +134,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "settle-snoozed-threads-on-merge",
       "linked-environments",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
@@ -148,6 +150,7 @@ describe("searchSettings", () => {
       localEnvironmentDisabled: true,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasThreadAutoSettleSnoozedOnMerge: false,
     };
     const results = (hasPeerLinkHost: boolean) =>
       searchSettings(
@@ -215,11 +218,20 @@ describe("settings search targets", () => {
 });
 
 describe("auto-settlement search availability", () => {
-  function environment(id: string, { connected = true, loaded = true } = {}) {
+  function environment(
+    id: string,
+    { connected = true, loaded = true, snoozedOnMerge = true } = {},
+  ) {
     return {
       environmentId: EnvironmentId.make(id),
       connection: { phase: connected ? ("connected" as const) : ("offline" as const) },
-      serverConfig: loaded ? { environment: { capabilities: {} } } : null,
+      serverConfig: loaded
+        ? {
+            environment: {
+              capabilities: snoozedOnMerge ? { threadAutoSettleSnoozedOnMerge: true } : {},
+            },
+          }
+        : null,
     };
   }
 
@@ -239,6 +251,7 @@ describe("auto-settlement search availability", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasThreadAutoSettleSnoozedOnMerge: true,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",
