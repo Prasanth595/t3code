@@ -1933,6 +1933,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   /** Excludes wakes and agent messages that advance latestUserMessageAt through the user role. */
   latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Short single-line excerpt of the latest user-authored message. Absent from older servers. */
+  latestUserAuthoredMessagePreview: Schema.optional(Schema.NullOr(Schema.String)),
   hasActionableProposedPlan: Schema.Boolean,
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

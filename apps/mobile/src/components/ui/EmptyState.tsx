@@ -11,10 +11,12 @@ export function EmptyState(props: {
   readonly onAction?: () => void;
   readonly action?: ReactNode;
   readonly variant?: "card" | "plain";
+  readonly illustration?: ReactNode;
 }) {
-  if (props.variant === "plain") {
+  if (props.variant === "plain" || props.illustration) {
     return (
       <View className="items-center px-8 py-8">
+        {props.illustration}
         <Text textRole="title" className="text-center font-t3-bold text-foreground">
           {props.title}
         </Text>

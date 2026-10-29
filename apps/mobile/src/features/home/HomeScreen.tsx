@@ -37,6 +37,7 @@ import {
   ANDROID_READING_MAX_WIDTH,
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
+import { EmptyOrb } from "../../components/ui/EmptyOrb";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { AgentLockedScreen } from "../chat/AgentLockedScreen";
 import { hasAgenticAccess, useMiraAccess } from "../chat/miraChat";
@@ -148,7 +149,12 @@ const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
   readonly projectCount: number;
-}): { readonly title: string; readonly detail: string; readonly loading: boolean } {
+}): {
+  readonly title: string;
+  readonly detail: string;
+  readonly loading: boolean;
+  readonly illustration?: boolean;
+} {
   const { catalogState } = props;
   if (catalogState.isLoadingConnections) {
     return {
@@ -205,7 +211,8 @@ function deriveEmptyState(props: {
 
   return {
     title: "Nicio conversație încă",
-    detail: "Creează o sarcină ca să pornești o sesiune nouă într-unul din proiectele conectate.",
+    detail: "Pornește o conversație nouă.",
+    illustration: true,
     loading: false,
   };
 }
@@ -715,6 +722,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 ) : undefined
               }
               variant="plain"
+              illustration={emptyState.illustration ? <EmptyOrb /> : undefined}
             />
             {emptyState.loading ? (
               <View className="mt-4 items-center">
@@ -767,8 +775,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ) : (
       <EmptyState
         title="Nicio conversație încă"
-        detail="Creează o sarcină ca să pornești o sesiune nouă."
-        variant={Platform.OS === "android" ? "plain" : undefined}
+        detail="Pornește o conversație nouă."
+        illustration={<EmptyOrb />}
       />
     );
 
