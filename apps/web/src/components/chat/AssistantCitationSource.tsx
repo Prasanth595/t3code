@@ -332,6 +332,11 @@ function observeAssistantCitationSource({
   return dispose;
 }
 
+// Claude 5.1+ writes some user-facing updates as thinking blocks, which the adapter shows as
+// assistant messages with a `:thinking:<n>` item id. Quoting one sends the model's own
+// reasoning back to it, and the API rejects the message as reasoning extraction.
+const THINKING_DERIVED_MESSAGE_ID = /:thinking:\d+$/u;
+
 export function AssistantCitationSource({
   messageId,
   threadRef,
@@ -355,6 +360,8 @@ export function AssistantCitationSource({
     if (!root || !list || !request || request.citation.messageId !== messageId) return;
     return observeAssistantCitationSource({ root, itemKey, request, list });
   }, [itemKey, listRef, messageId, request]);
+
+  if (THINKING_DERIVED_MESSAGE_ID.test(messageId)) return <>{children}</>;
 
   return (
     <div
