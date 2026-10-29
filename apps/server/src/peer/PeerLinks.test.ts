@@ -531,39 +531,55 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+/** An https listener whose certificate this machine does not trust. */
+const serveUntrusted = Layer.build(
+  Layer.fresh(
+    NodeHttpServer.layer(
+      () =>
+        NodeHttps.createServer({
+          key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+          cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+        }),
+      { port: 0, host: "127.0.0.1" },
+    ),
+  ),
+).pipe(
+  Effect.flatMap((server) =>
+    Effect.gen(function* () {
+      yield* HttpServer.serve(Effect.succeed(HttpServerResponse.empty({ status: 404 }))).pipe(
+        Layer.build,
+      );
+      const address = (yield* HttpServer.HttpServer).address;
+      if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
+      return `https://127.0.0.1:${address.port}`;
+    }).pipe(Effect.provideContext(server)),
+  ),
+);
+
 it.effect("names an untrusted certificate instead of calling the peer something else", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const server = yield* Layer.build(
-        Layer.fresh(
-          NodeHttpServer.layer(
-            () =>
-              NodeHttps.createServer({
-                key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
-                cert: NodeFS.readFileSync(
-                  new URL("./fixtures/localhost-cert.pem", import.meta.url),
-                ),
-              }),
-            { port: 0, host: "127.0.0.1" },
-          ),
-        ),
-      );
-      const url = yield* Effect.gen(function* () {
-        yield* HttpServer.serve(Effect.succeed(HttpServerResponse.empty({ status: 404 }))).pipe(
-          Layer.build,
-        );
-        const address = (yield* HttpServer.HttpServer).address;
-        if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
-        return `https://127.0.0.1:${address.port}`;
-      }).pipe(Effect.provideContext(server));
+      const untrusted = yield* serveUntrusted;
       const a = yield* makeA(laptop);
       const failed = yield* a.links
-        .link({ url, pairingCode: "unused", access: "auto" })
+        .link({ url: untrusted, pairingCode: "unused", access: "auto" })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
       expect(failed.message).toContain("certificate");
       expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(yield* a.links.list).toEqual([]);
+
+      // A stored link tries its next address past an untrusted one.
+      const b = yield* serveB(box);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* a.sql`
+        UPDATE peer_environment_links
+        SET urls_json = ${JSON.stringify([untrusted, b.url])}
+        WHERE environment_id = ${box.environmentId}
+      `;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
-  ),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

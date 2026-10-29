@@ -229,11 +229,13 @@ const make = Effect.gen(function* () {
     );
 
   /** Whether `url` answers as `environmentId`, counting an untrusted certificate as no. */
-  const answersAs = (url: string, environmentId: EnvironmentId) =>
-    describe(url).pipe(
-      Effect.orElseSucceed(() => Option.none()),
-      Effect.map((found) => Option.filter(found, (peer) => peer.environmentId === environmentId)),
-    );
+  const answersAs = Effect.fn("PeerLinks.answersAs")(function* (
+    url: string,
+    environmentId: EnvironmentId,
+  ) {
+    const found = yield* describe(url).pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.filter(found, (peer) => peer.environmentId === environmentId);
+  });
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
