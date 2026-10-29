@@ -2053,12 +2053,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?.preventDefault();
       return;
     }
-    // An empty draft has nothing to send; Enter does what the Resume thread button does.
-    if (showResumeAction && !activePendingProgress) {
-      event?.preventDefault();
-      if (!isSendBusy && environmentUnavailable === null) onResume();
-      return;
-    }
     // A send while a pasted image is still compressing would strand that image:
     // the turn snapshot wouldn't include it, and it would surface in the *next*
     // draft instead.
@@ -2078,6 +2072,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         title: "Still bringing attached context into this message.",
         description: "Send again once its chip resolves.",
       });
+      return;
+    }
+    // An empty draft has nothing to send; Enter does what the Resume thread button does.
+    if (showResumeAction && !activePendingProgress) {
+      event?.preventDefault();
+      if (!isSendBusy && environmentUnavailable === null) onResume();
       return;
     }
     const submission = submitComposerDraft({
