@@ -1234,7 +1234,8 @@ export function createDeviceStreamClient(
         configuring = false;
         connecting(event.reason || undefined);
       }
-      scheduleRetry("input", () => connectAndroid(inputOnly));
+      // A full socket re-probes, so one failed /api read does not pin SEMU on a WebRTC host.
+      scheduleRetry("input", () => (inputOnly ? connectAndroid(true) : void startAndroid()));
     };
     ws.onerror = () => ws.close();
   };
