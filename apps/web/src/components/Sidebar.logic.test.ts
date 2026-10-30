@@ -982,17 +982,24 @@ describe("unseen completion with background work", () => {
   it.each([
     {
       roster: "dev server",
-      task: { kind: "command" },
+      task: { kind: "command", awaited: false },
       status: "ready",
       receded: false,
       pill: "Completed",
     },
     {
       roster: "dev server watchdog",
-      task: { kind: "monitor" },
+      task: { kind: "monitor", awaited: false },
       status: "ready",
       receded: false,
       pill: "Completed",
+    },
+    {
+      roster: "unmarked command",
+      task: { kind: "command" },
+      status: "waiting",
+      receded: true,
+      pill: "Waiting",
     },
     {
       roster: "awaited command",

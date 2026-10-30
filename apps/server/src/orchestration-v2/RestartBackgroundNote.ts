@@ -150,9 +150,9 @@ export function isRestartNoteSource(
 }
 
 /**
- * Matches the Working-section hold: a shell or monitor wakes it only when the agent said it
- * waits on it. Most are dev servers and their watchdogs, so their note waits for the next
- * user message.
+ * Stricter than the Working-section hold: a shell or monitor wakes the agent only when it said
+ * it waits on it, since turn-item work carries no mark and many are dev servers and their
+ * watchdogs. Their note waits for the next user message.
  */
 export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
   return work.awaited === true || (work.kind !== "shell" && work.kind !== "monitor");

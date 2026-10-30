@@ -89,18 +89,20 @@ export function deriveBlockedOnThreadWait(input: {
 export function backgroundWorkHoldsCompletion(
   tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
 ): boolean {
-  return tasks.some(
-    (task) => task.awaited === true || backgroundWorkKindHoldsCompletion(task.kind),
-  );
+  return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind, task.awaited));
 }
 
-// Commands and monitors are as often a dev server or its watchdog as a wait, so they hold
-// only when the agent marks them awaited.
-function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
+// Agents usually wait on the commands and monitors they start, so those hold unless the agent
+// marks one it leaves running (dev server, watcher) with `awaited: false`. Subagents and other
+// background tasks always hold.
+function backgroundWorkKindHoldsCompletion(
+  kind: PendingBackgroundWorkTask["kind"],
+  awaited: PendingBackgroundWorkTask["awaited"],
+): boolean {
   switch (kind) {
     case "command":
     case "monitor":
-      return false;
+      return awaited !== false;
     case "subagent":
     case "background_task":
       return true;

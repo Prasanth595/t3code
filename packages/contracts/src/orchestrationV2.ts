@@ -980,10 +980,10 @@ const PendingBackgroundTaskFields = {
   /** The subagent task that started this work and waits on it. */
   parentTaskId: Schema.optional(TrimmedNonEmptyString),
   /**
-   * The agent declared it resumes when this work ends, so the thread holds like it does for a
-   * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
+   * The agent's declaration: `true` when it resumes when this work ends, `false` for work it
+   * left running (dev server, watcher). Unset commands and monitors hold like `true`.
    */
-  awaited: Schema.optional(Schema.Literal(true)),
+  awaited: Schema.optional(Schema.Boolean),
 };
 
 export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
