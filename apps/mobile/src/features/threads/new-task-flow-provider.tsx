@@ -328,6 +328,7 @@ export function NewTaskFlowProvider(
 
   const linkedEnvironments = useLinkedEnvironments(selectedProject?.environmentId ?? null);
   const storedStickyModelSelection = useStickyComposerModelSelection();
+  const modelSelectionNow = useNowMinuteMs();
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
@@ -425,7 +426,6 @@ export function NewTaskFlowProvider(
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const modelSelectionNow = useNowMinuteMs();
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
