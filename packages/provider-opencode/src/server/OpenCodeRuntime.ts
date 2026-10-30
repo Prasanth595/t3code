@@ -97,6 +97,13 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
     ? (value as Record<string, unknown>)
     : {};
 
+// The SDKs apply configured headers after the key, so a direct credential would reach the proxy.
+const AUTH_HEADER_PATTERN = /^(authorization|proxy-authorization|x-api-key|api-key)$/i;
+const withoutAuthHeaders = (headers: unknown) =>
+  Object.fromEntries(
+    Object.entries(asRecord(headers)).filter(([name]) => !AUTH_HEADER_PATTERN.test(name)),
+  );
+
 /** OpenCode accepts JSONC here, but the proxy override can only merge into plain JSON. */
 export const isPlainJsonOpenCodeConfig = (environment: NodeJS.ProcessEnv): boolean =>
   Option.isSome(decodeRequestedOpenCodeConfig(environment));
@@ -117,13 +124,30 @@ export function applyOpenCodeProxyEnvironment(
   const providers = asRecord(base.provider);
   const routed = (id: string) => {
     const provider = asRecord(providers[id]);
+    const options = asRecord(provider.options);
     return {
       ...provider,
       options: {
-        ...asRecord(provider.options),
+        ...options,
+        ...("headers" in options ? { headers: withoutAuthHeaders(options.headers) } : {}),
         baseURL: providerProxyApiUrl(proxy),
         apiKey: providerProxyToken(proxy),
       },
+      ...("models" in provider
+        ? {
+            models: Object.fromEntries(
+              Object.entries(asRecord(provider.models)).map(([modelId, model]) => {
+                const entry = asRecord(model);
+                return [
+                  modelId,
+                  "headers" in entry
+                    ? { ...entry, headers: withoutAuthHeaders(entry.headers) }
+                    : model,
+                ];
+              }),
+            ),
+          }
+        : {}),
     };
   };
   const content = encodeUnknownJsonString({

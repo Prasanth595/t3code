@@ -12,7 +12,14 @@ describe("applyOpenCodeProxyEnvironment", () => {
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
           theme: "t3",
           provider: {
-            anthropic: { options: { timeout: 60_000, apiKey: "sk-ant-direct" } },
+            anthropic: {
+              options: {
+                timeout: 60_000,
+                apiKey: "sk-ant-direct",
+                headers: { Authorization: "Bearer direct", "X-Trace": "1" },
+              },
+              models: { "claude-x": { headers: { "x-api-key": "sk-ant-direct", "X-Tier": "a" } } },
+            },
             openrouter: { options: { apiKey: "or" } },
           },
         }),
@@ -35,7 +42,10 @@ describe("applyOpenCodeProxyEnvironment", () => {
       theme: "t3",
       enabled_providers: ["anthropic", "openai"],
       provider: {
-        anthropic: { options: { timeout: 60_000, ...proxied } },
+        anthropic: {
+          options: { timeout: 60_000, headers: { "X-Trace": "1" }, ...proxied },
+          models: { "claude-x": { headers: { "X-Tier": "a" } } },
+        },
         openai: { options: proxied },
         openrouter: { options: { apiKey: "or" } },
       },
