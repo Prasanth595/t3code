@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import {
   ACP_REGISTRY_MAX_AGENTS,
   ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
@@ -29,6 +30,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { providerClients } from "./providerDriverMeta";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
@@ -37,6 +39,9 @@ function errorMessage(error: unknown): string {
 }
 
 const ACP_REGISTRY_SEARCH_DEBOUNCE_MS = 300;
+const FIRST_CLASS_REGISTRY_AGENT_IDS = new Set(
+  providerClients.definitions.flatMap((definition) => definition.acpRegistryAgentIds ?? []),
+);
 
 function applyAcpRegistryPrepareResult(
   agent: AcpRegistrySearchAgent,
@@ -115,7 +120,7 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
         return;
       }
       if (!isAtomCommandInterrupted(result)) {
-        setPrepareError(errorMessage(squashAtomCommandFailure(result)));
+        pipe(squashAtomCommandFailure(result), errorMessage, setPrepareError);
       }
     },
   };
@@ -152,7 +157,8 @@ export function AcpRegistrySearchStep({
     void registry.prepare(agent, onPrepared);
   };
 
-  const results = search.data?.agents ?? null;
+  const results =
+    search.data?.agents.filter((agent) => !FIRST_CLASS_REGISTRY_AGENT_IDS.has(agent.id)) ?? null;
   const isInitialSearch = search.isPending && results === null;
   const isRefreshing = search.isPending && results !== null;
   const resultCount = results?.length ?? 0;
