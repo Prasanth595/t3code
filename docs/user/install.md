@@ -205,9 +205,10 @@ Then turn on **Use proxy** for each Claude, Codex, or OpenCode provider that sho
 A provider with **Use proxy** on never falls back to its own login. If the proxy is removed, the
 provider shows as unavailable until you add a proxy again or turn the switch off. Codex threads
 started through the proxy need it to continue. T3-managed ChatGPT sign-in and external OpenCode
-servers cannot use a proxy. While OpenCode uses the proxy, it runs without its plugins, because
-plugin logins such as ChatGPT would send requests around the proxy. This needs OpenCode 1.14.49 or
-newer.
+servers cannot use a proxy. While OpenCode uses the proxy, it offers only Anthropic and OpenAI
+models and runs without its plugins, because other providers and plugin logins such as ChatGPT
+would send requests around the proxy. This needs OpenCode 1.14.49 or newer, and any
+`OPENCODE_CONFIG_CONTENT` must be plain JSON.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),

@@ -24,8 +24,14 @@ describe("applyOpenCodeProxyEnvironment", () => {
     // Plugins such as Codex's ChatGPT login replace fetch and would bypass the proxy.
     expect(environment.OPENCODE_DISABLE_DEFAULT_PLUGINS).toBe("1");
     expect(environment.OPENCODE_PURE).toBe("1");
+    expect(
+      OpenCodeRuntime.isPlainJsonOpenCodeConfig({
+        OPENCODE_CONFIG_CONTENT: '{ "theme": "t3", // comment\n }',
+      }),
+    ).toBe(false);
     expect(JSON.parse(environment.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
       theme: "t3",
+      enabled_providers: ["anthropic", "openai"],
       provider: {
         anthropic: { options: { timeout: 60_000, ...proxied } },
         openai: { options: proxied },

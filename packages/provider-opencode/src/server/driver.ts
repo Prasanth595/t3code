@@ -203,10 +203,17 @@ export const OpenCodeDriver: ProviderDriver<
         detail: "An external OpenCode server cannot route through this environment's proxy.",
       });
     }
-    const processEnv = OpenCodeRuntime.applyOpenCodeProxyEnvironment(
-      yield* mergeProviderInstanceEnvironment(environment),
-      proxy,
-    );
+    const mergedEnv = yield* mergeProviderInstanceEnvironment(environment);
+    // Dropping undecodable content would silently discard the user's agents and MCP servers.
+    if (proxy !== undefined && !OpenCodeRuntime.isPlainJsonOpenCodeConfig(mergedEnv)) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail:
+          "OPENCODE_CONFIG_CONTENT must be plain JSON, without comments or trailing commas, to use the proxy.",
+      });
+    }
+    const processEnv = OpenCodeRuntime.applyOpenCodeProxyEnvironment(mergedEnv, proxy);
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -363,6 +370,7 @@ export const OpenCodeDriver: ProviderDriver<
           enabled: effectiveConfig.enabled,
           serverUrl: effectiveConfig.serverUrl,
           environment: processEnv,
+          proxied: proxy !== undefined,
         }),
       },
       { concurrency: "unbounded" },

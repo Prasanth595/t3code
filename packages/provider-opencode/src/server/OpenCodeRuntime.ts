@@ -85,6 +85,10 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
     ? (value as Record<string, unknown>)
     : {};
 
+/** OpenCode accepts JSONC here, but the proxy override can only merge into plain JSON. */
+export const isPlainJsonOpenCodeConfig = (environment: NodeJS.ProcessEnv): boolean =>
+  Option.isSome(decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})));
+
 /**
  * Points OpenCode's built-in Anthropic and OpenAI providers at the proxy. Their model catalogs
  * stay intact, and the user's own config content survives around the override.
@@ -112,6 +116,8 @@ export function applyOpenCodeProxyEnvironment(
   };
   const content = encodeUnknownJsonString({
     ...base,
+    // Any other configured provider would send turns, and spend, around the proxy.
+    enabled_providers: ["anthropic", "openai"],
     provider: { ...providers, anthropic: routed("anthropic"), openai: routed("openai") },
   });
   // A stored ChatGPT login attaches the built-in Codex plugin, whose fetch rewrites requests to

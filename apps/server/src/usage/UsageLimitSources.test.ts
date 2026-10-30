@@ -88,7 +88,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
-it("reports the routing proxy's accounts unless a hub already points at it", () => {
+it("reports the routing proxy's accounts unless a hub already points at it or owns its id", () => {
   const hub = {
     kind: "cliproxy" as const,
     url: "http://proxy:8317/",
@@ -109,8 +109,17 @@ it("reports the routing proxy's accounts unless a hub already points at it", () 
       enabled: true,
     },
   });
-  const listed = { [UsageLimitSourceId.make("hub")]: hub };
-  expect(
-    UsageLimitSources.effectiveUsageLimitSources({ ...settings, usageLimitSources: listed }),
-  ).toBe(listed);
+  for (const listed of [
+    { [UsageLimitSourceId.make("hub")]: hub },
+    {
+      [UsageLimitSources.PROVIDER_PROXY_SOURCE_ID]: {
+        ...hub,
+        url: "https://other.example.test",
+      },
+    },
+  ]) {
+    expect(
+      UsageLimitSources.effectiveUsageLimitSources({ ...settings, usageLimitSources: listed }),
+    ).toBe(listed);
+  }
 });

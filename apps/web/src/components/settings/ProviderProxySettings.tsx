@@ -1,4 +1,5 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+import { XIcon } from "lucide-react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -61,15 +62,28 @@ export function ProviderProxySettings({
         title={<label htmlFor="provider-proxy-api-key-input">API key</label>}
         description="One of the proxy's API keys. Leave empty if the proxy has none."
         control={
-          <SecretInput
-            id="provider-proxy-api-key-input"
-            size="sm"
-            className={CONTROL_CLASS}
-            value=""
-            configured={proxy.apiKey !== ""}
-            disabled={readOnly}
-            onCommit={(apiKey) => update({ apiKey: apiKey.trim() })}
-          />
+          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+            <SecretInput
+              id="provider-proxy-api-key-input"
+              size="sm"
+              className="min-w-0 flex-1"
+              value=""
+              configured={proxy.apiKey !== ""}
+              disabled={readOnly}
+              onCommit={(apiKey) => update({ apiKey: apiKey.trim() })}
+            />
+            {proxy.apiKey !== "" && !readOnly ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost-destructive"
+                onClick={() => update({ apiKey: "" })}
+                aria-label="Clear API key"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
         }
       />
       <SettingsRow
@@ -77,15 +91,28 @@ export function ProviderProxySettings({
         title={<label htmlFor="provider-proxy-management-key-input">Management key</label>}
         description="Optional. Shows the proxy's accounts under Usage → Limits."
         control={
-          <SecretInput
-            id="provider-proxy-management-key-input"
-            size="sm"
-            className={CONTROL_CLASS}
-            value=""
-            configured={proxy.managementKey !== ""}
-            disabled={readOnly}
-            onCommit={(managementKey) => update({ managementKey: managementKey.trim() })}
-          />
+          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+            <SecretInput
+              id="provider-proxy-management-key-input"
+              size="sm"
+              className="min-w-0 flex-1"
+              value=""
+              configured={proxy.managementKey !== ""}
+              disabled={readOnly}
+              onCommit={(managementKey) => update({ managementKey: managementKey.trim() })}
+            />
+            {proxy.managementKey !== "" && !readOnly ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost-destructive"
+                onClick={() => update({ managementKey: "" })}
+                aria-label="Clear management key"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
         }
       />
     </SettingsSection>
