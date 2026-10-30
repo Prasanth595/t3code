@@ -24,7 +24,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
-  showProvider: boolean;
+  inlineProviderIcon: boolean;
+  showInstanceBadge: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
   jumpLabel?: string | null;
@@ -37,6 +38,27 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   };
   const providerLabel = getProviderRowLabel(props.providerDisplayName, props.subProvider);
+  const providerIcon = props.inlineProviderIcon ? (
+    <ProviderInstanceIcon
+      driverKind={props.driverKind}
+      displayName={props.providerDisplayName}
+      accentColor={props.providerAccentColor}
+      acpRegistryAgentId={props.acpRegistryAgentId}
+      acpRegistryIconUrl={props.acpRegistryIconUrl}
+      showBadge={props.showInstanceBadge}
+      size="compact"
+      className="size-3.5"
+    />
+  ) : (
+    <ProviderInstanceIcon
+      driverKind={props.driverKind}
+      displayName={props.providerDisplayName}
+      acpRegistryAgentId={props.acpRegistryAgentId}
+      acpRegistryIconUrl={props.acpRegistryIconUrl}
+      className="size-3"
+      iconClassName="size-3"
+    />
+  );
 
   const row = (
     <ComboboxItem
@@ -52,8 +74,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
+          {props.inlineProviderIcon ? <span aria-hidden="true">{providerIcon}</span> : null}
           <div className="min-w-0 truncate text-sm font-normal leading-snug">
             {getDisplayModelName(model)}
+            {/* The inline icon is decorative, so name the provider for screen readers. */}
+            {props.inlineProviderIcon ? (
+              <span className="sr-only">, {props.providerDisplayName}</span>
+            ) : null}
           </div>
           {props.showNewBadge ? (
             <span
@@ -69,21 +96,16 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </Badge>
           ) : null}
         </div>
-        {props.showProvider && (
-          <div className="mt-1 flex items-center gap-1.5">
-            <ProviderInstanceIcon
-              driverKind={props.driverKind}
-              displayName={props.providerDisplayName}
-              acpRegistryAgentId={props.acpRegistryAgentId}
-              acpRegistryIconUrl={props.acpRegistryIconUrl}
-              className="size-3"
-              iconClassName="size-3"
-            />
+        {props.subProvider ? (
+          <div
+            className={cn("mt-1 flex items-center gap-1.5", props.inlineProviderIcon && "pl-5.5")}
+          >
+            {props.inlineProviderIcon ? null : providerIcon}
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
               {providerLabel}
             </span>
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

@@ -61,6 +61,7 @@ import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
@@ -580,8 +581,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
-  // Inside one provider's tab the provider line repeats the selected rail icon on every row.
-  const rowsMixProviders = isSearching || selectedInstanceId === "favorites";
+  // Rows that mix providers mark each with an inline icon; a provider's own tab already shows it on the rail.
+  const inlineProviderIcon = isSearching || selectedInstanceId === "favorites";
   // Fit the tallest tab so switching tabs never resizes the popup and moves the rail under the cursor.
   const tallestTabUnits = (() => {
     const unitsByTab = new Map<ProviderInstanceId | "favorites", number>();
@@ -597,7 +598,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     for (const model of flatModels) {
       if (!matchesLockedProvider(model)) continue;
       const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
-      if (isFavorite) addRow("favorites", true);
+      if (isFavorite) addRow("favorites", Boolean(model.subProvider));
       if (model.isLegacy && !isFavorite) {
         tabsWithLegacyRow.add(model.instanceId);
       } else {
@@ -998,6 +999,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 }
                 const disabledReason =
                   getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const entry = entryByInstanceId.get(model.instanceId);
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1017,7 +1019,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         ? selectedModelKeySet.has(modelKey)
                         : modelKey === activeModelKey
                     }
-                    showProvider={rowsMixProviders || Boolean(model.subProvider)}
+                    inlineProviderIcon={inlineProviderIcon}
+                    showInstanceBadge={
+                      inlineProviderIcon &&
+                      entry !== undefined &&
+                      shouldShowInstanceBadge(entry, instanceEntries)
+                    }
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
