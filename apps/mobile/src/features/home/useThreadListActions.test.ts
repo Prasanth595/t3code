@@ -204,6 +204,27 @@ afterEach(() => {
 });
 
 describe("thread arrangement save recovery", () => {
+  it("keeps a return to Active after a drafted pin is auto-settled", async () => {
+    const thread = makeThread();
+    state.shells = [thread];
+    const actions = useThreadListActions();
+    const pinned = actions.previewThreadMove(new Map(), thread, {
+      section: "pinned",
+      targetId: null,
+      placement: "after",
+    });
+    expect(pinned).not.toBeNull();
+    state.shells = [{ ...thread, settledOverride: "settled" }];
+    const active = actions.previewThreadMove(pinned!, thread, {
+      section: "active",
+      targetId: null,
+      placement: "after",
+    });
+    expect(active).not.toBeNull();
+    expect(await actions.saveThreadArrangement(active!)).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toContain("unsettle");
+  });
+
   it.each([
     [new Error("Server rejected pin"), "Server rejected pin"],
     [{ reason: "offline" }, "The thread could not be pinned."],

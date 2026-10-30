@@ -756,16 +756,14 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
   ) => {
-    const shells = withThreadDrafts(
-      appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom),
-      drafts,
-    );
+    const savedShells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
+    const shells = withThreadDrafts(savedShells, drafts);
     const plan = planThreadMove(shells, thread, direction);
     if (plan === null) return null;
     selectionHaptic();
     return recordThreadMove(
       drafts,
-      shells,
+      savedShells,
       applyThreadMove(
         shells,
         scopedThreadKey(plan.thread.environmentId, plan.thread.id),
