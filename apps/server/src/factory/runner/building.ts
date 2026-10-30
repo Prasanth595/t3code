@@ -649,6 +649,7 @@ const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
       seen.lastBranch,
       seen.resumedFrom,
       seen.launchResumedFrom,
+      seen.interruption?.branch,
       seen.relaunch?.branch,
       launchBranchOf(seen.worktree),
       ...seen.boundBranches,
