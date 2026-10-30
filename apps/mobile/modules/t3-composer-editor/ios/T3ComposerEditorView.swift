@@ -444,6 +444,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var tokensNeedRebuild = false
   private var chipsNeedMeasuredWidth = false
   private var hasDeferredForcedRebuild = false
+  private var hasDeferredControlledReplacement = false
   private var pendingContentOffset: CGPoint?
   private var needsSelectionReveal = false
   private var selectionBeforeFocusingTap: (selection: ComposerSelectionPayload, value: String)?
@@ -660,7 +661,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let previousSelection = sourceSelection()
     value = document.value
     requestedSelection = document.selection
-    applyControlledDocument(force: tokensNeedRebuild)
+    applyControlledDocument(force: tokensNeedRebuild, allowsReplacingComposition: true)
     applyRequestedSelection()
     cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
     if tokensMatchCurrentValue() {
@@ -781,6 +782,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func textViewDidChange(_ textView: UITextView) {
+    // A replacement that could not commit its composition is still pending:
+    // applying the stored value must win over emitting the committed text.
+    if hasDeferredControlledReplacement {
+      if textView.markedTextRange == nil {
+        applyControlledDocument()
+      }
+      return
+    }
     emitTextChange()
   }
 
@@ -857,14 +866,30 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     onComposerBlur()
   }
 
-  private func applyControlledDocument(force: Bool = false) {
-    // Rebuilding the attributed string tears down an active IME composition.
-    // Skip while marked text exists; committing the composition sends a new
-    // value from JS, and that update rebuilds, keeping any skipped force.
+  private func applyControlledDocument(
+    force: Bool = false,
+    allowsReplacingComposition: Bool = false
+  ) {
+    // An identical value is an echo or a local repaint: defer until the
+    // composition commits and replay any force. A different value is a
+    // deliberate replacement, such as send clearing the draft, and must
+    // win, or the commit later emits the sent text back into the draft.
     if textView.markedTextRange != nil {
-      hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
-      updatePlaceholderVisibility()
-      return
+      if !allowsReplacingComposition || textView.serializedText() == value {
+        hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
+        updatePlaceholderVisibility()
+        return
+      }
+      isApplyingControlledValue = true
+      textView.unmarkText()
+      isApplyingControlledValue = false
+      // A failed commit must not write attributed text under a live composition.
+      guard textView.markedTextRange == nil else {
+        hasDeferredControlledReplacement = true
+        hasDeferredForcedRebuild = true
+        updatePlaceholderVisibility()
+        return
+      }
     }
     let shouldForce = force || hasDeferredForcedRebuild
     let currentSource = textView.serializedText()
@@ -873,6 +898,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     hasDeferredForcedRebuild = false
+    hasDeferredControlledReplacement = false
 
     let previousSelection = sourceSelection()
     if textView.isScrollEnabled {
