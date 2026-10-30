@@ -2912,7 +2912,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     const activeElement = document.activeElement;
-    setProjectScopeMenuOpen(true, activeElement instanceof HTMLElement ? activeElement : null);
+    setProjectScopeMenuOpen(
+      true,
+      activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null,
+    );
   });
   const readRoutePanelsOpen = useStableCallback(() => ({
     terminalOpen: routeTerminalOpen,
