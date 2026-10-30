@@ -1,12 +1,7 @@
-import type {
-  OrchestrationV2PendingBackgroundTask,
-  OrchestrationV2ProviderGoal,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationV2PendingBackgroundTask, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   presentPendingBackgroundWork,
-  presentProviderGoal,
   type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
@@ -18,7 +13,6 @@ import {
   GitBranchIcon,
   MessageCircleIcon,
   ShieldQuestionIcon,
-  TargetIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -63,47 +57,6 @@ export function childInputNowItem(input: {
       <InlineButton onClick={() => onOpenThread(first.id)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
       </InlineButton>
-    ),
-  };
-}
-
-/** The thread's goal, for the end of the timeline. */
-export function goalNowItem(input: {
-  readonly threadId: ThreadId;
-  readonly goal: OrchestrationV2ProviderGoal;
-  readonly isWorking: boolean;
-  readonly onSendCommand: (text: string, failureMessage: string) => Promise<void>;
-}): ThreadNowItem {
-  const { isWorking, onSendCommand } = input;
-  const presentation = presentProviderGoal(input.goal, isWorking);
-  return {
-    id: `goal:${input.threadId}`,
-    icon: <TargetIcon />,
-    title:
-      presentation.usage === null
-        ? presentation.title
-        : `${presentation.title} · ${presentation.usage}`,
-    description: presentation.objective,
-    // Clear stops goal work; Resume would stop unrelated work, so it waits.
-    actions: (
-      <>
-        {presentation.canResume && !isWorking ? (
-          <>
-            <InlineButton
-              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
-            >
-              Resume
-            </InlineButton>
-            <span aria-hidden>·</span>
-          </>
-        ) : null}
-        <InlineButton
-          tone="muted"
-          onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
-        >
-          Clear
-        </InlineButton>
-      </>
     ),
   };
 }

@@ -249,9 +249,14 @@ Claude instances can also compact idle threads for you. See
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
-until it judges the goal met. The thread shows **Goal** while it works, and a
-line at the end of the thread (above the composer on mobile) shows the goal and
-its progress.
+until it judges the goal met. While a goal is set, a line on the top edge of
+the composer names it and its progress. Typing `/goal resume`, `/goal pause`,
+or `/goal clear` changes that line to the action and the goal it applies to,
+so the command shows which goal it changes. On Codex, that line also has a
+pause or play control. Pause stops the goal that is running, and play continues
+a goal that is waiting. Both work the same way whether the goal was started
+with `/goal resume` or with `/goal` and an objective. Claude keeps the line,
+without pause or play.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
 - Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal

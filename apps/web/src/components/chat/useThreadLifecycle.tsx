@@ -58,12 +58,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import {
-  backgroundWorkNowItem,
-  childInputNowItem,
-  goalNowItem,
-  runStopNowItem,
-} from "./ThreadActivityBanners";
+import { backgroundWorkNowItem, childInputNowItem, runStopNowItem } from "./ThreadActivityBanners";
 import { useForceStopThread } from "./useForceStopThread";
 import { useAtomValue } from "@effect/atom-react";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
@@ -125,7 +120,7 @@ interface ThreadLifecycleInput {
 
 /**
  * Thread state the chat shows and changes outside a normal send: snooze and settle with
- * their status line, the local checkout's branch, background work, child-thread and goal
+ * their status line, the local checkout's branch, background work, child-thread
  * banners, opening related threads, and standalone slash commands.
  */
 export function useThreadLifecycle(input: ThreadLifecycleInput) {
@@ -511,16 +506,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     sendInFlightRef.current = false;
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
-  const activeGoal = activeThreadShell?.goal ?? null;
-  const goalNow =
-    activeThread && activeGoal !== null
-      ? goalNowItem({
-          threadId: activeThread.id,
-          goal: activeGoal,
-          isWorking,
-          onSendCommand: sendStandaloneCommandStable,
-        })
-      : null;
 
   const forceStop = useForceStopThread(environmentId);
   const anyRunStop = useAtomValue(
@@ -625,13 +610,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     attentionNow: runStop?.state === "unresponsive" ? runStopNow : childInputNow,
     workNow: runStop?.state === "stopping" ? runStopNow : backgroundWorkNow,
     childInputNow,
-    goalNow,
     handleSwitchCheckoutToThread,
     handleSwitchCheckoutToThreadStable,
     isRestoringThreadBranch,
     onOpenRelatedThread,
     onOpenRelatedThreadStable,
-    sendStandaloneCommand,
+    sendStandaloneCommand: sendStandaloneCommandStable,
     setBranchMismatchDismissTick,
     showBranchMismatchBanner,
     threadStatusLine,

@@ -114,6 +114,8 @@ import {
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
+import { ComposerGoalBar } from "./ComposerGoalBar";
+import { presentComposerGoalBar } from "./presentComposerGoalBar";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
@@ -370,6 +372,8 @@ export interface ChatComposerProps {
   projectSelectionRequired: boolean;
 
   phase: SessionPhase;
+  /** The thread is working, including runless work the session phase does not show. */
+  threadWorking: boolean;
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
@@ -463,6 +467,8 @@ export interface ChatComposerProps {
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => void;
+  /** Sends a composer command without replacing the draft, such as `/goal resume`. */
+  onSendStandaloneCommand: (text: string, failureMessage: string) => Promise<void>;
   onResume: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -914,6 +920,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  const providerAvailable =
+    multipleModelSelections !== null || (!noProviderAvailable && providerSendBlockReason === null);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
@@ -2959,9 +2967,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   : selection,
               )
             : null,
-        providerAvailable:
-          multipleModelSelections !== null ||
-          (!noProviderAvailable && providerSendBlockReason === null),
+        providerAvailable,
         selectedProvider,
         selectedModel,
         selectedProviderModels,
@@ -3026,6 +3032,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setMultipleModelSelections,
       routeKind,
       noProviderAvailable,
+      providerAvailable,
       providerSendBlockReason,
       selectedPromptEffort,
       selectedProvider,
@@ -3079,6 +3086,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  const composerGoal = presentComposerGoalBar({
+    goal: props.activeThreadShell?.goal ?? null,
+    working: props.threadWorking,
+    // A pending answer advances that question. It does not send `/goal`.
+    prompt: activePendingProgress ? "" : prompt,
+    canPauseResume: selectedProvider === "codex",
+    hasAttachments: composerImages.length + composerFiles.length > 0,
+  });
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
@@ -3196,6 +3211,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {composerGoal === null ? null : (
+              <ComposerGoalBar
+                model={composerGoal}
+                canOperate={canOperateThread && providerAvailable}
+                onSendCommand={props.onSendStandaloneCommand}
+              />
+            )}
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
