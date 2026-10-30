@@ -22,7 +22,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRuns } from "../ledger/listRuns.ts";
-import { field, readRun } from "../ledger/read.ts";
+import { field, readRun, type Entry } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
@@ -642,19 +642,13 @@ const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
   ).pipe(Effect.orElseSucceed(() => null));
   if (others === null) return true;
   const live: Array<string> = [];
-  for (const { seen } of others) {
-    if (seen === null) return true;
-    const prs = [...seen.opened, ...seen.left.map((left) => left.pr)];
-    const branches = [
-      seen.lastBranch,
-      seen.resumedFrom,
-      seen.launchResumedFrom,
-      seen.interruption?.branch,
-      seen.relaunch?.branch,
-      launchBranchOf(seen.worktree),
-      ...seen.boundBranches,
-    ];
-    if (prs.includes(pull.number) || branches.includes(pull.headRef)) return true;
+  for (const { record, seen } of others) {
+    if (record === null || seen === null) return true;
+    const named: Named = { branches: new Set(), prs: new Set() };
+    addNamed(named, record.entries);
+    // A planned resume is a step, not a line of its own.
+    if (seen.launchResumedFrom !== null) named.branches.add(seen.launchResumedFrom);
+    if (named.prs.has(pull.number) || named.branches.has(pull.headRef)) return true;
     if (!seen.finished && seen.threadId !== null) live.push(seen.threadId);
   }
   for (const threadId of live) {
@@ -1039,6 +1033,49 @@ export const advance = (
 
 const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LINE_REMINDED } };
 
+/** The branches and pull requests a run's ledger names as its work. */
+interface Named {
+  readonly branches: Set<string>;
+  readonly prs: Set<number>;
+}
+
+/**
+ * Adds to `named` every branch and pull request a line of `entries` names, from the whole ledger
+ * and not only its newest lines: a launch (its branch, the branch it resumed from, T3's launch
+ * branch of its worktree), a stuck line, an interruption, a relaunch, a bound branch, and a pull
+ * request it opened or left.
+ */
+const addNamed = (named: Named, entries: ReadonlyArray<Entry>): void => {
+  const addBranch = (branch: unknown) => {
+    if (typeof branch === "string") named.branches.add(branch);
+  };
+  for (const entry of entries) {
+    switch (entry.event) {
+      case "session_launched": {
+        addBranch(field(entry.data, "branch"));
+        addBranch(field(field(entry.data, "resumed_from"), "branch"));
+        const worktree = field(entry.data, "worktree");
+        addBranch(launchBranchOf(typeof worktree === "string" ? worktree : null));
+        break;
+      }
+      case "stuck":
+      case "session_interrupted":
+      case "session_rate_limited":
+      case "branch_bound":
+      case "regate_relaunching":
+      case "feedback_relaunching":
+        addBranch(field(entry.data, "branch"));
+        break;
+      case "pr_opened":
+      case "pr_left": {
+        const pr = field(entry.data, "pr");
+        if (typeof pr === "number") named.prs.add(pr);
+        break;
+      }
+    }
+  }
+};
+
 /**
  * What the attempts before `run` left, from their ledgers (`EarlierAttempts`): every branch their
  * lines name and every pull request they recorded. Nothing is read for a first attempt, and an
@@ -1049,33 +1086,9 @@ export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(funct
   ctx: BuildingContext,
   run: RunId,
 ): Effect.fn.Return<EarlierAttempts, LedgerError> {
-  const branches = new Set<string>();
-  const prs = new Set<number>();
-  for (const { entries } of yield* earlierRuns(ctx.dataDir, run)) {
-    for (const entry of entries) {
-      if (
-        entry.event === "session_launched" ||
-        entry.event === "stuck" ||
-        entry.event === "session_interrupted" ||
-        entry.event === "session_rate_limited"
-      ) {
-        const branch = field(entry.data, "branch");
-        if (typeof branch === "string") branches.add(branch);
-      }
-      if (entry.event === "session_launched") {
-        const branch = field(field(entry.data, "resumed_from"), "branch");
-        if (typeof branch === "string") branches.add(branch);
-      }
-      if (entry.event === "branch_bound") {
-        const branch = field(entry.data, "branch");
-        if (typeof branch === "string") branches.add(branch);
-      }
-      if (entry.event === "pr_opened" || entry.event === "pr_left") {
-        const pr = field(entry.data, "pr");
-        if (typeof pr === "number") prs.add(pr);
-      }
-    }
-  }
+  const named: Named = { branches: new Set(), prs: new Set() };
+  for (const { entries } of yield* earlierRuns(ctx.dataDir, run)) addNamed(named, entries);
+  const { branches, prs } = named;
   return { branches: [...branches], prs: [...prs] };
 });
 
