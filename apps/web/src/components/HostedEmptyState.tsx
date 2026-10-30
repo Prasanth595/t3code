@@ -40,7 +40,7 @@ export function HostedEmptyState() {
             </EmptyTitle>
             <EmptyDescription>
               {localEnvironmentOff
-                ? "Enable it in Connections, or connect another host."
+                ? "Enable it in Environments, or connect another host."
                 : cloudEnabled
                   ? "Your agents run on your computer."
                   : "Your agents run on your host. Start T3 Code there first."}
@@ -49,7 +49,7 @@ export function HostedEmptyState() {
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Connections
+                Open Environments
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">
