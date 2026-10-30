@@ -5,6 +5,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
+import type { Defaulted, DefaultProject } from "./defaultProject.ts";
 import { asciiLower } from "./ledger/runId.ts";
 
 export const ConfigErrorSchema = Schema.Struct({
@@ -98,6 +99,11 @@ export type RepoConfigReading =
 export interface WatchedRepo {
   readonly repo: string;
   readonly path: string;
+  /**
+   * Set when the checkout has no `factory` block and the machine has a `default_project`: the
+   * repo runs on that default, with what the reader found on its default branch.
+   */
+  readonly defaulted?: Defaulted;
 }
 
 /** A watched repo with the title of the T3 project it comes from, for the settings page. */
@@ -180,6 +186,11 @@ export interface MachineConfig {
   readonly pruneBranchesAfterDays: number;
   /** The branch prune only logs what it would delete. */
   readonly pruneBranchesDryRun: boolean;
+  /**
+   * `default_project`: the block a T3 project with no `factory` block of its own is watched with.
+   * Absent, such a project is not watched.
+   */
+  readonly defaultProject?: DefaultProject;
 }
 
 type Mapping = Record<string, unknown>;
@@ -335,6 +346,13 @@ const makeChecker = (file: string) => {
     }
   };
 
+  /** One error per key of `value` that is not in `known`, on the key's own field. */
+  const unknownFields = (value: Mapping, known: ReadonlyArray<string>, path: string) => {
+    for (const key of Object.keys(value)) {
+      if (!known.includes(key)) err(join(path, key), "unknown key");
+    }
+  };
+
   /** Parse the text into a YAML mapping, or the single file-level error. */
   const root = (text: string): Result.Result<Mapping, ReadonlyArray<ConfigError>> => {
     let value: unknown;
@@ -368,6 +386,7 @@ const makeChecker = (file: string) => {
     stringList,
     autonomy,
     unknownKeys,
+    unknownFields,
     root,
     finish,
   };
@@ -461,6 +480,7 @@ const MACHINE_KEYS = [
   "model_fallbacks",
   "prune_branches_after_days",
   "prune_branches_dry_run",
+  "default_project",
 ] as const;
 
 /**
@@ -532,6 +552,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const pruneBranchesDryRun = c.optionalBoolean(root, "", "prune_branches_dry_run", false);
+  const defaultProject = defaultProjectFrom(c, root);
   checkUnknownKeys(c, root);
 
   if (
@@ -547,7 +568,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     deployWaitMinutes === undefined ||
     modelFallbacks === undefined ||
     pruneBranchesAfterDays === undefined ||
-    pruneBranchesDryRun === undefined
+    pruneBranchesDryRun === undefined ||
+    defaultProject === undefined
   ) {
     return undefined;
   }
@@ -564,7 +586,55 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     modelFallbacks,
     pruneBranchesAfterDays,
     pruneBranchesDryRun,
+    ...(defaultProject !== null && { defaultProject }),
   };
+};
+
+const DEFAULT_PROJECT_KEYS = ["instructors", "limits"] as const;
+const LIMITS_KEYS = ["minutes", "gate_retries", "checks_minutes", "interruption_resumes"] as const;
+const DEFAULT_GATE_RETRIES = 2;
+
+/** `default_project`: null when absent, undefined when it has errors. */
+const defaultProjectFrom = (c: Checker, root: Mapping): DefaultProject | null | undefined => {
+  if (!Object.hasOwn(root, "default_project")) return null;
+  const path = "default_project";
+  const block = c.mapping(root[path], path);
+  if (block === undefined) return undefined;
+  const instructors = c.stringList(
+    c.child(block, path, "instructors"),
+    `${path}.instructors`,
+    false,
+  );
+  const limitsPath = `${path}.limits`;
+  const limits = Object.hasOwn(block, "limits") ? c.mapping(block["limits"], limitsPath) : {};
+  const minutes = c.optionalUint(limits, limitsPath, "minutes", DEFAULT_MINUTES, 1);
+  const gateRetries = c.optionalUint(limits, limitsPath, "gate_retries", DEFAULT_GATE_RETRIES, 0);
+  const checksMinutes = c.optionalUint(
+    limits,
+    limitsPath,
+    "checks_minutes",
+    DEFAULT_CHECKS_MINUTES,
+    1,
+  );
+  const interruptionResumes = c.optionalUint(
+    limits,
+    limitsPath,
+    "interruption_resumes",
+    DEFAULT_INTERRUPTION_RESUMES,
+    0,
+  );
+  c.unknownFields(block, DEFAULT_PROJECT_KEYS, path);
+  if (limits !== undefined) c.unknownFields(limits, LIMITS_KEYS, limitsPath);
+  if (
+    instructors === undefined ||
+    minutes === undefined ||
+    gateRetries === undefined ||
+    checksMinutes === undefined ||
+    interruptionResumes === undefined
+  ) {
+    return undefined;
+  }
+  return { instructors, limits: { minutes, gateRetries, checksMinutes, interruptionResumes } };
 };
 
 /** `model_fallbacks`: model id to another model id; absent is none. */

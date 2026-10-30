@@ -16,6 +16,7 @@ import {
   type WatchedListing,
   type WatchedProject,
 } from "../config.ts";
+import { type Defaulted, LOCKFILES } from "../defaultProject.ts";
 import { asciiLower } from "../ledger/runId.ts";
 import { writeFileAtomically } from "./files.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -26,7 +27,8 @@ export const MEMORY_FILE = "watched-projects.json";
 /**
  * The repos the factory watches: active T3 projects whose checkout (or origin's default-branch
  * copy) opts in with a `factory` block in `.dw/config.yml`, and whose `origin` is on GitHub; T3
- * prefers `upstream`, so a fork is left out. A repo has `departed` only when every project in
+ * prefers `upstream`, so a fork is left out. With the machine's `default_project`, a checkout
+ * with no `factory` block is watched too, on that default (`WatchedRepo.defaulted`). A repo has `departed` only when every project in
  * `<factory dir>/watched-projects.json` is deleted, never because its checkout reads differently.
  */
 
@@ -43,10 +45,15 @@ export class WatchedReposError extends Schema.TaggedError<WatchedReposError>()(
 export class FactoryWatchedRepos extends Context.Service<
   FactoryWatchedRepos,
   {
-    /** The watched projects in the order T3 lists them, read afresh on every call. Writes nothing. */
-    readonly list: Effect.Effect<WatchedListing, WatchedReposError>;
+    /**
+     * The watched projects in the order T3 lists them, read afresh on every call. Writes nothing.
+     * `withDefault` when the machine has a `default_project`.
+     */
+    readonly list: (withDefault: boolean) => Effect.Effect<WatchedListing, WatchedReposError>;
     /** `list`, then the projects each watched repo comes from remembered for the next call: the pass's read. */
-    readonly listAndRemember: Effect.Effect<WatchedListing, WatchedReposError>;
+    readonly listAndRemember: (
+      withDefault: boolean,
+    ) => Effect.Effect<WatchedListing, WatchedReposError>;
   }
 >()("t3/factory/t3/watchedRepos/FactoryWatchedRepos") {}
 
@@ -150,6 +157,56 @@ export const make = Effect.gen(function* () {
     return shown.value.code === 0 ? { kind: "text", text: shown.value.stdout } : ABSENT;
   });
 
+  /** `git -C root <args>`: its output, null when it ended non-zero, "unresolved" when git did not finish. */
+  const gitOutput = (root: string, args: ReadonlyArray<string>) =>
+    runner
+      .run({
+        command: "git",
+        args: ["-C", root, ...args],
+        timeout: "10 seconds",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.option,
+        Effect.map((shown) =>
+          Option.isNone(shown) || shown.value.timedOut
+            ? ("unresolved" as const)
+            : shown.value.code === 0
+              ? shown.value.stdout
+              : null,
+        ),
+      );
+
+  // What a project on the default runs on: origin's default branch and the manifests committed
+  // at its root. Null for a clone with no `origin/HEAD`, which is left unwatched like one with no
+  // committed `.dw/config.yml`.
+  const defaultedFiles = Effect.fn("WatchedRepos.defaultedFiles")(function* (
+    root: string,
+  ): Effect.fn.Return<Defaulted | null | "unresolved"> {
+    const head = yield* gitOutput(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+    if (head === null || head === "unresolved") return head;
+    const tree = yield* gitOutput(root, ["ls-tree", "--name-only", "origin/HEAD"]);
+    if (tree === null || tree === "unresolved") return "unresolved";
+    const names = new Set(tree.split("\n"));
+    const shown = (name: string) =>
+      names.has(name) ? gitOutput(root, ["show", `origin/HEAD:${name}`]) : Effect.succeed(null);
+    const packageJson = yield* shown("package.json");
+    const composerJson = yield* shown("composer.json");
+    // A file the tree lists but git could not show is a read that did not finish.
+    if (
+      packageJson === "unresolved" ||
+      composerJson === "unresolved" ||
+      (packageJson === null && names.has("package.json")) ||
+      (composerJson === null && names.has("composer.json"))
+    ) {
+      return "unresolved";
+    }
+    return {
+      base: head.trim().replace(/^origin\//, ""),
+      files: { packageJson, composerJson, lockfiles: LOCKFILES.filter((name) => names.has(name)) },
+    };
+  });
+
   // No file is "not opted in", once the committed copy says so too. Any other failure (EACCES,
   // EIO, a timeout) is a read that did not finish, which is not the same as the project leaving.
   const read = (root: string): Effect.Effect<Read> =>
@@ -160,7 +217,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listing = Effect.fn("WatchedRepos.listing")(function* (remember: boolean) {
+  const listing = Effect.fn("WatchedRepos.listing")(function* (
+    remember: boolean,
+    withDefault: boolean,
+  ) {
     const rows = yield* projects
       .list()
       .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
@@ -177,18 +237,20 @@ export const make = Effect.gen(function* () {
         unresolved.push(root);
         continue;
       }
-      if (file.kind === "absent") continue;
-      const optIn = factoryOptIn(file.text);
+      const optIn = file.kind === "text" ? factoryOptIn(file.text) : "no";
       if (optIn === "unparsed") {
         // A conflicted or half-saved file is a read that did not finish.
         unresolved.push(root);
         continue;
       }
-      if (optIn === "no") continue;
+      const onDefault = optIn === "no";
+      if (onDefault && !(withDefault && (yield* isCheckout(root)))) continue;
       const identity = yield* identities.resolve(root);
       if (identity === null) {
-        // Git failed or timed out, and T3 caches the null for a minute.
-        unresolved.push(root);
+        // Git failed or timed out, and T3 caches the null for a minute. A checkout on the default
+        // also gets null for having no remote at all, which many a local project has: it is left
+        // out rather than reported on every pass.
+        if (!onDefault) unresolved.push(root);
         continue;
       }
       // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
@@ -200,7 +262,14 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const repo = `${owner}/${name}`;
-      repos.push({ repo, path: root, title: row.title });
+      if (onDefault) {
+        const defaulted = yield* defaultedFiles(root);
+        if (defaulted === "unresolved") unresolved.push(root);
+        if (defaulted === null || defaulted === "unresolved") continue;
+        repos.push({ repo, path: root, title: row.title, defaulted });
+      } else {
+        repos.push({ repo, path: root, title: row.title });
+      }
       const key = asciiLower(repo);
       watchedFrom.set(key, [...(watchedFrom.get(key) ?? []), row.projectId]);
     }
@@ -209,7 +278,14 @@ export const make = Effect.gen(function* () {
     return { repos, departed, unresolved } satisfies WatchedListing;
   });
 
-  return FactoryWatchedRepos.of({ list: listing(false), listAndRemember: listing(true) });
+  return FactoryWatchedRepos.of({
+    list: Effect.fn("FactoryWatchedRepos.list")((withDefault: boolean) =>
+      listing(false, withDefault),
+    ),
+    listAndRemember: Effect.fn("FactoryWatchedRepos.listAndRemember")((withDefault: boolean) =>
+      listing(true, withDefault),
+    ),
+  });
 });
 
 /** Needs `FactoryPaths` for the memory file. */

@@ -77,6 +77,8 @@ export interface MachineConfigReport {
     readonly repo: string;
     readonly path: string;
     readonly title: string;
+    /** The repo has no `factory` block and runs on the machine's `default_project`; `factory` is that block resolved. */
+    readonly default_config: boolean;
     readonly factory: ProjectBlock | null;
     readonly errors: ReadonlyArray<ConfigError> | null;
   }>;
@@ -96,7 +98,8 @@ const EDITABLE_KEYS = [
 
 /**
  * The keys an edit keeps: the form's, the hand edits (`notify`, `keep_versions`, `min_free_gib`,
- * `max_load_per_core`, `deploy_wait_minutes`, `model_fallbacks`, `prune_branches_*`) and the retired
+ * `max_load_per_core`, `deploy_wait_minutes`, `model_fallbacks`, `prune_branches_*`,
+ * `default_project`) and the retired
  * keys (the model keys and `repos`), which stay so a rollback to a version that still requires them
  * loads the file. A key that is not here is dropped by an edit.
  */
@@ -110,6 +113,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "model_fallbacks",
   "prune_branches_after_days",
   "prune_branches_dry_run",
+  "default_project",
   ...RETIRED_MACHINE_KEYS,
 ]);
 
@@ -177,7 +181,8 @@ const watchedReport = (
     return { repos: [], unresolved: [], watch_error: watched.failure.message };
   }
   const ambiguous = ambiguousRepos(watched.success.repos);
-  const repos = watched.success.repos.map(({ repo, path, title }) => {
+  const repos = watched.success.repos.map(({ repo, path, title, defaulted }) => {
+    const default_config = defaulted !== undefined;
     const paths = ambiguous.get(asciiLower(repo));
     if (paths !== undefined) {
       // The pass loaded neither checkout, so there is no reading to show.
@@ -185,6 +190,7 @@ const watchedReport = (
         repo,
         path,
         title,
+        default_config,
         factory: null,
         errors: [{ file: PROJECT_CONFIG_PATH, message: ambiguousMessage(paths) }],
       };
@@ -194,6 +200,7 @@ const watchedReport = (
       repo,
       path,
       title,
+      default_config,
       factory: reading?.kind === "ok" ? projectBlock(reading.project) : null,
       errors: reading?.kind === "errors" ? reading.errors : null,
     };

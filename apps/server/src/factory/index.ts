@@ -37,6 +37,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { launchModel, type Cooldown } from "./cooldown.ts";
+import { resolveDefault } from "./defaultProject.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
@@ -603,11 +604,35 @@ export const liveWorld = (
     );
     return { kind: "started" } as const;
   });
+  // A repo on the machine's default reads no `.dw/config.yml`: the reader has its files.
+  const projectOf = (watched: WatchedRepo): Effect.Effect<ProjectConfig, ProjectReadError> => {
+    const { defaulted } = watched;
+    if (defaulted === undefined) {
+      return withProcess(
+        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
+      );
+    }
+    if (machine.defaultProject === undefined) {
+      const message =
+        "the machine config has no default_project, and the repo has no factory block";
+      return Effect.fail({
+        kind: "config",
+        message,
+        errors: [{ file: PROJECT_CONFIG_PATH, message }],
+      });
+    }
+    const resolved = resolveDefault(machine.defaultProject, defaulted);
+    return Result.isSuccess(resolved)
+      ? Effect.succeed(resolved.success)
+      : Effect.fail({
+          kind: "config",
+          message: resolved.failure.map(formatConfigError).join("; "),
+          errors: resolved.failure,
+        });
+  };
   return {
     project: (watched) =>
-      withProcess(
-        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
-      ).pipe(
+      projectOf(watched).pipe(
         Effect.tap((project) =>
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
@@ -926,17 +951,18 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
   };
   const readings = new Map<string, RepoConfigReading>();
   // The repos the pass's last listing named, for the status; a pass lists them anew before it works.
-  const listWatched = watched.listAndRemember.pipe(
-    Effect.tap((listing) =>
-      Effect.sync(() => {
-        const repos = listing.repos.map((entry) => entry.repo);
-        state.watched = repos;
-        if (state.status.state === "running") {
-          state.status = { ...state.status, settings: { ...state.status.settings, repos } };
-        }
-      }),
-    ),
-  );
+  const listWatched = (machine: MachineConfig) =>
+    watched.listAndRemember(machine.defaultProject !== undefined).pipe(
+      Effect.tap((listing) =>
+        Effect.sync(() => {
+          const repos = listing.repos.map((entry) => entry.repo);
+          state.watched = repos;
+          if (state.status.state === "running") {
+            state.status = { ...state.status, settings: { ...state.status.settings, repos } };
+          }
+        }),
+      ),
+    );
   const shared: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
@@ -993,7 +1019,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
         shared,
       ),
       // Where the list comes from is known here alone.
-      watchedRepos: listWatched.pipe(Effect.mapError(asPassError("t3"))),
+      watchedRepos: listWatched(machine).pipe(Effect.mapError(asPassError("t3"))),
       // The sessions write under the worktrees folder T3 uses now, the gate under the factory dir.
       freeSpace: () =>
         sessions.worktreesDirectory(worktreesDir).pipe(
@@ -1101,7 +1127,9 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
   // One reload or save at a time, and none cut short half way: two at once from idle would
   // make two loops, and a save cut short after the write leaves the loop on the old config.
   // The settings page reads the list untapped: only the pass writes `state.watched` and the status.
-  const watchedRepos = watched.list;
+  const watchedRepos = Effect.suspend(() =>
+    watched.list(state.current?.machine.defaultProject !== undefined),
+  );
   const lock = yield* Semaphore.make(1);
   const reload = lock.withPermits(1)(Effect.uninterruptible(reloadNow));
   const save = (body: unknown) =>
