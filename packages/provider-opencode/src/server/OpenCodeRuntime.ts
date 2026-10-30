@@ -264,6 +264,37 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
   return health.version;
 });
 
+const PROXY_ROUTED_OPENCODE_PROVIDERS = ["anthropic", "openai"] as const;
+
+const providerBaseUrl = (config: unknown, providerId: string): unknown =>
+  asRecord(asRecord(asRecord(asRecord(config).provider)[providerId]).options).baseURL;
+
+/**
+ * Organization and managed configs merge after OPENCODE_CONFIG_CONTENT and can point a routed
+ * provider elsewhere, so a proxied server must prove its effective endpoints before use.
+ */
+export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting")(function* (
+  client: OpencodeClient,
+  environment: NodeJS.ProcessEnv | undefined,
+) {
+  if (environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS !== "1") return;
+  const requested = Option.getOrElse(
+    decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})),
+    () => ({}),
+  );
+  const effective = yield* runOpenCodeSdk("config.get", (signal) =>
+    client.config.get(undefined, { signal }),
+  );
+  for (const providerId of PROXY_ROUTED_OPENCODE_PROVIDERS) {
+    if (providerBaseUrl(effective.data, providerId) !== providerBaseUrl(requested, providerId)) {
+      return yield* new OpenCodeRuntimeError({
+        operation: "config.get",
+        detail: `OpenCode's ${providerId} provider points somewhere other than the proxy, likely from an organization or managed config. Remove that override or turn off Use proxy.`,
+      });
+    }
+  }
+});
+
 export interface OpenCodeCommandResult {
   readonly stdout: string;
   readonly stderr: string;
@@ -755,6 +786,17 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             ...(serverPassword !== undefined ? { serverPassword } : {}),
           }),
           minimumOpenCodeVersionFor(input.environment),
+        ).pipe(
+          Effect.tap(() =>
+            verifyOpenCodeProxyRouting(
+              createOpenCodeSdkClient({
+                baseUrl: url,
+                directory: input.directory,
+                ...(serverPassword !== undefined ? { serverPassword } : {}),
+              }),
+              input.environment,
+            ),
+          ),
         )
     );
 

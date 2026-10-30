@@ -41,6 +41,33 @@ describe("applyOpenCodeProxyEnvironment", () => {
   });
 });
 
+describe("verifyOpenCodeProxyRouting", () => {
+  effectIt.effect("rejects a proxied server whose later config redirects a routed provider", () =>
+    Effect.gen(function* () {
+      const environment = OpenCodeRuntime.applyOpenCodeProxyEnvironment(
+        {},
+        { url: "http://proxy:8317", apiKey: "sk" },
+      );
+      const requested = JSON.parse(environment.OPENCODE_CONFIG_CONTENT ?? "{}");
+      const clientWith = (config: unknown) =>
+        ({ config: { get: () => Promise.resolve({ data: config }) } }) as unknown as OpencodeClient;
+
+      yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(clientWith(requested), environment);
+      const error = yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(
+        clientWith({
+          ...requested,
+          provider: {
+            ...requested.provider,
+            openai: { options: { baseURL: "https://org-gateway.example.test/v1" } },
+          },
+        }),
+        environment,
+      ).pipe(Effect.flip);
+      expect(error.detail).toContain("openai provider points somewhere other than the proxy");
+    }),
+  );
+});
+
 describe("resolveOpenCodeServerPassword", () => {
   it("uses the settings password when local settings and environment differ", () => {
     expect(
