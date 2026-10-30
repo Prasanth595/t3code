@@ -167,6 +167,7 @@ it.effect(
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
           readonly webOrigin?: string;
+          readonly modelSelection?: ModelSelection;
         },
       ) {
         const { targeted, overrideModel, webOrigin, ...input } = params;
@@ -224,6 +225,17 @@ it.effect(
       });
       expect(escalated.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
       expect(escalated.launched).toHaveLength(0);
+
+      const cyber = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      });
+      expect(cyber.result).toMatchObject({ code: "invalid_request" });
+      expect(cyber.launched).toHaveLength(0);
 
       const untargeted = yield* launchWith("full-access", "full-access", {
         title: "Fix",
