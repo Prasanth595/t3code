@@ -235,6 +235,24 @@ describe("ChatMarkdown streaming", () => {
     expect(editedText).toBe("- [ ] A longer first task\n- [x] Second");
     await vi.waitFor(() => expect(checkboxes()[1]!.checked).toBe(true));
   });
+
+  it.each([true, false])(
+    "leaves the next task unchecked after a checked one is removed (editable: %s)",
+    async (editable) => {
+      setup();
+      const message = (text: string): ReactElement => (
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={text}
+          {...(editable ? { onTaskListChange: () => {} } : {})}
+        />
+      );
+      await using rendered = await render(message("- [x] Done\n- [ ] Pending"));
+      await rendered.rerender(message("- [ ] Pending"));
+      const checkbox = rendered.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      expect(checkbox!.checked).toBe(false);
+    },
+  );
 });
 
 describe("ChatMarkdown workspace file opens", () => {
