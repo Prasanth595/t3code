@@ -438,9 +438,7 @@ class Terminal {
           if (this.settled !== "") this.dropped = true;
           this.settled = "";
         } else {
-          this.lines = [[]];
-          this.row = 0;
-          this.col = 0;
+          this.lines = this.lines.map(() => []);
         }
         return;
       }

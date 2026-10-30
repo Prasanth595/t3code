@@ -81,6 +81,15 @@ describe("appendTerminalOutput", () => {
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
+  it("erases the display without moving the cursor", () => {
+    const state = feed(["line1\nline2\u001b[2", "J"]);
+    expect(state.text).toBe("\n");
+    const continued = appendTerminalOutput(state, "X\u001b[1A\rY");
+    expect(continued.text).toBe("Y\n     X");
+    const resumed = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(state));
+    expect(appendTerminalOutput(resumed, "X\u001b[1A\rY").text).toBe(continued.text);
+  });
+
   it("clears only scrollback on ESC[3J", () => {
     const lines = Array.from({ length: 70 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines, "\u001b[3J"]);
