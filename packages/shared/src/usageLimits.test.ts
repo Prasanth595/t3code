@@ -164,15 +164,17 @@ describe("pace", () => {
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
   });
+});
 
+describe("usage meters", () => {
   it.each([
-    [37.4, "used", 37],
-    [37.4, "left", 63],
-    [-5, "used", 0],
-    [-5, "left", 100],
-    [130, "used", 100],
-    [130, "left", 0],
-  ] as const)("meters %s used, shown as %s, at %s", (usedPercent, display, expected) => {
+    [37.4, 37, "used"],
+    [37.4, 63, "left"],
+    [-5, 0, "used"],
+    [-5, 100, "left"],
+    [130, 100, "used"],
+    [130, 0, "left"],
+  ] as const)("shows %s%% used as %s on a %s meter", (usedPercent, expected, display) => {
     expect(meterPercent(usedPercent, display)).toBe(expected);
   });
 
@@ -184,7 +186,7 @@ describe("pace", () => {
     [0, 50, "left", null],
     [0, 50, "used", null],
   ] as const)(
-    "spans %s used, refilled by %s, shown as %s",
+    "hatches the reset on a %s%% used segment refilled by %s%% on a %s meter",
     (usedPercent, refillPercent, display, expected) => {
       expect(refillSpan(usedPercent, refillPercent, display)).toEqual(expected);
     },

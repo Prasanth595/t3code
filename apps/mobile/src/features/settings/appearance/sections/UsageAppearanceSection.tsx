@@ -6,7 +6,7 @@ export function UsageAppearanceSection() {
   const { isReady, usageDisplay, setUsageDisplay } = useAppearancePreferences();
 
   return (
-    <SettingsSection title="Usage">
+    <SettingsSection title="Usage meters">
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chart.bar.xaxis"

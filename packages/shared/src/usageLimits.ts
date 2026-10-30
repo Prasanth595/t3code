@@ -638,7 +638,6 @@ export function poolMeterPercent(pool: LimitPoolWindow, display: UsageDisplay): 
   return display === "used" ? pool.usedPercent : pool.remainingPercent;
 }
 
-// A reset raises what is left and lowers what is used.
 export function refillDelta(percent: number, display: UsageDisplay): string {
   return `${display === "used" ? "\u2212" : "+"}${percent}%`;
 }
