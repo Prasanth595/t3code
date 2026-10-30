@@ -31,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -64,6 +65,9 @@ export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
   options: { readonly concurrency: number; readonly timeoutSeconds: number },
 ) {
   const budget = yield* Semaphore.make(options.concurrency);
+  // Steps claim budget one at a time, in order: Semaphore lets a light request
+  // take free slots ahead of a waiting heavier one, which would delay typecheck.
+  const admission = yield* Semaphore.make(1);
   const serial = yield* Semaphore.make(1);
   return yield* Effect.forEach(
     steps,
@@ -85,7 +89,12 @@ export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
         if (output) yield* Console.log(output);
         return { name: step.name, outcome, time };
       });
-      const limited = budget.withPermits(Math.min(step.weight ?? 1, options.concurrency))(timed);
+      const slots = Math.min(step.weight ?? 1, options.concurrency);
+      const limited = Effect.acquireUseRelease(
+        admission.withPermit(budget.take(slots)),
+        () => timed,
+        () => budget.release(slots),
+      );
       return step.serial ? serial.withPermit(limited) : limited;
     },
     { concurrency: "unbounded" },
@@ -100,6 +109,38 @@ const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
 const decodeRootPackageJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
 );
+
+const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
+  Stream.runCollect(stream).pipe(Effect.map((chunks) => Buffer.concat(chunks)));
+
+// Fails on a nonzero exit: an empty file list from a broken index would
+// otherwise pass as "no changes". quotePath=false keeps non-ASCII paths as real
+// paths instead of quoted escapes.
+export const git = Effect.fn("checkChanged.git")(function* (
+  cwd: string,
+  args: ReadonlyArray<string>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make("git", ["-c", "core.quotePath=false", ...args], { cwd }),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [collectBytes(handle.stdout), collectBytes(handle.stderr), handle.exitCode],
+        { concurrency: "unbounded" },
+      );
+      if (exitCode !== 0) {
+        return yield* Effect.fail(
+          `check:changed: git ${args.join(" ")} exited with ${exitCode}: ${stderr.toString().trim()}`,
+        );
+      }
+      return stdout;
+    }),
+  );
+});
+export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
+  git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
 const CODE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
@@ -147,33 +188,18 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     () => 900,
   );
 
-  // quotePath=false keeps non-ASCII paths as real paths instead of quoted escapes.
-  const gitCommand = (args: ReadonlyArray<string>) =>
-    ChildProcess.make("git", ["-c", "core.quotePath=false", ...args], { cwd: root });
-  const git = (...args: Array<string>) =>
-    spawner
-      .string(gitCommand(args))
-      .pipe(Effect.map((output) => output.split("\n").filter(Boolean)));
+  const lines = (...args: Array<string>) => gitLines(root, args);
 
-  const mergeBase = yield* Effect.scoped(
-    Effect.gen(function* () {
-      const handle = yield* spawner.spawn(gitCommand(["merge-base", "HEAD", input.ref]));
-      const [output, exitCode] = yield* Effect.all(
-        [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],
-        { concurrency: 2 },
-      );
-      return exitCode === 0 ? Option.some(output.trim()) : Option.none();
-    }),
+  const base = yield* git(root, ["merge-base", "HEAD", input.ref]).pipe(
+    Effect.map((stdout) => stdout.toString().trim()),
+    Effect.mapError(
+      () =>
+        `check:changed: no merge base with ${input.ref}. Run \`git fetch origin\` or pass a ref.`,
+    ),
   );
-  if (Option.isNone(mergeBase)) {
-    return yield* Effect.fail(
-      `check:changed: no merge base with ${input.ref}. Run \`git fetch origin\` or pass a ref.`,
-    );
-  }
-  const base = mergeBase.value;
   // --no-renames lists a rename as its old and new path, as CI does.
-  const changedFiles = git("diff", "--name-only", "--no-renames", base, "--");
-  const untrackedFiles = git("ls-files", "--others", "--exclude-standard");
+  const changedFiles = lines("diff", "--name-only", "--no-renames", base, "--");
+  const untrackedFiles = lines("ls-files", "--others", "--exclude-standard");
   const files = [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
 
   if (files.length === 0) {
@@ -190,23 +216,18 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     const hash = NodeCrypto.createHash("sha256");
     // CI changes test behavior (vite.config.ts rejects .only under CI).
     hash.update(`${process.version}\0${base}\0${ci}\0`);
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* spawner.spawn(
-          gitCommand([
-            "diff",
-            "--binary",
-            "--no-renames",
-            "--no-ext-diff",
-            "--no-textconv",
-            base,
-            "--",
-          ]),
-        );
-        yield* Stream.runForEach(handle.stdout, (chunk) => Effect.sync(() => hash.update(chunk)));
-      }),
+    hash.update(
+      yield* git(root, [
+        "diff",
+        "--binary",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        base,
+        "--",
+      ]),
     );
-    const ignored = yield* git(
+    const ignored = yield* lines(
       "ls-files",
       "--others",
       "--ignored",
