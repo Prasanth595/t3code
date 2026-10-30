@@ -165,13 +165,20 @@ const make = Effect.gen(function* () {
     build: (url: string) => HttpClientRequest.HttpClientRequest,
     path: string,
   ) {
-    const response = yield* client
+    // The deadline covers the body too: a proxy can send headers and then stall.
+    const { response, body } = yield* client
       .execute(
         build(`${management.url}/v0/management/${path}`).pipe(
           HttpClientRequest.bearerToken(management.managementKey),
         ),
       )
       .pipe(
+        Effect.flatMap((response) =>
+          response.json.pipe(
+            Effect.orElseSucceed((): unknown => null),
+            Effect.map((body) => ({ response, body })),
+          ),
+        ),
         Effect.timeout(REQUEST_TIMEOUT),
         Effect.mapError(
           (error) =>
@@ -182,7 +189,6 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    const body = yield* response.json.pipe(Effect.orElseSucceed((): unknown => null));
     if (response.status >= 200 && response.status < 300) return body;
     // CLIProxyAPI's own error strings, such as "auth file not found", carry no credentials.
     const proxyMessage = Option.match(decodeErrorBody(body), {

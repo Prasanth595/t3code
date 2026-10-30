@@ -1,7 +1,9 @@
 import { it as effectIt } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, type HttpClientRequest, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -129,6 +131,27 @@ const withProxy = (client: HttpClient.HttpClient) =>
   );
 
 describe("ProxyAccounts", () => {
+  effectIt.effect("times out a proxy that sends headers and then stalls the body", () =>
+    Effect.gen(function* () {
+      const accounts = yield* ProxyAccounts.ProxyAccounts;
+      const removal = yield* accounts
+        .removeAccount("claude-a.json")
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("15 seconds");
+      expect((yield* Fiber.join(removal)).detail).toBe(
+        "The proxy did not answer within 15 seconds.",
+      );
+    }).pipe(
+      withProxy(
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(new ReadableStream({ start() {} }))),
+          ),
+        ),
+      ),
+    ),
+  );
+
   effectIt.effect("lists, disables, and removes accounts with the management key", () => {
     const recorded: Array<Recorded> = [];
     return Effect.gen(function* () {

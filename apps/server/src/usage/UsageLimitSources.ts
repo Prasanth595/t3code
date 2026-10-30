@@ -164,8 +164,8 @@ export const make = Effect.gen(function* () {
       Stream.map((settings) => effectiveUsageLimitSources(settings)),
       Stream.changes,
     ),
-    // A managed proxy can only answer once it runs.
-    managedProxy.statusChanges.pipe(Stream.filter((status) => status.status === "running")),
+    // Starting makes the managed proxy answer; stopping must drop its accounts.
+    managedProxy.statusChanges,
   ).pipe(
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
