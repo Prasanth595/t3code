@@ -17,6 +17,7 @@ import {
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
   readHtmlRenderPointerHeld,
+  readHtmlRenderPointerRelease,
   HTML_RENDER_POINTER_RELEASE_METHOD,
 } from "@t3tools/shared/htmlRender";
 import {
@@ -252,7 +253,13 @@ export function HtmlRenderDocument(props: {
         {
           jsonrpc: "2.0",
           method: HTML_RENDER_POINTER_RELEASE_METHOD,
-          ...(event instanceof PointerEvent ? { params: { pointerId: event.pointerId } } : {}),
+          ...(event instanceof PointerEvent || event instanceof CustomEvent
+            ? {
+                params: {
+                  pointerId: event instanceof PointerEvent ? event.pointerId : event.detail,
+                },
+              }
+            : {}),
         },
         "*",
       );
@@ -261,17 +268,26 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("pointercancel", release, true);
     window.addEventListener("pointermove", release, true);
     window.addEventListener("blur", release);
+    window.addEventListener(HTML_RENDER_POINTER_RELEASE_METHOD, release);
     return () => {
       window.removeEventListener("pointerup", release, true);
       window.removeEventListener("pointercancel", release, true);
       window.removeEventListener("pointermove", release, true);
       window.removeEventListener("blur", release);
+      window.removeEventListener(HTML_RENDER_POINTER_RELEASE_METHOD, release);
     };
   }, [pointerHeld]);
   // Links, keys and images require frame focus and recent reader activity: a page can take
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.
   const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    const released = readHtmlRenderPointerRelease(event.data);
+    if (released !== undefined) {
+      window.dispatchEvent(
+        new CustomEvent(HTML_RENDER_POINTER_RELEASE_METHOD, { detail: released }),
+      );
+      return;
+    }
     const held = readHtmlRenderPointerHeld(event.data);
     if (held !== undefined) {
       setPointerHeld(held);
