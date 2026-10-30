@@ -23,7 +23,7 @@ import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { field, readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import { formatTs } from "../ledger/time.ts";
+import { formatTs, parseTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
   GitHubParse,
@@ -135,7 +135,7 @@ export interface BuildingContext extends RunContext {
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
-    "status" | "thread" | "send" | "archive" | "removeWorktree"
+    "status" | "thread" | "send" | "archive" | "removeWorktree" | "worktreeHead"
   >;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
@@ -536,9 +536,8 @@ export interface Unbound {
 
 /**
  * What the earlier attempts of the issue left, for `checkBinding`: every branch their ledgers name
- * (a launch, a stuck line, an interruption, the branch a launch resumed from) and every pull
- * request they recorded. A pull request on one of those, or one of those, is the issue's own work,
- * which a later session may have pushed to or reported (see `earlierAttempts`).
+ * and every pull request they recorded (see `earlierAttempts`). A pull request on one of those, or
+ * one of those, is the issue's own work, which a later session may have pushed to or reported.
  */
 export interface EarlierAttempts {
   readonly branches: ReadonlyArray<string>;
@@ -589,6 +588,45 @@ export const checkBinding = (
     };
   }
   return null;
+};
+
+/**
+ * `earlier` with the branches this run bound (`branch_bound`): what `checkBinding` accepts for
+ * the run, in `advance` and in the gate alike.
+ */
+export const withBoundBranches = (earlier: EarlierAttempts, seen: Seen): EarlierAttempts =>
+  seen.boundBranches.length === 0
+    ? earlier
+    : { ...earlier, branches: [...earlier.branches, ...seen.boundBranches] };
+
+/**
+ * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
+ * the claim, its head the worktree's HEAD. Issue text can name the branch, but not make another
+ * person's pull request newer than the claim. No worktree, or a failed read, is no proof.
+ */
+const madeBySession = (
+  ctx: BuildingContext,
+  pull: PullRequest,
+  claimedMs: number | null,
+  worktreePath: string | null,
+): Effect.Effect<boolean> => {
+  const createdMs = parseTs(pull.createdAt);
+  if (
+    !pull.open ||
+    pull.crossRepository ||
+    pull.baseRef !== ctx.project.base ||
+    !isSafeBranchName(pull.headRef) ||
+    claimedMs === null ||
+    createdMs === null ||
+    createdMs <= claimedMs ||
+    worktreePath === null
+  ) {
+    return Effect.succeed(false);
+  }
+  return ctx.sessions.worktreeHead(worktreePath).pipe(
+    Effect.map((head) => head === pull.headSha),
+    Effect.orElseSucceed(() => false),
+  );
 };
 
 const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
@@ -843,9 +881,22 @@ export const advance = (
             false,
             seen.resumedFrom,
             status.worktreePath,
-            yield* earlierAttempts(ctx, run),
+            withBoundBranches(yield* earlierAttempts(ctx, run), seen),
           );
-          if (unbound !== null) {
+          // A branch the session made is bound once, here, while its worktree is still there:
+          // the stuck path removes it. The `branch_bound` line is the proof from then on.
+          const madeHere =
+            unbound !== null &&
+            pull !== null &&
+            (yield* madeBySession(ctx, pull, seen.claimedMs, status.worktreePath));
+          if (madeHere && pull !== null) {
+            yield* append(
+              out,
+              { event: "branch_bound", data: { pr, branch: pull.headRef } },
+              "advance",
+              "branch-bound",
+            );
+          } else if (unbound !== null) {
             return yield* stuck(
               "pr-not-bound",
               stopOf(
@@ -946,6 +997,10 @@ export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(funct
       }
       if (entry.event === "session_launched") {
         const branch = field(field(entry.data, "resumed_from"), "branch");
+        if (typeof branch === "string") branches.add(branch);
+      }
+      if (entry.event === "branch_bound") {
+        const branch = field(entry.data, "branch");
         if (typeof branch === "string") branches.add(branch);
       }
       if (entry.event === "pr_opened" || entry.event === "pr_left") {

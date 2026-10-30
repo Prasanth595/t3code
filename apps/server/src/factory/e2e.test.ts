@@ -312,6 +312,7 @@ const makeGitHub = (input: {
           baseRefName: "main",
           headRefOid: input.baseSha,
           mergeable: "MERGEABLE",
+          createdAt: "2026-10-04T10:00:00Z",
         }),
       );
     });

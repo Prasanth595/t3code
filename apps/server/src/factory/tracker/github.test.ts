@@ -1373,9 +1373,9 @@ it("error text escapes newlines in other arguments", () => {
 
 const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
 const PR_VIEW =
-  '{"baseRefName":"main","headRefName":"t3code/2bb65018","headRefOid":"4f1c2d3e4a5b60718293a4b5c6d7e8f901234567","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":2,"state":"OPEN"}';
+  '{"createdAt":"2026-10-29T05:50:00Z","baseRefName":"main","headRefName":"t3code/2bb65018","headRefOid":"4f1c2d3e4a5b60718293a4b5c6d7e8f901234567","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":2,"state":"OPEN"}';
 const prView = (state: string, draft: boolean) =>
-  `{"baseRefName":"main","headRefName":"x","headRefOid":"${HEAD_SHA}","isCrossRepository":false,"isDraft":${draft},"mergeable":"MERGEABLE","number":9,"state":"${state}"}`;
+  `{"createdAt":"2026-10-29T05:50:00Z","baseRefName":"main","headRefName":"x","headRefOid":"${HEAD_SHA}","isCrossRepository":false,"isDraft":${draft},"mergeable":"MERGEABLE","number":9,"state":"${state}"}`;
 const prViewCall = (number: string) => [
   "pr",
   "view",
@@ -1383,7 +1383,7 @@ const prViewCall = (number: string) => [
   "--repo",
   REPO,
   "--json",
-  "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable",
+  "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable,createdAt",
 ];
 
 it.effect("pullRequest reads the real shape with the exact call", () =>
@@ -1401,6 +1401,7 @@ it.effect("pullRequest reads the real shape with the exact call", () =>
       baseRef: "main",
       headSha: HEAD_SHA,
       mergeable: "mergeable",
+      createdAt: "2026-10-29T05:50:00Z",
     });
   }),
 );
@@ -1438,7 +1439,7 @@ it.effect("pullRequest from a fork and into another base says so", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(
-        `{"baseRefName":"release/1.0","headRefName":"t3code/x","headRefOid":"${HEAD_SHA}","isCrossRepository":true,"isDraft":true,"mergeable":"MERGEABLE","number":4,"state":"OPEN"}`,
+        `{"createdAt":"2026-10-29T05:50:00Z","baseRefName":"release/1.0","headRefName":"t3code/x","headRefOid":"${HEAD_SHA}","isCrossRepository":true,"isDraft":true,"mergeable":"MERGEABLE","number":4,"state":"OPEN"}`,
       ),
     );
     const pr = yield* t.ok(t.github.pullRequest(4));
@@ -1452,7 +1453,7 @@ it.effect("a pullRequest view without the fork or base fields is a parse error",
   Effect.gen(function* () {
     const t = setup(
       reply(
-        `{"headRefName":"x","headRefOid":"${HEAD_SHA}","isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
+        `{"createdAt":"2026-10-29T05:50:00Z","headRefName":"x","headRefOid":"${HEAD_SHA}","isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
       ),
     );
     const error = yield* t.err(t.github.pullRequest(3));
@@ -1464,7 +1465,7 @@ it.effect("a pullRequest view without the head commit is a parse error", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(
-        '{"baseRefName":"main","headRefName":"x","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}',
+        '{"createdAt":"2026-10-29T05:50:00Z","baseRefName":"main","headRefName":"x","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}',
       ),
     );
     const error = yield* t.err(t.github.pullRequest(3));
@@ -1477,10 +1478,20 @@ it.effect("pullRequest reads the head commit as given", () =>
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const t = setup(
       reply(
-        `{"baseRefName":"main","headRefName":"x","headRefOid":"${sha}","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
+        `{"createdAt":"2026-10-29T05:50:00Z","baseRefName":"main","headRefName":"x","headRefOid":"${sha}","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
       ),
     );
     assert.strictEqual((yield* t.ok(t.github.pullRequest(3)))?.headSha, sha);
+  }),
+);
+
+it.effect("a pullRequest whose creation time is not a UTC second is a parse error", () =>
+  Effect.gen(function* () {
+    for (const at of ["", "2026-10-29T05:50:00+10:00", "2026-10-29T05:50:00.5Z", "yesterday"]) {
+      const t = setup(reply(PR_VIEW.replace("2026-10-29T05:50:00Z", at)));
+      const error = yield* t.err(t.github.pullRequest(2));
+      assert.strictEqual(error._tag, "GitHubParse", at);
+    }
   }),
 );
 

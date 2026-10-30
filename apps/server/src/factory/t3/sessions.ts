@@ -31,6 +31,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { sourceControlDefinitions } from "../../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
+import { isCommitId } from "../text.ts";
 
 /**
  * Agent sessions as the factory sees them: softfac's `Sessions` trait
@@ -193,6 +194,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
+    "worktree-head",
     "broken-worktrees",
     "running-threads",
     "live-branches",
@@ -370,6 +372,11 @@ export class FactorySessions extends Context.Service<
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
+     * The commit the worktree at absolute `path` has checked out (`git rev-parse HEAD`). A read
+     * that fails, or prints anything but a full commit id, is `worktree-head`.
+     */
+    readonly worktreeHead: (path: string) => Effect.Effect<string, SessionsError>;
+    /**
      * The unarchived threads whose worktree is gone or has no `.git`: T3's
      * pull request lookup and settlement run git there and fail every sweep.
      * A thread `archive` archived since this server started is left out, so
@@ -433,6 +440,7 @@ const LEFTOVER_REMOVE_ATTEMPTS = { schedule: Schedule.spaced("3 seconds"), times
 
 /** `git worktree remove` of a big `node_modules` can take a while. */
 const REMOVE_WORKTREE_TIMEOUT_MS = 10 * 60 * 1000;
+const WORKTREE_HEAD_TIMEOUT_MS = 30 * 1000;
 
 const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -695,6 +703,30 @@ const make = Effect.gen(function* () {
       .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
   });
 
+  const worktreeHead: FactorySessions["Service"]["worktreeHead"] = Effect.fn(
+    "Sessions.worktreeHead",
+  )(function* (worktreePath) {
+    const failed = (cause: unknown) => new SessionsError({ operation: "worktree-head", cause });
+    if (!path.isAbsolute(worktreePath)) {
+      return yield* failed(`the worktree path is not absolute: ${worktreePath}`);
+    }
+    const result = yield* git
+      .execute({
+        operation: "factory.sessions.worktreeHead",
+        cwd: worktreePath,
+        args: ["rev-parse", "--verify", "HEAD"],
+        env: { LC_ALL: "C" },
+        allowNonZeroExit: true,
+        timeoutMs: WORKTREE_HEAD_TIMEOUT_MS,
+      })
+      .pipe(Effect.mapError(failed));
+    const head = result.stdout.trim();
+    if (result.exitCode !== 0 || !isCommitId(head)) {
+      return yield* failed(`git rev-parse HEAD in ${worktreePath}: ${result.stderr.trim()}`);
+    }
+    return head;
+  });
+
   // A path whose `.git` cannot be checked (a permission error) is not called broken.
   const brokenWorktrees: FactorySessions["Service"]["brokenWorktrees"] = Effect.gen(function* () {
     const live = (yield* projections.getThreadWorktreePaths()).filter(
@@ -776,6 +808,7 @@ const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
+    worktreeHead,
     brokenWorktrees,
     runningThreads,
     liveBranches,

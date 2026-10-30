@@ -83,6 +83,7 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  worktreeHead: () => Effect.die("no worktree head"),
   brokenWorktrees: Effect.succeed([]),
   runningThreads: Effect.succeed(0),
   liveBranches: Effect.succeed(new Set()),
@@ -824,6 +825,7 @@ describe("liveWorld", () => {
       baseRefName: "main",
       headRefOid: head,
       mergeable,
+      createdAt: "2026-10-04T10:00:00Z",
     });
 
   it.effect(
@@ -892,6 +894,7 @@ describe("liveWorld", () => {
               baseRefName: "feature/x",
               headRefOid: SHA,
               mergeable: "MERGEABLE",
+              createdAt: "2026-10-04T10:00:00Z",
             });
           }
           return null;
@@ -1922,6 +1925,7 @@ describe("the gate in the background", () => {
       baseRefName: "main",
       headRefOid: head,
       mergeable,
+      createdAt: "2026-10-04T10:00:00Z",
     });
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";

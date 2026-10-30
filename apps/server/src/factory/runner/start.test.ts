@@ -1684,6 +1684,7 @@ const pullOf = (number: number, over: Partial<PullRequest> = {}): PullRequest =>
   baseRef: "main",
   headSha: "abc123",
   mergeable: "mergeable",
+  createdAt: "2026-10-04T10:00:00Z",
   ...over,
 });
 
@@ -2446,6 +2447,7 @@ const openDraft = (head: string): PullRequest => ({
   baseRef: "main",
   headSha: "a".repeat(40),
   mergeable: "mergeable",
+  createdAt: "2026-10-04T10:00:00Z",
 });
 
 /** An open draft by the factory on `head` into `main`, as GitHub's closing references list it. */

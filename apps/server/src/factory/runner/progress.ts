@@ -116,6 +116,8 @@ export const relaunchCommandId = (relaunch: Relaunch, run: RunId): string =>
 
 export interface Seen {
   readonly claimed: boolean;
+  /** When the first `claimed` line was written, in Unix epoch milliseconds; null before the claim. */
+  readonly claimedMs: number | null;
   /** The `github_user` of the first `claimed` line; null when there is none or it is not text. */
   readonly githubUser: string | null;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
@@ -227,6 +229,8 @@ export interface Seen {
   readonly interruption: Interruption | null;
   /** The newest branch a `session_launched`, `session_interrupted` or `session_rate_limited` line names: where the run's work is. */
   readonly lastBranch: string | null;
+  /** Every branch a `branch_bound` line names: a branch the session made, whose pull request `advance` bound. */
+  readonly boundBranches: ReadonlyArray<string>;
   /** Milliseconds spent in `triage` and `building` in stints that have ended, less the factory's gate. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
@@ -440,6 +444,7 @@ const sentInterruption = (interruption: Interruption): Interruption => ({
 
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
+  let claimedMs: number | null = null;
   let githubUser: string | null = null;
   let approvedAt: string | null = null;
   let approvedBy: string | null = null;
@@ -477,6 +482,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let paused: Seen["paused"] = null;
   let interruption: Interruption | null = null;
   let lastBranch: string | null = null;
+  const boundBranches: Array<string> = [];
   let base: string | null = null;
   let model: Model | null = null;
   let workedMs = 0;
@@ -523,6 +529,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (!claimed) {
           const user = dataField(entry.data, "github_user");
           githubUser = typeof user === "string" ? user : null;
+          claimedMs = entry.ms;
         }
         claimed = true;
         break;
@@ -772,6 +779,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "pr_ready_outside":
         readyOutside = true;
         break;
+      case "branch_bound": {
+        const branch = dataField(entry.data, "branch");
+        if (typeof branch === "string" && !boundBranches.includes(branch)) {
+          boundBranches.push(branch);
+        }
+        break;
+      }
       case "session_interrupted": {
         const resumes = number(dataField(entry.data, "resumes"));
         const ordinal = number(dataField(entry.data, "run_ordinal"));
@@ -959,6 +973,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   }
   return {
     claimed,
+    claimedMs,
     githubUser,
     approvedAt,
     approvedBy,
@@ -993,6 +1008,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     paused,
     interruption,
     lastBranch,
+    boundBranches,
     base,
     model,
     workedMs,

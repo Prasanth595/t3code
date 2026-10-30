@@ -100,6 +100,7 @@ const runBranches = (seen: Seen): ReadonlyArray<string> =>
     seen.launchResumedFrom,
     seen.interruption?.branch,
     seen.relaunch?.branch,
+    ...seen.boundBranches,
   ].filter((name): name is string => typeof name === "string" && name !== "");
 
 /** A failure the prune stops on, before it deletes anything more. */

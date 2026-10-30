@@ -341,6 +341,7 @@ const rigFor = (
       t3.push(`archive ${threadId}`);
       return Effect.void;
     },
+    worktreeHead: () => Effect.die("no worktree head"),
     removeWorktree: (path) => {
       t3.push(`removeWorktree ${path}`);
       return Effect.void;
@@ -1008,6 +1009,7 @@ describe("forward: a closed issue", () => {
               baseRef: "main",
               headSha: HEAD,
               mergeable: "mergeable" as const,
+              createdAt: "2026-10-04T10:00:00Z",
             }),
         },
       };
@@ -1262,6 +1264,7 @@ const draftPr = {
   baseRef: "main",
   headSha: HEAD,
   mergeable: "mergeable" as const,
+  createdAt: "2026-10-04T10:00:00Z",
 };
 
 const dropOf = (id: number, reason: Dropped["reason"]): Dropped => ({ id: String(id), reason });
