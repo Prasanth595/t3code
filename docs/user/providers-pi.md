@@ -81,9 +81,10 @@ threads.
 - If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
   thread to let the interactive Pi session handle any startup prompt.
 - If Pi skipped a project's settings, extensions, skills, prompts, or MCP servers because the folder
-  is not trusted, the thread shows a notice when Pi starts. Run `pi` in that folder on the server
-  machine, trust the folder or its parent with `/trust`, then start a new thread. Refresh the
-  provider to update the `$` menu. Launch arguments with `--no-approve` keep project files off
-  without the notice.
+  is not trusted, the thread shows a notice when Pi starts. Run the configured Pi binary in that
+  folder on the server machine, using the same provider environment, including
+  `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`, then start a new
+  thread using that same worktree. Refresh the provider to update the `$` menu. Launch arguments
+  with `--no-approve` keep project files off without the notice.
 - The context meter appears once Pi reports usage for the thread. Some model providers only
   report usage when a response completes, so the meter can wait for the first reply.
