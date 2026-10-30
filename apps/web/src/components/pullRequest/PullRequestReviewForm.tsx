@@ -15,6 +15,7 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import { textDirection } from "~/textDirection";
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
@@ -126,6 +127,7 @@ export function PullRequestReviewForm({
         ref={textareaRef}
         rows={3}
         value={body}
+        dir={textDirection(body)}
         placeholder={placeholder}
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
