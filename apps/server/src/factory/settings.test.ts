@@ -540,7 +540,6 @@ describe("readMachineConfigReport", () => {
         path: "/b",
         title: "Bee",
         defaulted: {
-          base: "main",
           files: { packageJson: "{}", composerJson: null, lockfiles: ["package-lock.json"] },
         },
       };

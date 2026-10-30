@@ -135,10 +135,11 @@ const DEFAULT: DefaultProject = {
 
 describe("resolveDefault", () => {
   it("resolves the default block on the repo's default branch", () => {
-    const resolved = resolveDefault(DEFAULT, {
-      base: "trunk",
-      files: files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
-    });
+    const resolved = resolveDefault(
+      DEFAULT,
+      "trunk",
+      files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
+    );
     expect(Result.isSuccess(resolved) && resolved.success).toEqual({
       instructors: ["tomkaczocha", "rawphp"],
       base: "trunk",
@@ -151,20 +152,33 @@ describe("resolveDefault", () => {
   });
 
   it("follows the files it is given, so a script added between two reads joins the gate", () => {
-    const before = resolveDefault(DEFAULT, {
-      base: "main",
-      files: files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
-    });
-    const after = resolveDefault(DEFAULT, {
-      base: "main",
-      files: files({ packageJson: pkg("test", "lint"), lockfiles: ["package-lock.json"] }),
-    });
+    const before = resolveDefault(
+      DEFAULT,
+      "main",
+      files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
+    );
+    const after = resolveDefault(
+      DEFAULT,
+      "main",
+      files({ packageJson: pkg("test", "lint"), lockfiles: ["package-lock.json"] }),
+    );
     expect(Result.isSuccess(before) && before.success.gate).toEqual(["npm run test"]);
     expect(Result.isSuccess(after) && after.success.gate).toEqual(["npm run lint", "npm run test"]);
   });
 
+  it("a checkout with no origin/HEAD is one error saying how to set it", () => {
+    const resolved = resolveDefault(DEFAULT, "main", null);
+    expect(Result.isFailure(resolved) && resolved.failure).toEqual([
+      {
+        file: ".dw/config.yml",
+        message:
+          "the checkout has no origin/HEAD, so its files cannot be read: run `git remote set-head origin --auto` in it",
+      },
+    ]);
+  });
+
   it("no inferred gate is one error saying a factory block is needed", () => {
-    const resolved = resolveDefault(DEFAULT, { base: "main", files: files({}) });
+    const resolved = resolveDefault(DEFAULT, "main", files({}));
     expect(Result.isFailure(resolved)).toBe(true);
     if (Result.isFailure(resolved)) {
       expect(resolved.failure).toHaveLength(1);

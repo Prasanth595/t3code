@@ -1381,17 +1381,25 @@ describe("liveWorld", () => {
       }),
     );
 
-    it.effect("a repo on the default runs on it, with no call to GitHub, and says so", () =>
+    const npmTest: Defaulted = {
+      files: {
+        packageJson: '{"scripts":{"test":"vitest"}}',
+        composerJson: null,
+        lockfiles: ["package-lock.json"],
+      },
+    };
+
+    it.effect("a repo on the default runs on it, on GitHub's default branch, and says so", () =>
       Effect.gen(function* () {
-        const { process, calls } = baseConfigGh({ base: "main" });
-        const { result, readings } = yield* readProject(process, "/p", false, REPO, withDefault, {
-          base: "main",
-          files: {
-            packageJson: '{"scripts":{"test":"vitest"}}',
-            composerJson: null,
-            lockfiles: ["package-lock.json"],
-          },
-        });
+        const { process } = baseConfigGh({ stderr: NOT_FOUND.stderr });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
         const expected = {
           instructors: ["rawphp"],
           base: "main",
@@ -1403,27 +1411,60 @@ describe("liveWorld", () => {
         };
         assert.deepStrictEqual(Result.isSuccess(result) && result.success, expected);
         assert.deepStrictEqual(readings, [{ kind: "ok", project: expected }]);
-        assert.deepStrictEqual(calls, []);
       }),
     );
 
-    it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
+    it.effect("a factory block on GitHub wins over a checkout that shows none", () =>
       Effect.gen(function* () {
         const { process } = baseConfigGh({ base: "main" });
-        const { result, readings } = yield* readProject(process, "/p", false, REPO, withDefault, {
-          base: "main",
-          files: { packageJson: null, composerJson: null, lockfiles: [] },
-        });
+        const { result } = yield* readProject(process, "/p", false, REPO, withDefault, npmTest);
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) {
+          assert.deepStrictEqual(result.success.instructors, ["tomkaczocha"]);
+          assert.deepStrictEqual(result.success.gate, ["make"]);
+        }
+      }),
+    );
+
+    const failsWith = (onMachine: MachineConfig, defaulted: Defaulted, part: string) =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: NOT_FOUND.stderr });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          onMachine,
+          defaulted,
+        );
         assert.isTrue(Result.isFailure(result));
-        if (Result.isFailure(result)) assert.strictEqual(result.failure.kind, "config");
+        if (Result.isFailure(result)) {
+          assert.strictEqual(result.failure.kind, "config");
+          assert.isUndefined(result.failure.transient);
+        }
         assert.strictEqual(readings.length, 1);
         const reading = readings[0];
         assert.strictEqual(reading?.kind, "errors");
         if (reading?.kind === "errors") {
           assert.strictEqual(reading.errors.length, 1);
-          assert.include(reading.errors[0]?.message, "no gate could be inferred");
+          assert.include(reading.errors[0]?.message, part);
         }
-      }),
+      });
+
+    it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
+      failsWith(
+        withDefault,
+        { files: { packageJson: null, composerJson: null, lockfiles: [] } },
+        "no gate could be inferred",
+      ),
+    );
+
+    it.effect("a repo on the default whose checkout has no origin/HEAD says how to set it", () =>
+      failsWith(withDefault, { files: null }, "git remote set-head origin --auto"),
+    );
+
+    it.effect("a repo listed on the default after the machine dropped it is a config error", () =>
+      failsWith(machine, npmTest, "no default_project"),
     );
   });
 
@@ -3025,6 +3066,47 @@ describe("reloading the machine config", () => {
         assert.ok(calls.listAndRemember >= remembered);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "the pass and the settings page list with the default only when the machine has one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process, entered, release } = holdingProcess();
+          const args = { list: [] as Array<boolean>, listAndRemember: [] as Array<boolean> };
+          const recorded = (name: keyof typeof args) => (withDefault: boolean) =>
+            Effect.sync((): WatchedListing => {
+              args[name].push(withDefault);
+              return { repos: [A_B], departed: [], unresolved: [] };
+            });
+          const { loop, write } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            Layer.succeed(
+              FactoryWatchedRepos,
+              FactoryWatchedRepos.of({
+                list: recorded("list"),
+                listAndRemember: recorded("listAndRemember"),
+              }),
+            ),
+          );
+          yield* Deferred.await(entered);
+          yield* loop.watchedRepos;
+          assert.deepStrictEqual(args, { list: [false], listAndRemember: [false] });
+          yield* Deferred.succeed(release, undefined);
+          yield* write(`${VALID}default_project:\n  instructors: [rawphp]\n`);
+          yield* loop.reload;
+          yield* loop.watchedRepos;
+          assert.strictEqual(args.list.at(-1), true);
+          const waited = yield* Effect.gen(function* () {
+            while (!args.listAndRemember.includes(true)) yield* loop.awaitPass;
+          }).pipe(Effect.timeoutOption("30 seconds"));
+          assert.isTrue(Option.isSome(waited), "no pass listed with the default");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>

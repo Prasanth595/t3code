@@ -842,7 +842,6 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
             path: clone,
             title: "Title of p-no-file",
             defaulted: {
-              base: "main",
               files: { packageJson: PACKAGE, composerJson: null, lockfiles: ["package-lock.json"] },
             },
           },
@@ -868,7 +867,6 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
         list.repos.map((entry) => entry.defaulted),
         [
           {
-            base: "main",
             files: {
               packageJson: null,
               composerJson: '{"scripts":{"test":"pest"}}',
@@ -901,6 +899,78 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
       });
       assert.deepStrictEqual(list.repos, [
         { repo: "acme/widgets", path: root, title: "Title of p-own" },
+      ]);
+    }),
+  );
+
+  it.effect("lists a clone with no origin/HEAD with no files, so its reading can say why", () =>
+    Effect.gen(function* () {
+      const { clone } = cloneWithFiles("no-head", { "package.json": PACKAGE });
+      git(clone, "remote", "set-head", "origin", "--delete");
+      const list = yield* listed({
+        projects: [["p-no-head", clone]],
+        identities: new Map([[clone, WIDGETS]]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list, {
+        repos: [
+          {
+            repo: "acme/widgets",
+            path: clone,
+            title: "Title of p-no-head",
+            defaulted: { files: null },
+          },
+        ],
+        departed: [],
+        unresolved: [],
+      });
+    }),
+  );
+
+  it.effect("leaves out a checkout T3 cannot name, without calling it unresolved", () =>
+    Effect.gen(function* () {
+      const { clone } = cloneWithFiles("no-remote", { "package.json": PACKAGE });
+      const list = yield* listed({
+        projects: [["p-no-remote", clone]],
+        identities: new Map(),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
+    }),
+  );
+
+  it.effect("reports a defaulted checkout whose git timed out as unresolved", () =>
+    Effect.gen(function* () {
+      const root = checkout("timed-out", null);
+      NodeFS.mkdirSync(NodePath.join(root, ".git"));
+      const spawned: Array<string> = [];
+      const list = yield* listed({
+        projects: [["p-timed-out", root]],
+        identities: new Map([[root, WIDGETS]]),
+        withDefault: true,
+        runner: runnerAnswering(spawned, true),
+      });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
+    }),
+  );
+
+  it.effect("drops a defaulted checkout of a repo another project opts in: no ambiguity", () =>
+    Effect.gen(function* () {
+      const own = checkout("own", FACTORY_CONFIG);
+      const { clone } = cloneWithFiles("second-clone", { "package.json": PACKAGE });
+      const list = yield* listed({
+        projects: [
+          ["p-1-clone", clone],
+          ["p-2-own", own],
+        ],
+        identities: new Map([
+          [clone, WIDGETS],
+          [own, WIDGETS],
+        ]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list.repos, [
+        { repo: "acme/widgets", path: own, title: "Title of p-2-own" },
       ]);
     }),
   );
