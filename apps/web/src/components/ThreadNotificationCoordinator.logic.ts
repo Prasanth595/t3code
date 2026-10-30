@@ -27,9 +27,9 @@ export function isSnoozedForNotification(
   now: number,
 ): boolean {
   if (effectiveSnoozed(thread, { now: new Date(now).toISOString() })) return true;
-  return (
-    completedAt !== null && effectiveSnoozed(thread, { now: new Date(completedAt).toISOString() })
-  );
+  if (completedAt === null) return false;
+  if (thread.snoozedAt != null && completedAt < Date.parse(thread.snoozedAt)) return false;
+  return effectiveSnoozed(thread, { now: new Date(completedAt).toISOString() });
 }
 
 /**

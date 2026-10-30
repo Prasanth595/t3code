@@ -256,6 +256,11 @@ describe("isSnoozedForNotification", () => {
     expect(isSnoozedForNotification(snoozedThread, wakeAt - 1, wakeAt + 60_000)).toBe(true);
   });
 
+  it("does not suppress a completion from before the snooze processed after the wake", () => {
+    const snoozedAt = Date.parse(snoozedThread.snoozedAt);
+    expect(isSnoozedForNotification(snoozedThread, snoozedAt - 1, wakeAt + 60_000)).toBe(false);
+  });
+
   it("does not suppress a completion after the wake time", () => {
     expect(isSnoozedForNotification(snoozedThread, wakeAt + 1, wakeAt + 60_000)).toBe(false);
   });
