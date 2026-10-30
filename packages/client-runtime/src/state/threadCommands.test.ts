@@ -28,8 +28,11 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { EMPTY_SHELL_STATE } from "./shell.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
+import { createTurnDeliveries } from "./turnDelivery.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
@@ -505,5 +508,103 @@ describe("remote thread lifecycle commands", () => {
         expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
+  );
+});
+
+describe("turn delivery across a lost acknowledgement", () => {
+  const threadState = (status: EnvironmentThreadState["status"]): EnvironmentThreadState => ({
+    ...EMPTY_ENVIRONMENT_THREAD_STATE,
+    status,
+    data: Option.some({ messages: [], runs: [], turnItems: [] } as never),
+  });
+
+  it.effect("keeps the send, lets Stop through, and replays the same command after resync", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadListeners = new Set<(state: EnvironmentThreadState) => void>();
+      const deliveries = createTurnDeliveries<unknown, unknown, string>({
+        send: (environmentId, input) =>
+          h.commands.startTurn.run(h.registry, { environmentId, input }),
+        observeThread: (_environmentId, _threadId, listener) => {
+          threadListeners.add(listener);
+          listener(threadState("live"));
+          return () => threadListeners.delete(listener);
+        },
+        observeShell: (_environmentId, listener) => {
+          listener(EMPTY_SHELL_STATE);
+          return () => {};
+        },
+        releaseDisplay: () => {},
+      });
+      const emitThread = (status: EnvironmentThreadState["status"]) => {
+        for (const listener of threadListeners) listener(threadState(status));
+      };
+
+      const outcome = deliveries.deliver(
+        ENVIRONMENT_ID,
+        {
+          commandId: CommandId.make("send-command"),
+          threadId: THREAD_ID,
+          message: {
+            messageId: MessageId.make("send-message"),
+            role: "user",
+            text: "Delivery check. Reply only with RECEIVED.",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        },
+        () => "optimistic row",
+      );
+      const first = yield* Queue.take(h.requests);
+      expect(first.command).toMatchObject({
+        type: "message.dispatch",
+        commandId: "send-command",
+        messageId: "send-message",
+      });
+      // The frame reached the server; only the reply was lost with the socket.
+      yield* Deferred.fail(first.reply, new Error("SocketCloseError: connection lost"));
+      const waiting = yield* Effect.promise(() => outcome);
+      expect(waiting.type).toBe("waiting");
+      expect(deliveries.getSnapshot()).toEqual([
+        expect.objectContaining({ messageId: "send-message", state: "waiting" }),
+      ]);
+
+      const stop = h.commands.interruptTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, runId: RunId.make("running-run") },
+      });
+      const interrupt = yield* Queue.take(h.requests);
+      expect(interrupt.command.type).toBe("run.interrupt");
+      yield* Deferred.succeed(interrupt.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => stop))._tag).toBe("Success");
+
+      emitThread("cached");
+      emitThread("synchronizing");
+      emitThread("live");
+      const replay = yield* Queue.take(h.requests);
+      expect(replay.command).toEqual(first.command);
+      yield* Deferred.succeed(replay.reply, { sequence: 3 });
+      if (waiting.type !== "waiting") return;
+      expect(yield* Effect.promise(() => waiting.settled)).toEqual({
+        type: "delivered",
+        value: { sequence: 3 },
+      });
+      expect(deliveries.getSnapshot()).toEqual([
+        expect.objectContaining({ messageId: "send-message", state: "delivered" }),
+      ]);
+      for (const listener of threadListeners) {
+        listener({
+          ...threadState("live"),
+          data: Option.some({
+            messages: [{ id: "send-message", role: "user" }],
+            runs: [],
+            turnItems: [],
+          } as never),
+        });
+      }
+      expect(deliveries.getSnapshot()).toEqual([]);
+    }),
   );
 });

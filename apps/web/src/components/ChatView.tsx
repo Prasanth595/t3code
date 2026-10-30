@@ -305,6 +305,8 @@ import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRu
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
+import { usePendingTurnDeliveries } from "../state/turnDeliveries";
+import { useUnsentMessages } from "../state/unsentMessages";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
@@ -653,6 +655,25 @@ export default function ChatView(props: ChatViewProps) {
     setHeldOptimisticUserMessages((state) =>
       applyOptimisticUserMessagesAction(state, threadId, action),
     );
+  // Sends waiting on a reconnect live outside this view, so they stay visible across thread switches.
+  const pendingTurnDeliveries = usePendingTurnDeliveries(environmentId, threadId);
+  const unsentMessageRecords = useUnsentMessages(environmentId, threadId);
+  const detachedUserMessages = [
+    ...pendingTurnDeliveries.map((delivery) => delivery.display),
+    ...unsentMessageRecords.map((record) => record.display),
+  ];
+  const displayedOptimisticMessages =
+    detachedUserMessages.length === 0
+      ? optimisticUserMessages
+      : [
+          ...optimisticUserMessages,
+          ...detachedUserMessages.filter(
+            (display, index) =>
+              !serverAcknowledgedUserMessageIds.has(display.id) &&
+              !optimisticUserMessages.some((message) => message.id === display.id) &&
+              detachedUserMessages.findIndex((other) => other.id === display.id) === index,
+          ),
+        ];
   // Draft ids survive promotion and expire on navigation, keeping the pending resend scoped correctly.
   const [workLocallyResendDraftId, setWorkLocallyResendDraftId] = useState<DraftId | null>(null);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
@@ -1498,7 +1519,7 @@ export default function ChatView(props: ChatViewProps) {
         ],
   );
   const timelineEntriesInput = {
-    optimisticMessages: optimisticUserMessages,
+    optimisticMessages: displayedOptimisticMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
     ...(serverProjection === null
@@ -1519,7 +1540,7 @@ export default function ChatView(props: ChatViewProps) {
     ...timelineEntriesInput,
     visibleTurnItems: serverTimelineRows,
   });
-  const draftTimelineEntries = optimisticUserMessages.map(
+  const draftTimelineEntries = displayedOptimisticMessages.map(
     (message) =>
       ({
         id: message.id,
@@ -2939,7 +2960,7 @@ export default function ChatView(props: ChatViewProps) {
           })}
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
-          optimisticMessages={optimisticUserMessages}
+          optimisticMessages={displayedOptimisticMessages}
           editingRunId={queuedRunEdit.editingRunId}
           editBlockedReason={queuedRunEditBlockedReason({
             openQuestionCount: pendingUserInputs.length,

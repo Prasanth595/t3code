@@ -16,6 +16,8 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import type { TurnDeliveryFailure } from "@t3tools/client-runtime/state/turn-delivery";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { readLocalApi } from "../../localApi";
 import { getUploadedAttachments } from "../../lib/attachmentUploadQueue";
 import { findRevertCheckpoint } from "../../session-logic";
@@ -26,6 +28,9 @@ import { newThreadId } from "~/lib/utils";
 import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  type DraftThreadState,
+  composerDraftHasUserContent,
+  restoreFailedDraftThread,
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
@@ -252,25 +257,78 @@ export async function rewindToMessage(input: {
 }
 
 /**
- * Writes a failed send's composer contents back into its draft. Returns the
- * restored images, which are fresh copies so their preview URLs outlive the
- * optimistic row that held the originals.
+ * Reopens an unsent launch's draft and returns where its message restores. A cancelled launch
+ * (`failure` null) may have committed, and a deleted one is tombstoned, so either gets a fresh
+ * thread id. The returned ref still resolves after that draft is sent and promoted.
+ */
+export function reopenUnsentDraftThread(
+  draftId: DraftId,
+  draftThread: DraftThreadState,
+  launchRef: ScopedThreadRef,
+  failure: TurnDeliveryFailure | null,
+): ScopedThreadRef {
+  const threadRef =
+    failure === null || wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
+      ? scopeThreadRef(launchRef.environmentId, newThreadId())
+      : launchRef;
+  restoreFailedDraftThread(draftId, draftThread, threadRef.threadId);
+  return threadRef;
+}
+
+/**
+ * Writes an unsent message's composer contents back into its draft, after any newer draft
+ * started meanwhile. Images are fresh copies, so their previews outlive the optimistic row.
+ * Returns false, changing nothing, when its attachments would not fit beside the newer draft.
  */
 export function restoreComposerDraft(
   draftTarget: ScopedThreadRef | DraftId,
   snapshot: ComposerSendSnapshot,
-): ComposerImageAttachment[] {
+): boolean {
   const store = useComposerDraftStore.getState();
-  const images = snapshot.images.map(cloneComposerImageForRetry);
-  store.setPrompt(draftTarget, snapshot.messageText);
-  store.addImages(draftTarget, images);
-  store.addFiles(draftTarget, snapshot.files);
-  store.setTerminalContexts(draftTarget, snapshot.terminalContexts);
-  store.setPreviewAnnotations(draftTarget, snapshot.previewAnnotations);
-  store.setReviewComments(draftTarget, snapshot.reviewComments);
-  store.setThreadContexts(draftTarget, snapshot.threadContexts);
-  store.setEnvironmentContexts(draftTarget, snapshot.environmentContexts);
-  return images;
+  const current = store.getComposerDraft(draftTarget);
+  const newer = composerDraftHasUserContent(current) ? current : null;
+  if (
+    (newer?.images.length ?? 0) +
+      (newer?.files.length ?? 0) +
+      snapshot.images.length +
+      snapshot.files.length >
+    PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+  ) {
+    return false;
+  }
+  store.setPrompt(
+    draftTarget,
+    newer === null
+      ? snapshot.messageText
+      : snapshot.messageText.length === 0
+        ? newer.prompt
+        : `${newer.prompt.trimEnd()}\n\n${snapshot.messageText}`,
+  );
+  store.addImages(draftTarget, snapshot.images.map(cloneComposerImageForRetry), {
+    allowDuplicates: true,
+  });
+  store.addFiles(draftTarget, snapshot.files, { allowDuplicates: true });
+  store.setTerminalContexts(draftTarget, [
+    ...(newer?.terminalContexts ?? []),
+    ...snapshot.terminalContexts,
+  ]);
+  store.setPreviewAnnotations(draftTarget, [
+    ...(newer?.previewAnnotations ?? []),
+    ...snapshot.previewAnnotations,
+  ]);
+  store.setReviewComments(draftTarget, [
+    ...(newer?.reviewComments ?? []),
+    ...snapshot.reviewComments,
+  ]);
+  store.setThreadContexts(draftTarget, [
+    ...(newer?.threadContexts ?? []),
+    ...snapshot.threadContexts,
+  ]);
+  store.setEnvironmentContexts(draftTarget, [
+    ...(newer?.environmentContexts ?? []),
+    ...snapshot.environmentContexts,
+  ]);
+  return true;
 }
 
 export interface MultipleModelTarget {

@@ -28,6 +28,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
+import { turnDeliveries, usePendingTurnDeliveries } from "../../state/turnDeliveries";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
@@ -99,6 +100,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const pendingDeliveries = usePendingTurnDeliveries(props.environmentId, props.threadId);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -142,6 +144,7 @@ export function QueuedRunsControl({
           url: queuedImageUrlById.get(attachment.id) ?? null,
         })),
       pending: false,
+      waitingDeliveryKey: null,
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
@@ -160,6 +163,10 @@ export function QueuedRunsControl({
           url: attachment.previewUrl ?? null,
         })),
       pending: true,
+      waitingDeliveryKey:
+        pendingDeliveries.find(
+          (delivery) => delivery.messageId === message.id && delivery.state === "waiting",
+        )?.key ?? null,
     })),
   ];
 
@@ -293,7 +300,7 @@ export function QueuedRunsControl({
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">
                     <Clock3Icon aria-hidden className="size-3" />
-                    Saving
+                    {item.waitingDeliveryKey === null ? "Saving" : "Waiting to send"}
                   </span>
                 ) : null}
                 {isEditing ? (
@@ -348,17 +355,32 @@ export function QueuedRunsControl({
                           <Button
                             size="icon-xs"
                             variant="ghost-muted"
-                            aria-label="Remove queued message"
-                            disabled={item.runId === null || busyRunId !== null}
+                            aria-label={
+                              item.waitingDeliveryKey === null
+                                ? "Remove queued message"
+                                : "Cancel waiting queued message"
+                            }
+                            disabled={
+                              item.runId === null
+                                ? item.waitingDeliveryKey === null
+                                : busyRunId !== null
+                            }
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
+                              else if (item.waitingDeliveryKey !== null) {
+                                turnDeliveries.cancel(item.waitingDeliveryKey);
+                              }
                             }}
                           />
                         }
                       >
                         <XIcon />
                       </TooltipTrigger>
-                      <TooltipPopup>Remove from queue</TooltipPopup>
+                      <TooltipPopup>
+                        {item.waitingDeliveryKey === null
+                          ? "Remove from queue"
+                          : "Cancel this send and restore it to the composer"}
+                      </TooltipPopup>
                     </Tooltip>
                   </>
                 )}
