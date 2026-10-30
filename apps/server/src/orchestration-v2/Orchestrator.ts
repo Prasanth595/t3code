@@ -3252,6 +3252,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
       if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
         return yield* new OrchestratorDispatchError({
@@ -3266,7 +3267,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
-        failure.resetAt !== command.limitRecovery.resetAt ||
+        recoveryAt !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
@@ -5175,6 +5176,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       const now = yield* DateTime.now;
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
@@ -5183,7 +5185,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
+        recovery.resetAt !== recoveryAt ||
         Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -5565,6 +5567,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Proposed plan ${sourcePlan.id} is not active.`,
       });
     }
+    const carryLimitRecovery = Effect.fn("Orchestrator.carryLimitRecovery")(function* (
+      runId: RunId,
+      occurredAt: DateTime.Utc,
+    ) {
+      if (command.usageLimitContinuationOfRunId === undefined) return;
+      const current = yield* getProjectionWithPendingEvents(command.threadId, events);
+      const recovery = current.thread.limitRecovery;
+      if (!recovery?.autoResume || recovery.runId !== command.usageLimitContinuationOfRunId) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt,
+        payload: {
+          ...current.thread,
+          limitRecovery: { ...recovery, runId, requestId: command.commandId },
+          updatedAt: occurredAt,
+        },
+      });
+    });
     const completeSourcePlan = (occurredAt: DateTime.Utc) =>
       sourcePlan === null
         ? Effect.void
@@ -5872,6 +5896,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
+      yield* carryLimitRecovery(runId, now);
       yield* completeSourcePlan(now);
       yield* emitEvent({
         type: "run-attempt.created",
@@ -6281,6 +6306,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
+      yield* carryLimitRecovery(runId, now);
       yield* completeSourcePlan(now);
       yield* emitEvent({
         type: "run-attempt.created",
@@ -7166,6 +7192,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: run,
     });
+    yield* carryLimitRecovery(runId, now);
     yield* completeSourcePlan(now);
     yield* emitEvent({
       type: "run-attempt.created",
@@ -10402,15 +10429,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(input.command));
       const failure = latestRootProviderFailure(latest, turnItems);
+      const recoveryAt = failure?.resetAt ?? (failure?.retryable === true ? failure.retryAt : null);
       if (
         failure?.class === "usage_limit" &&
-        failure.resetAt != null &&
-        Number.isFinite(Date.parse(failure.resetAt)) &&
-        (recovery?.runId !== latest.id || recovery.resetAt !== failure.resetAt)
+        recoveryAt != null &&
+        Number.isFinite(Date.parse(recoveryAt)) &&
+        (recovery?.runId !== latest.id || recovery.resetAt !== recoveryAt)
       ) {
         recovery = {
           runId: latest.id,
-          resetAt: failure.resetAt,
+          resetAt: recoveryAt,
           autoResume: false,
           snooze: false,
         };
@@ -13497,7 +13525,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Stop or an explicit recovery choice can commit after the sweep reads its candidate.
           if (
             thread.limitRecovery?.runId === input.limitRecovery.runId &&
-            thread.limitRecovery.resetAt === input.limitRecovery.resetAt
+            (thread.limitRecovery.resetAt === input.limitRecovery.resetAt ||
+              !thread.limitRecovery.autoResume)
           )
             return;
           yield* dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input });

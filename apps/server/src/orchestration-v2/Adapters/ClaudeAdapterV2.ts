@@ -1,3 +1,4 @@
+import { claudeGatewayQuotaFailure } from "./claudeGatewayQuota.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -3650,7 +3651,24 @@ function providerFailureFromResult(
   completedAt: DateTime.Utc,
   failureHint?: string,
   usageLimited = false,
+  previousAttempts: unknown = 0,
+  identity = "",
 ): OrchestrationV2ProviderFailure | null {
+  if (
+    (failureHint === undefined || usageLimited) &&
+    message.subtype === "success" &&
+    message.is_error &&
+    message.terminal_reason === "api_error"
+  ) {
+    const quota = claudeGatewayQuotaFailure({
+      result: message.result,
+      status: message.api_error_status,
+      completedAt,
+      previousAttempts,
+      identity,
+    });
+    if (quota !== null) return quota;
+  }
   const gatewayLimit =
     failureHint === undefined &&
     message.subtype === "success" &&
@@ -7463,6 +7481,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const providerThread: OrchestrationV2ProviderThread = {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
+                  nativeMetadata: {
+                    ...input.context.input.providerThread.nativeMetadata,
+                    claudeQuotaRetryCount:
+                      input.failure?.code === "claude_quota_exhausted" ||
+                      input.failure?.code === "claude_quota_unavailable"
+                        ? Math.min(
+                            5,
+                            (typeof input.context.input.providerThread.nativeMetadata
+                              ?.claudeQuotaRetryCount === "number"
+                              ? input.context.input.providerThread.nativeMetadata
+                                  .claudeQuotaRetryCount
+                              : 0) + 1,
+                          )
+                        : 0,
+                  },
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
                   ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
                     ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
@@ -9222,7 +9255,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     message: limitedCompaction.message ?? failureHint,
                     code: "compaction_failed",
                   })
-                : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
+                : providerFailureFromResult(
+                    message,
+                    completedAt,
+                    failureHint,
+                    usageLimited,
+                    context.input.providerThread.nativeMetadata?.claudeQuotaRetryCount,
+                    context.input.runId,
+                  );
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }

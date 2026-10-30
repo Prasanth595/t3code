@@ -19,6 +19,41 @@ function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
 }
 
 describe("usageLimitRecoveryBannerItem", () => {
+  it("labels a scheduled retry separately from a known quota reset", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());
+    const retryAt = new Date(2026, 9, 20, 12, 1).toISOString();
+    const runId = RunId.make("retry-run");
+    const item = usageLimitRecoveryBannerItem({
+      runId,
+      resetAt: null,
+      retryAt,
+      stoppedAt: stoppedAt.toISOString(),
+      snoozedUntil: null,
+      recovery: { runId, resetAt: retryAt, autoResume: true, snooze: false },
+      timestampFormat: "24-hour",
+      onChange: async () => {},
+    });
+    expect(item.title).toBe("Waiting for quota");
+    expect(item.description).toBe("Retries 12:01");
+    expect(item.actions).not.toBeNull();
+  });
+
+  it("offers scheduling an unknown-reset retry without claiming quota has reset", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());
+    const item = usageLimitRecoveryBannerItem({
+      runId: RunId.make("retry-run"),
+      resetAt: null,
+      retryAt: new Date(2026, 9, 20, 12, 1).toISOString(),
+      stoppedAt: stoppedAt.toISOString(),
+      snoozedUntil: null,
+      recovery: null,
+      timestampFormat: "24-hour",
+      onChange: async () => {},
+    });
+    expect(item.description).toBe("Next retry 12:01");
+    expect(item.actions).not.toBeNull();
+  });
+
   it.each([
     ["12-hour", "Resets 5:30 PM"],
     ["24-hour", "Resets 17:30"],

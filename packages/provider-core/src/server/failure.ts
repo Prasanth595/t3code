@@ -223,6 +223,7 @@ export function makeProviderFailure(input: {
   readonly class?: OrchestrationV2ProviderFailureClass;
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
+  readonly retryAt?: string | null;
 }): OrchestrationV2ProviderFailure {
   const curated = curatedCauseMessages(input.cause);
   const rawMessage =
@@ -241,6 +242,12 @@ export function makeProviderFailure(input: {
     input.resetAt != null &&
     Number.isFinite(Date.parse(input.resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
+      : {}),
+    ...(input.class === "usage_limit" &&
+    input.retryable === true &&
+    input.retryAt != null &&
+    Number.isFinite(Date.parse(input.retryAt))
+      ? { retryAt: DateTime.formatIso(DateTime.makeUnsafe(input.retryAt)) }
       : {}),
   };
 }

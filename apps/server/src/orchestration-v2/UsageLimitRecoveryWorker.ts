@@ -14,17 +14,18 @@ export function limitRecoveryCommand(
   nowMs: number,
   snooze = false,
 ): OrchestrationV2Command | null {
+  const recoveryAt = thread.usageLimitResetAt ?? thread.usageLimitRetryAt;
   if (
     thread.status !== "failed" ||
     thread.lastErrorClass !== "usage_limit" ||
     !thread.latestRunId ||
-    !thread.usageLimitResetAt ||
+    !recoveryAt ||
     thread.archivedAt !== null ||
     thread.settledOverride === "settled" ||
     thread.pendingRuntimeRequest !== null
   )
     return null;
-  const resetMs = Date.parse(thread.usageLimitResetAt);
+  const resetMs = Date.parse(recoveryAt);
   // An already-expired window reported with a fresh failure cannot start a retry loop.
   if (
     !Number.isFinite(resetMs) ||
@@ -33,16 +34,17 @@ export function limitRecoveryCommand(
     return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
-  if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
-    if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
+  if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== recoveryAt) {
+    const resume = autoResume || (recovery?.runId === thread.latestRunId && recovery.autoResume);
+    if (!resume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
       threadId: thread.id,
       limitRecovery: {
         runId: thread.latestRunId,
-        resetAt: thread.usageLimitResetAt,
-        autoResume,
+        resetAt: recoveryAt,
+        autoResume: resume,
         snooze: snooze && resetMs > nowMs,
       },
     };

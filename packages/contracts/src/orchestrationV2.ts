@@ -1015,6 +1015,7 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   itemIdentityVersion: Schema.optional(Schema.Literal(2)),
   forkHeadMessageId: Schema.optional(TrimmedNonEmptyString),
+  claudeQuotaRetryCount: Schema.optional(NonNegativeInt.check(Schema.isLessThanOrEqualTo(5))),
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),
@@ -1438,6 +1439,7 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  retryAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
@@ -2066,6 +2068,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   lastErrorCode: Schema.optional(Schema.NullOr(Schema.String)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  usageLimitRetryAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
