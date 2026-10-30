@@ -42,7 +42,8 @@ describe("HtmlRenderFrame", () => {
   });
 });
 
-it.each([false, true])("holds sizing until release (outside frame: %s)", async (outside) => {
+it.each(["inside", "outside", "touch"])("holds sizing until release: %s", async (kind) => {
+  const outside = kind === "outside";
   const url = URL.createObjectURL(
     new Blob(
       [
@@ -84,30 +85,44 @@ it.each([false, true])("holds sizing until release (outside frame: %s)", async (
   const box = frame.getBoundingClientRect();
   const x = outer.left + box.left + 30,
     y = outer.top + box.top + 30;
-  await cdp().send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x,
-    y,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(true));
-  expect(frame.clientHeight).toBe(216);
-  await cdp().send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x,
-    y: outside ? outer.top + box.bottom + 30 : y,
-    buttons: 1,
-  });
-  await cdp().send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x,
-    y: outside ? outer.top + box.bottom + 30 : y,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
+  if (kind === "touch") {
+    const first = { x, y, id: 11 };
+    await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [first] });
+    await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(true));
+    await cdp().send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [first, { x, y: outer.top + box.bottom + 30, id: 12 }],
+    });
+    await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [first] });
+    expect(pin).toHaveBeenLastCalledWith(true);
+    expect(frame.clientHeight).toBe(216);
+    await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  } else {
+    await cdp().send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+    });
+    await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(true));
+    expect(frame.clientHeight).toBe(216);
+    await cdp().send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y: outside ? outer.top + box.bottom + 30 : y,
+      buttons: 1,
+    });
+    await cdp().send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y: outside ? outer.top + box.bottom + 30 : y,
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
   await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(false));
   await vi.waitFor(() => expect(frame.clientHeight).toBe(316));
   if (!outside) expect(cancelled).toBe(false);

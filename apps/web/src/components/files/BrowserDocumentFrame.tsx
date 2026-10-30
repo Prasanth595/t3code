@@ -246,12 +246,16 @@ export function HtmlRenderDocument(props: {
   useEffect(() => {
     if (!pointerHeld) return;
     const release = (event: Event) => {
-      if (event instanceof PointerEvent && event.buttons !== 0) return;
+      if (event.type === "pointermove" && event instanceof PointerEvent && event.buttons !== 0)
+        return;
       frameRef.current?.contentWindow?.postMessage(
-        { jsonrpc: "2.0", method: HTML_RENDER_POINTER_RELEASE_METHOD },
+        {
+          jsonrpc: "2.0",
+          method: HTML_RENDER_POINTER_RELEASE_METHOD,
+          ...(event instanceof PointerEvent ? { params: { pointerId: event.pointerId } } : {}),
+        },
         "*",
       );
-      setPointerHeld(false);
     };
     window.addEventListener("pointerup", release, true);
     window.addEventListener("pointercancel", release, true);
