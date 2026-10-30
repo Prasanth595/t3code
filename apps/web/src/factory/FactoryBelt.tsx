@@ -30,15 +30,17 @@ const subscribeToSeconds = (onSecond: () => void) => {
 };
 const wholeSecond = () => Math.floor(Date.now() / 1000) * 1000;
 
-/** An accepted Update now: what to say, and whether the server has since gone away. */
+/** An accepted Update now: its build, what to say, and whether the server has since gone away. */
 interface Updating {
+  readonly commit: string | null;
   readonly message: string;
   readonly away: boolean;
 }
 
 /**
- * The updates still under way: one ends once its build no longer waits, or once its server answers
- * again after a read failed, as the install restarts it. The same map when nothing changed.
+ * The updates still under way: one ends once its build no longer waits (installed, or dropped for a
+ * newer one), or once its server answers again after a read failed, as the install restarts it.
+ * The same map when nothing changed.
  */
 const settleUpdating = (
   updating: ReadonlyMap<EnvironmentId, Updating>,
@@ -50,7 +52,15 @@ const settleUpdating = (
     let settled: Updating | null = entry;
     if (status === undefined) settled = null;
     else if (status.status === "error") settled = entry.away ? entry : { ...entry, away: true };
-    else if (entry.away || status.data?.deploy_pending == null) settled = null;
+    else {
+      const pending = status.data?.deploy_pending;
+      if (
+        entry.away ||
+        pending == null ||
+        (entry.commit !== null && pending.commit !== entry.commit)
+      )
+        settled = null;
+    }
     if (settled === entry) continue;
     next ??= new Map(updating);
     if (settled === null) next.delete(environmentId);
@@ -341,11 +351,13 @@ export function FactoryBelt({
     setDeployNote(null);
     try {
       if (now) {
-        const { kicked } = await factoryApi.deployNow(environmentId);
+        const { commit, kicked } = await factoryApi.deployNow(environmentId);
         const message = kicked
           ? "Updating. The server restarts once the build is installed."
           : "Updating within 10 minutes.";
-        setUpdating((current) => new Map(current).set(environmentId, { message, away: false }));
+        setUpdating((current) =>
+          new Map(current).set(environmentId, { commit, message, away: false }),
+        );
       } else {
         await factoryApi.snoozeDeploy(environmentId);
       }
@@ -374,8 +386,10 @@ export function FactoryBelt({
           onSelect={setPickedId}
           selectedId={selected.environmentId}
         />
-        {report ? (
+        {report?.deploy_pending ? (
           <DeployBanner
+            // A new build, or another environment, starts with its dialog closed.
+            key={`${selected.environmentId} ${report.deploy_pending.since} ${report.deploy_pending.commit}`}
             busy={deployBusy.has(selected.environmentId)}
             onDeployNow={() => void deploy(selected, true)}
             onSnooze={() => void deploy(selected, false)}

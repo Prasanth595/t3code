@@ -19,7 +19,7 @@ import { formatClock } from "./belt";
 /** The states a run stays in while it waits on a person, which autodeploy does not wait for. */
 const WAITING_ON_A_PERSON = new Set(["pr-open", "needs-info", "stuck"]);
 
-/** The runs an update interrupts, by the rule `factory/scripts/autodeploy.sh` waits on. */
+/** The runs an update interrupts: the runs `factory/scripts/autodeploy.sh` waits on. */
 const runsInProgress = (runs: FactoryStatus["runs"]) =>
   runs.filter(({ state, unreadable }) => unreadable || !WAITING_ON_A_PERSON.has(state ?? ""));
 
@@ -63,7 +63,9 @@ export function DeployBanner({
   }
 
   const inProgress = runsInProgress(status.runs);
-  const threads = status.threads?.running ?? 0;
+  // A count T3 could not read may hide threads at work, so it asks as one would; an older server
+  // that sends no count asks only for runs.
+  const threads = status.threads === undefined ? 0 : status.threads.running;
   const build = pending.commit ? `Build ${pending.commit.slice(0, 7)}` : "A new build";
   const snoozedUntil = clockOf(pending.snoozed_until);
   const deployBy = clockOf(pending.deploy_by);
@@ -90,7 +92,7 @@ export function DeployBanner({
           <Button
             disabled={busy}
             onClick={() =>
-              inProgress.length > 0 || threads > 0 ? setConfirming(true) : onDeployNow()
+              inProgress.length > 0 || threads !== 0 ? setConfirming(true) : onDeployNow()
             }
             size="xs"
           >
@@ -115,10 +117,11 @@ export function DeployBanner({
                 ))}
               </ul>
             ) : null}
-            {threads > 0 ? (
+            {threads !== 0 ? (
               <p className="text-sm text-muted-foreground">
-                {threads} {threads === 1 ? "thread" : "threads"} with an agent at work will be
-                interrupted; you continue them in T3.
+                {threads === null
+                  ? "T3 could not say whether an agent is at work in a thread; any that is will be interrupted."
+                  : `${threads} ${threads === 1 ? "thread" : "threads"} with an agent at work will be interrupted; you continue them in T3.`}
               </p>
             ) : null}
           </AlertDialogHeader>
