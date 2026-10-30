@@ -20,6 +20,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { ProviderProxyHost } from "./providerProxy.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -928,8 +929,12 @@ const SecretProviderConfigWrite = Schema.Struct({
       : `Invalid ${entry.kind} secret provider config.`;
   }),
 );
-/** A CLIProxyAPI server that `useProxy` provider instances send model traffic to. Empty `url` turns it off. */
+/**
+ * The CLIProxyAPI server that `useProxy` provider instances send model traffic to. `managed` runs
+ * one on this environment; `external` uses `url` and the keys. Read the host with `providerProxyHost`.
+ */
 export const ProviderProxySettings = Schema.Struct({
+  host: Schema.optionalKey(ProviderProxyHost),
   url: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   // Optional; when set, the proxy's accounts also feed Usage -> Limits.
@@ -1727,6 +1732,7 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Redaction markers retain secrets; empty secrets remove them. */
   providerProxy: Schema.optionalKey(
     Schema.Struct({
+      host: Schema.optionalKey(ProviderProxyHost),
       url: Schema.optionalKey(TrimmedString),
       apiKey: Schema.optionalKey(TrimmedString),
       managementKey: Schema.optionalKey(TrimmedString),

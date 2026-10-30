@@ -61,7 +61,7 @@ const proxyUnavailableReason = (
   }
   // Falling back to the instance's own login would silently spend a different account.
   if (entry.proxy === undefined) {
-    return "Use proxy is on, but this environment has no proxy. Add one in Settings → Providers → Proxy, or turn off Use proxy.";
+    return "Use proxy is on, but this environment has no proxy. Choose one in Settings → Providers → Proxy, or turn off Use proxy.";
   }
   return undefined;
 };

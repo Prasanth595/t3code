@@ -804,7 +804,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Proxy",
     to: "/settings/providers",
     searchTerms: [
-      "proxy CLIProxyAPI CLI proxy route account pool load balance api key management key base url",
+      "proxy CLIProxyAPI CLI proxy route account pool load balance api key management key base url host this environment managed external accounts add account sign in",
     ],
     providerSettingsOnly: true,
   },

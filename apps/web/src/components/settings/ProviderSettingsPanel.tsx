@@ -22,6 +22,7 @@ import {
   type ProjectId,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  providerProxyConfigured,
   type ServerProvider,
   resolveEnvironmentMachineKind,
   resolveProjectProviderInstanceEnabled,
@@ -933,7 +934,7 @@ export function EnvironmentProviderSettings({
         canWriteSettings={canWriteSettings}
         liveProvider={serverProviders.find((candidate) => candidate.instanceId === row.instanceId)}
         isUpdateDispatching={updatingProviderInstanceIds.has(row.instanceId)}
-        proxyConfigured={settings.providerProxy.url !== ""}
+        proxyConfigured={providerProxyConfigured(settings.providerProxy)}
         showProjectOverride={showProjectOverride}
         projectOverrideValue={
           showProjectOverride

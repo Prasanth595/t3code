@@ -9,6 +9,11 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { normalizeProviderProxyUrl } from "@t3tools/provider-core/server/providerProxy";
+import {
+  resolveProxyManagement,
+  type ManagedProxyEndpoint,
+} from "../providerProxy/effectiveProxy.ts";
+import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -52,10 +57,11 @@ export const PROVIDER_PROXY_SOURCE_ID = "provider-proxy" as UsageLimitSourceId;
 /** The routing proxy reports its accounts without a separate hub entry, unless one already points at it. */
 export function effectiveUsageLimitSources(
   settings: ServerSettings,
+  managedProxy?: ManagedProxyEndpoint,
 ): Readonly<Record<string, UsageLimitSourceConfig>> {
-  const url = normalizeProviderProxyUrl(settings.providerProxy.url);
-  const { managementKey } = settings.providerProxy;
-  if (url === "" || managementKey === "") return settings.usageLimitSources;
+  const management = resolveProxyManagement(settings, managedProxy);
+  if (management === undefined) return settings.usageLimitSources;
+  const { url, managementKey } = management;
   const alreadyListed = Object.values(settings.usageLimitSources).some(
     (source) => source.managementKey !== "" && normalizeProviderProxyUrl(source.url) === url,
   );
@@ -79,6 +85,7 @@ export function effectiveUsageLimitSources(
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
+  const managedProxy = yield* ManagedProviderProxy.ManagedProviderProxy;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   const changes = yield* Effect.acquireRelease(
@@ -118,8 +125,9 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
+    const endpoint = yield* managedProxy.endpoint;
     const entries = Object.entries(
-      settings === null ? {} : effectiveUsageLimitSources(settings),
+      settings === null ? {} : effectiveUsageLimitSources(settings, endpoint),
     ).filter(([, config]) => config.enabled);
     const snapshots = yield* Effect.forEach(
       entries,
@@ -136,7 +144,9 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
-    const config = effectiveUsageLimitSources(settings)[input.sourceId];
+    const config = effectiveUsageLimitSources(settings, yield* managedProxy.endpoint)[
+      input.sourceId
+    ];
     if (!config?.enabled || !config.managementKey) {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
@@ -149,9 +159,14 @@ export const make = Effect.gen(function* () {
     return result;
   }, refreshLock.withPermits(1));
 
-  yield* settingsService.streamChanges.pipe(
-    Stream.map(effectiveUsageLimitSources),
-    Stream.changes,
+  yield* Stream.merge(
+    settingsService.streamChanges.pipe(
+      Stream.map((settings) => effectiveUsageLimitSources(settings)),
+      Stream.changes,
+    ),
+    // A managed proxy can only answer once it runs.
+    managedProxy.statusChanges.pipe(Stream.filter((status) => status.status === "running")),
+  ).pipe(
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
   );

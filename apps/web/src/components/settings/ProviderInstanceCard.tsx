@@ -275,7 +275,7 @@ function ProviderProxyRow(props: {
         blocked ??
         (props.proxyConfigured
           ? "Send this provider's requests through the proxy and its accounts."
-          : "Add a proxy URL under Proxy in these settings first.")
+          : "Choose where the proxy runs under Proxy in these settings first.")
       }
       control={
         <Switch
@@ -631,7 +631,7 @@ interface ProviderInstanceCardProps {
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
   readonly projectOverride?: ProjectOverrideControl | undefined;
-  /** Whether this environment has a proxy URL for `useProxy` to route through. */
+  /** Whether this environment has a proxy for `useProxy` to route through. */
   readonly proxyConfigured?: boolean | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{

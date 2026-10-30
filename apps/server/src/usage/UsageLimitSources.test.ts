@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
@@ -78,6 +79,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
+      ManagedProviderProxy.ManagedProviderProxy.layerTest(),
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die("Unexpected network request")),
@@ -129,4 +131,23 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
       UsageLimitSources.effectiveUsageLimitSources({ ...settings, usageLimitSources: listed }),
     ).toBe(listed);
   }
+
+  // A managed proxy reports through its own loopback management key; turning the host off hides it.
+  const managed = { url: "http://127.0.0.1:41234", apiKey: "sk", managementKey: "managed-mgmt" };
+  const managedSettings = {
+    ...settings,
+    providerProxy: { ...settings.providerProxy, host: "managed" as const },
+  };
+  expect(
+    UsageLimitSources.effectiveUsageLimitSources(managedSettings, managed)[
+      UsageLimitSources.PROVIDER_PROXY_SOURCE_ID
+    ],
+  ).toMatchObject({ url: "http://127.0.0.1:41234", managementKey: "managed-mgmt" });
+  expect(UsageLimitSources.effectiveUsageLimitSources(managedSettings)).toEqual({});
+  expect(
+    UsageLimitSources.effectiveUsageLimitSources(
+      { ...settings, providerProxy: { ...settings.providerProxy, host: "off" } },
+      managed,
+    ),
+  ).toEqual({});
 });

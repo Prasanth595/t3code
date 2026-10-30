@@ -7,10 +7,6 @@ import {
   type ProviderInstanceConfig,
   ServerSettings,
 } from "@t3tools/contracts";
-import {
-  normalizeProviderProxyUrl,
-  type ProviderProxyRoute,
-} from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +15,11 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as Settings from "../serverSettings.ts";
+import {
+  resolveProviderProxyRoute,
+  type ManagedProxyEndpoint,
+} from "../providerProxy/effectiveProxy.ts";
+import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
@@ -38,6 +39,7 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderHost.ProviderHost
     >
   | Settings.ServerSettingsService
+  | ManagedProviderProxy.ManagedProviderProxy
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig.ServerConfig
   | Path.Path
@@ -45,13 +47,9 @@ type ProviderInstanceRegistryHydrationEnv =
   // The Claude runner counts its CLIs as running agents for port discovery.
   | PortScanner.PortDiscovery;
 
-const resolveProviderProxyRoute = (settings: ServerSettings): ProviderProxyRoute | undefined => {
-  const url = normalizeProviderProxyUrl(settings.providerProxy.url);
-  return url === "" ? undefined : { url, apiKey: settings.providerProxy.apiKey };
-};
-
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
+  managedProxy?: ManagedProxyEndpoint,
 ): ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
 
@@ -81,7 +79,7 @@ export const deriveProviderInstanceConfigMap = (
     }
   }
 
-  const proxy = resolveProviderProxyRoute(settings);
+  const proxy = resolveProviderProxyRoute(settings, managedProxy);
   if (proxy === undefined) return merged;
   return Object.fromEntries(
     Object.entries(merged).map(([id, entry]) => [
@@ -137,13 +135,16 @@ const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
-      yield* settingsChanges.pipe(
+      const managedProxy = yield* ManagedProviderProxy.ManagedProviderProxy;
+      // The managed proxy's endpoint appears once it first starts and moves if its port is taken.
+      // Its stream replays the current value; reconciling unchanged entries rebuilds nothing.
+      yield* Stream.merge(settingsChanges, managedProxy.endpointChanges).pipe(
         Stream.runForEach(() =>
           // The subscription predates the seed read, so a queued change can be
           // older than the seed. A failed current read must leave the registry intact.
-          serverSettings.getSettings.pipe(
-            Effect.flatMap((current) =>
-              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+          Effect.all([serverSettings.getSettings, managedProxy.endpoint]).pipe(
+            Effect.flatMap(([current, endpoint]) =>
+              mutator.reconcile(deriveProviderInstanceConfigMap(current, endpoint)),
             ),
             Effect.catchCause((cause) =>
               Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
@@ -170,10 +171,11 @@ export const layer: Layer.Layer<
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
+    const managedProxy = yield* ManagedProviderProxy.ManagedProviderProxy;
     const initialConfigMap =
       initialSettings === undefined
         ? ({} as ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap)
-        : deriveProviderInstanceConfigMap(initialSettings);
+        : deriveProviderInstanceConfigMap(initialSettings, yield* managedProxy.endpoint);
 
     const layerMutable = ProviderInstanceRegistry.layer({
       drivers: BUILT_IN_DRIVERS,
