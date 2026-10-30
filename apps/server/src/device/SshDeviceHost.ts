@@ -152,6 +152,18 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     );
   const lock = yield* Semaphore.make(1);
   let stopped = false;
+  let retired = false;
+  const requireActive = Effect.suspend(() =>
+    retired
+      ? Effect.fail(
+          new DeviceHost.DeviceHostError({
+            hostId: config.id,
+            step: "starting retired host",
+            cause: new Error("Host configuration changed. Retry the operation."),
+          }),
+        )
+      : Effect.void,
+  );
   let activated = false;
   let wantsAgent = false;
   let ready:
@@ -417,6 +429,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const ensureReady: DeviceHost.DeviceHost["Service"]["ensureReady"] = (onPhase) =>
     lock.withPermit(
       Effect.gen(function* () {
+        yield* requireActive;
         stopped = false;
         if (ready) return ready;
         summary = yield* provide(probe(config, owner));
@@ -447,6 +460,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const changeAgent = (enabled: boolean) =>
     lock.withPermit(
       Effect.gen(function* () {
+        yield* requireActive;
         wantsAgent = enabled;
         if (enabled && ready?.agentDevice) return { ...ready, agentDevice: ready.agentDevice };
         if (!enabled && !ready?.agentDevice) return null;
@@ -468,7 +482,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         );
       }),
     );
-  yield* Effect.addFinalizer(() => stop);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      retired = true;
+    }).pipe(Effect.andThen(stop)),
+  );
   return {
     id: config.id,
     label: config.label,
