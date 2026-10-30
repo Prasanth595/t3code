@@ -286,7 +286,7 @@ interface ActiveOpenCodeTurn {
   admissionAccepted: boolean;
   admissionMessageObserved: boolean;
   idleDuringAdmission: boolean;
-  admissionIdleSequence: number;
+  admissionStatusSequence: number;
   admissionSettled: Deferred.Deferred<void>;
   admissionAbortController: AbortController | null;
 }
@@ -2132,7 +2132,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           generation: number,
         ) {
           while (promptAdmissionIsCurrent(state, turn, generation)) {
-            const idleSequence = turn.admissionIdleSequence;
+            const statusSequence = turn.admissionStatusSequence;
             const status = yield* reconcileOpenCodePromptAdmissionStatus(
               turn,
               generation,
@@ -2160,15 +2160,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ) {
               return;
             }
+            if (turn.admissionStatusSequence !== statusSequence) {
+              turn.admissionPending = true;
+              continue;
+            }
             if (status === "idle") {
               yield* finalizeTurn(state, turn, "completed");
               return;
             }
-            if (status === "busy") {
-              if (turn.admissionIdleSequence === idleSequence) return;
-              turn.admissionPending = true;
-              continue;
-            }
+            if (status === "busy") return;
             yield* Effect.sleep("250 millis");
           }
         });
@@ -2253,7 +2253,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             admissionAccepted: true,
             admissionMessageObserved: true,
             idleDuringAdmission: false,
-            admissionIdleSequence: 0,
+            admissionStatusSequence: 0,
             admissionSettled: Deferred.makeUnsafe<void>(),
             admissionAbortController: null,
           };
@@ -2612,13 +2612,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               const state = threads.get(sessionId);
               if (state === undefined) return;
+              if (state.activeTurn?.admissionPending) {
+                state.activeTurn.admissionStatusSequence++;
+              }
               if (event.properties.status.type === "busy") {
                 yield* updateProviderThread(state, { status: "active" });
                 return;
               }
               if (event.properties.status.type === "idle" && state.activeTurn !== null) {
                 if (state.activeTurn.admissionPending) {
-                  state.activeTurn.admissionIdleSequence++;
                   advanceOpenCodePromptAdmission(state.activeTurn, "idle");
                   return;
                 }
@@ -2635,7 +2637,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 if (state.activeTurn.admissionPending) {
-                  state.activeTurn.admissionIdleSequence++;
+                  state.activeTurn.admissionStatusSequence++;
                   advanceOpenCodePromptAdmission(state.activeTurn, "idle");
                   return;
                 }
@@ -3221,7 +3223,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 admissionAccepted: isCompaction,
                 admissionMessageObserved: false,
                 idleDuringAdmission: false,
-                admissionIdleSequence: 0,
+                admissionStatusSequence: 0,
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 // @effect-diagnostics-next-line abortControllerInEffect:off - Turn interruption owns prompt admission cancellation.
                 admissionAbortController: new AbortController(),

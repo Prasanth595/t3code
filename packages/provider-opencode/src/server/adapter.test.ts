@@ -1941,6 +1941,7 @@ describe("OpenCodeAdapterV2", () => {
     "stale-idle-then-busy",
     "no-idle",
     "idle-during-status",
+    "busy-during-status",
     "repeated-user-during-status",
   ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
     Effect.gen(function* () {
@@ -1953,6 +1954,7 @@ describe("OpenCodeAdapterV2", () => {
       const promptIds: Array<string> = [];
       const terminal = yield* Deferred.make<void>();
       const statusRead = promiseGate<void>();
+      const statusRechecked = promiseGate<void>();
       let statusCalls = 0;
       const harness = yield* makeOpenCodeRuntimeHarness(`steer-rejected-${idleTiming}`, sessionId, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -1963,6 +1965,17 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => {
             statusCalls++;
             statusRead.resolve();
+            if (idleTiming === "busy-during-status") {
+              if (statusCalls === 1) {
+                await nativeEvents.push({
+                  type: "session.status",
+                  properties: { sessionID: sessionId, status: { type: "busy" } },
+                });
+                return { data: { [sessionId]: { type: "idle" } } };
+              }
+              statusRechecked.resolve();
+              return { data: { [sessionId]: { type: statusCalls === 2 ? "busy" : "idle" } } };
+            }
             if (idleTiming === "repeated-user-during-status") {
               await nativeEvents.push({
                 type: "message.updated",
@@ -2077,6 +2090,18 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(active.providerTurns.at(-1)?.status, "running");
       }
       yield* Effect.promise(() => statusRead.promise);
+      if (idleTiming === "busy-during-status") {
+        const outcome = yield* Effect.raceFirst(
+          Effect.promise(() => statusRechecked.promise).pipe(Effect.as("rechecked")),
+          Deferred.await(terminal).pipe(Effect.as("completed")),
+        );
+        assert.equal(outcome, "rechecked");
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
       if (idleTiming === "after" || idleTiming === "stale-idle-then-busy") {
         const active = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,
@@ -2085,7 +2110,9 @@ describe("OpenCodeAdapterV2", () => {
         yield* Effect.promise(() => nativeEvents.push(idle));
       }
       yield* Deferred.await(terminal);
-      assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
+      if (idleTiming !== "busy-during-status") {
+        assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
+      }
 
       const settled = yield* harness.runtime.readThreadSnapshot({
         providerThread: harness.providerThread,
