@@ -59,8 +59,7 @@ export function ThreadDetailsControl({
             "bg-black/[0.035] text-foreground/80 hover:text-foreground hover:!bg-black/[0.06] data-pressed:!bg-black/[0.06] dark:bg-white/[0.08] dark:hover:!bg-white/[0.12] dark:data-pressed:!bg-white/[0.12]",
           tone === "destructive" &&
             "text-destructive hover:text-destructive data-pressed:text-destructive",
-          // PR row actions share one 20px pill with a 1px inset focus ring that stays clear of the
-          // label.
+          // Keep the inset focus ring clear of the 20px PR action label.
           part === "meta" &&
             (tone === "primary" || tone === "destructive") &&
             "h-5 focus-visible:ring-1 focus-visible:ring-offset-0",
