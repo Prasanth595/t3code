@@ -42,9 +42,10 @@ const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
 const TABLE_MAX_LINES = 64;
 const TABLE_START_PATTERN = /^\s*<table\b/iu;
 const TABLE_END_PATTERN = /<\/table>\s*$/iu;
-const TABLE_TAG_PATTERN = /<table\b/giu;
-const TABLE_ROW_PATTERN = /<tr\b[^>]*>([\s\S]*?)<\/tr>/giu;
-const TABLE_CELL_PATTERN = /<(td|th)\b[^>]*>([\s\S]*?)<\/\1>/giu;
+const TABLE_OPEN_PATTERN = /<table\b/giu;
+const TABLE_CLOSE_PATTERN = /<\/table\s*>/giu;
+/** `[^<>]` stops each attempt at the next `<`, so a run of unterminated tags stays linear. */
+const TABLE_STRUCTURE_TAG_PATTERN = /<(\/?)(table|thead|tbody|tfoot|tr|td|th)\b[^<>]*>/giu;
 
 function isWebUrl(url: string): boolean {
   try {
@@ -68,35 +69,78 @@ function attachmentFromLine(
   return null;
 }
 
-/** Lifting attachment links out of a table's cells would tear the table apart. */
+type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
+
+/**
+ * Cells of a table made only of rows and cells, or null when anything else is in it: a caption,
+ * text between cells, a nested table. Cell contents are split on their own, so tables never nest.
+ */
+function tableRows(html: string): TableRows | null {
+  const rows: PullRequestBodyTableCell[][] = [];
+  let row: PullRequestBodyTableCell[] | null = null;
+  let cell: { tag: string; contentStart: number } | null = null;
+  let opened = false;
+  let closed = false;
+  let cursor = 0;
+  for (const match of html.matchAll(TABLE_STRUCTURE_TAG_PATTERN)) {
+    const closing = match[1] === "/";
+    const tag = match[2]!.toLowerCase();
+    if (cell !== null) {
+      if (!closing || tag !== cell.tag) return null;
+      row!.push({
+        header: tag === "th",
+        segments: splitPullRequestBody(html.slice(cell.contentStart, match.index)),
+      });
+      cell = null;
+    } else {
+      if (html.slice(cursor, match.index).trim().length > 0) return null;
+      const tableOpen = opened && !closed;
+      if (tag === "table") {
+        if (closing ? !tableOpen || row !== null : opened) return null;
+        opened = true;
+        closed = closing;
+      } else if (tag === "tr") {
+        if (!tableOpen || closing === (row === null)) return null;
+        if (closing) rows.push(row!);
+        row = closing ? null : [];
+      } else if (tag === "td" || tag === "th") {
+        if (closing || row === null) return null;
+        cell = { tag, contentStart: match.index + match[0].length };
+      } else if (!tableOpen || row !== null) {
+        return null;
+      }
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (!closed || html.slice(cursor).trim().length > 0) return null;
+  return rows.filter((cells) => cells.length > 0);
+}
+
+/**
+ * The table opening at `start`, through its matching close. `end` is the last line looked at
+ * even when the table is not usable, so the caller never re-reads an inner table on its own.
+ */
 function mediaTableAt(
   lines: ReadonlyArray<string>,
   start: number,
-): { end: number; rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>> } | null {
+): { end: number; rows: TableRows | null } {
   const lastCandidate = Math.min(start + TABLE_MAX_LINES, lines.length) - 1;
+  let depth = 0;
   let end = start;
-  while (end < lastCandidate && !TABLE_END_PATTERN.test(lines[end]!)) {
-    end += 1;
+  for (; ; end += 1) {
+    const line = lines[end]!;
+    depth +=
+      (line.match(TABLE_OPEN_PATTERN)?.length ?? 0) -
+      (line.match(TABLE_CLOSE_PATTERN)?.length ?? 0);
+    if (depth <= 0 || end === lastCandidate) break;
   }
-  if (!TABLE_END_PATTERN.test(lines[end]!)) return null;
-  const html = lines.slice(start, end + 1).join("\n");
-  if ((html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
-  // Only cell content is represented; leave other content in Markdown rather than dropping it.
-  const outsideCells = html
-    .replace(TABLE_ROW_PATTERN, (_match, row: string) => row.replace(TABLE_CELL_PATTERN, ""))
-    .replace(/<\/?(?:table|thead|tbody|tfoot)\b[^>]*>/giu, "")
-    .trim();
-  if (outsideCells.length > 0) return null;
-  const rows = Array.from(html.matchAll(TABLE_ROW_PATTERN), ([, row]) =>
-    Array.from(row!.matchAll(TABLE_CELL_PATTERN), ([, tag, content]) => ({
-      header: tag!.toLowerCase() === "th",
-      segments: splitPullRequestBody(content!),
-    })),
-  ).filter((cells) => cells.length > 0);
-  const hasMedia = rows.some((cells) =>
+  if (depth !== 0 || !TABLE_END_PATTERN.test(lines[end]!)) return { end, rows: null };
+  // Lifting attachment links out of a table's cells would tear the table apart.
+  const rows = tableRows(lines.slice(start, end + 1).join("\n"));
+  const hasMedia = rows?.some((cells) =>
     cells.some((cell) => cell.segments.some((segment) => segment.kind === "attachment")),
   );
-  return hasMedia ? { end, rows } : null;
+  return { end, rows: hasMedia ? rows : null };
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
@@ -115,6 +159,7 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
   };
 
   const lines = body.split("\n");
+  let tableScannedThrough = -1;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const fenceMatch = FENCE_PATTERN.exec(line);
@@ -141,12 +186,15 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
       continue;
     }
 
-    const table = TABLE_START_PATTERN.test(line) ? mediaTableAt(lines, index) : null;
-    if (table !== null) {
-      flushMarkdown();
-      segments.push({ id: `table:${segments.length}`, kind: "table", rows: table.rows });
-      index = table.end;
-      continue;
+    if (index > tableScannedThrough && TABLE_START_PATTERN.test(line)) {
+      const table = mediaTableAt(lines, index);
+      tableScannedThrough = table.end;
+      if (table.rows !== null) {
+        flushMarkdown();
+        segments.push({ id: `table:${segments.length}`, kind: "table", rows: table.rows });
+        index = table.end;
+        continue;
+      }
     }
 
     const bareAttachment = attachmentFromLine(line);

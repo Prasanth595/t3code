@@ -142,12 +142,15 @@ describe("media tables", () => {
       table.rows.map((row) =>
         row.map((cell) =>
           cell.segments.map((segment) =>
-            segment.kind === "markdown" ? segment.text : `${segment.kind}:${segment.url}`,
+            segment.kind === "attachment" ? `attachment:${segment.url}` : segment,
           ),
         ),
       ),
     ).toEqual([
-      [["Before"], ["After"]],
+      [
+        [{ id: "markdown:0", kind: "markdown", text: "Before" }],
+        [{ id: "markdown:0", kind: "markdown", text: "After" }],
+      ],
       [[`attachment:${before}`], [`attachment:${after}`]],
     ]);
   });
