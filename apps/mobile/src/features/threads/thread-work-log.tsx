@@ -884,7 +884,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
-    const failurePresentation = providerFailurePresentation(failureItem.failure, row.summary);
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt
@@ -896,9 +895,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         })
       : null;
     const label = warning
-      ? failurePresentation.kind === "provider_capacity"
-        ? `${failurePresentation.title}${resetTime ? `. Retry after ${resetTime}.` : ""}`
-        : `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${providerFailurePresentation(failureItem.failure).title}.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable

@@ -207,13 +207,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
-    const failurePresentation = providerFailurePresentation(failureItem.failure, workEntry.label);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
     const label = warning
-      ? failurePresentation.kind === "provider_capacity"
-        ? `${failurePresentation.title}${resetTime ? `. Retry after ${resetTime}.` : ""}`
-        : `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${providerFailurePresentation(failureItem.failure).title}.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&

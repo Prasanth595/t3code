@@ -51,6 +51,7 @@ describe("usageLimitRecoveryBannerItem", () => {
         onChange: async () => {},
       });
 
+      expect(item.title).toBe("Provider at capacity");
       expect(item.description).toBe(resetAt ? `${message} Resets 17:30.` : message);
       if (resetAt) expect(item.actions).not.toBeNull();
       else expect(item.actions).toBeNull();

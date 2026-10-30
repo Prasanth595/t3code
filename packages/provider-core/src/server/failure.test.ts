@@ -218,6 +218,7 @@ it("preserves OpenCode admission-refusal data and recovered retry titles", () =>
   } as const;
 
   const failed = makeProviderFailureTurnItem({ ...base, occurredAt });
+  assert.equal(failed.title, "Provider at capacity");
   assert.deepEqual(failed.failure, {
     class: "usage_limit",
     code: "provider.rate-limit",
