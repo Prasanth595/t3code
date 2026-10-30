@@ -6,11 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
-import {
-  DEFAULT_MANAGED_TUNNEL_LIMIT,
-  T3CHAT_PLAN_TUNNEL_LIMITS,
-  type RelayT3ChatPlan,
-} from "@t3tools/contracts/relay";
+import { DEFAULT_MANAGED_TUNNEL_LIMIT, T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import {
@@ -110,11 +106,10 @@ export class ManagedTunnelLimits extends Context.Service<
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R>;
-    /** The cap `withCapacity` enforces for a user on the given T3 Chat plan. */
-    readonly getLimit: (input: {
+    /** The user's manual cap, which replaces the default and any T3 Chat plan cap. */
+    readonly getOverride: (input: {
       readonly userId: string;
-      readonly plan: RelayT3ChatPlan | null;
-    }) => Effect.Effect<number, ManagedTunnelLimitPersistenceError>;
+    }) => Effect.Effect<number | null, ManagedTunnelLimitPersistenceError>;
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
@@ -122,13 +117,12 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
 
-  const planTunnelLimit = (plan: RelayT3ChatPlan | null) =>
-    plan && plan !== "free" ? T3CHAT_PLAN_TUNNEL_LIMITS[plan] : 0;
-
   // Asked only at the cap, so most links never call T3 Chat. Any failure keeps the lower cap.
   const t3ChatTunnelLimit = (userId: string) =>
     t3Chat.getLink({ userId }).pipe(
-      Effect.map((link) => planTunnelLimit(link?.plan ?? null)),
+      Effect.map((link) =>
+        link && link.plan !== "free" ? T3CHAT_PLAN_TUNNEL_LIMITS[link.plan] : 0,
+      ),
       Effect.catch((error) =>
         Effect.logWarning("T3 Chat plan check failed", { userId, error: error.message }).pipe(
           Effect.as(0),
@@ -151,10 +145,8 @@ const make = Effect.gen(function* () {
       );
 
   return ManagedTunnelLimits.of({
-    getLimit: Effect.fn("relay.managed_tunnel_limits.get_limit")(function* (input) {
-      // A manual override is the exact cap; a T3 Chat plan raises only the default.
-      const override = yield* loadOverride(input.userId);
-      return override ?? Math.max(DEFAULT_MANAGED_TUNNEL_LIMIT, planTunnelLimit(input.plan));
+    getOverride: Effect.fn("relay.managed_tunnel_limits.get_override")(function* (input) {
+      return yield* loadOverride(input.userId);
     }),
     withCapacity: Effect.fn("relay.managed_tunnel_limits.with_capacity")(function* <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },

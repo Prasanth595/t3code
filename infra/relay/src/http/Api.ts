@@ -1004,10 +1004,14 @@ export const layerClientApi = HttpApiBuilder.group(
                 .getLink({ userId })
                 .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")))
             : null;
-          const maxTunnels = yield* tunnelLimits
-            .getLimit({ userId, plan: link?.plan ?? null })
+          const maxTunnelsOverride = yield* tunnelLimits
+            .getOverride({ userId })
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
-          return { available: t3Chat.available, link, maxTunnels };
+          return {
+            available: t3Chat.available,
+            link,
+            ...(maxTunnelsOverride === null ? {} : { maxTunnelsOverride }),
+          };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

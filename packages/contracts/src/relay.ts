@@ -981,8 +981,8 @@ export const RelayT3ChatLinkResponse = Schema.Struct({
   // False when this relay has no T3 Chat secret, so clients hide the feature.
   available: Schema.Boolean,
   link: Schema.NullOr(RelayT3ChatLink),
-  // The account's managed tunnel cap, including manual overrides. Absent from older relays.
-  maxTunnels: Schema.optionalKey(Schema.Number),
+  // A manual cap that replaces the plan's; T3 Chat upgrades do not raise it.
+  maxTunnelsOverride: Schema.optionalKey(Schema.Number),
 });
 export type RelayT3ChatLinkResponse = typeof RelayT3ChatLinkResponse.Type;
 
