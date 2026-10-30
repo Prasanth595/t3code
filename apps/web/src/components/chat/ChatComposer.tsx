@@ -2860,7 +2860,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       },
       toggleRichText: () => {
-        if (!isClientSettingsHydrated()) return;
+        if (isLiteralPendingAnswer || !isClientSettingsHydrated()) return;
         void updateClientSettings({
           composerRichTextEnabled: !getClientSettings().composerRichTextEnabled,
         });
