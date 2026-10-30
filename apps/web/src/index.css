@@ -131,7 +131,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --chat-content-max-width: 46rem;
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
-  --font-size-prompt-touch: max(var(--font-size-prompt, var(--text-sm)), 16px);
+  --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
   /* Horizontal gutter shared by the page header and the chat column, clear of
      the device's safe area. */
   --workspace-gutter: 0.75rem;
