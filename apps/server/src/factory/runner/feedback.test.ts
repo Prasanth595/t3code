@@ -463,7 +463,7 @@ class FakeT3 {
       this.countedAtArchive.push(this.gh.calls.length);
       return Effect.void;
     },
-    worktreeHead: () => Effect.die("no worktree head"),
+    worktreeCheckout: () => Effect.die("no worktree head"),
     removeWorktree: (path) => {
       this.calls.push(`removeWorktree ${path}`);
       if (this.worktreeRemoveFails) {

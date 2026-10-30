@@ -24,6 +24,7 @@ import {
   MessageRejectedError,
   SessionsError,
   ThreadNotFoundError,
+  type Checkout,
   type RunStatus,
   type Thread,
   type ThreadStatus,
@@ -230,7 +231,10 @@ interface World {
   status: ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
   /** The commit the session's worktree has checked out, or the failed read of it. */
-  head: string | SessionsError;
+  /** What each worktree has checked out, by path, or the failed read of it; a path missing here fails. */
+  checkouts: Record<string, Checkout | SessionsError>;
+  /** A thread by id, in place of `thread`. */
+  threads: Record<string, Thread | ThreadNotFoundError | SessionsError>;
   /** The next call of each method fails with this, once. */
   failNext: {
     pullRequest?: GitHubError;
@@ -327,7 +331,8 @@ const rigFor = (
     textCheck: "unchanged",
     status: statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
-    head: "def456",
+    checkouts: { "/t3/wt": { head: "def456", branch: "t3code/abc" } },
+    threads: {},
     failNext: {},
     closedBy: null,
     onHead: {},
@@ -441,7 +446,7 @@ const rigFor = (
       const once = world.threadOnce;
       world.threadOnce = null;
       if (once !== null) return Effect.fail(once);
-      const answer = world.thread;
+      const answer = world.threads[threadId] ?? world.thread;
       return isThreadNotFound(answer) || isSessionsError(answer)
         ? Effect.fail(answer)
         : Effect.succeed(answer);
@@ -467,9 +472,10 @@ const rigFor = (
       t3Call(`removeWorktree ${path}`);
       return Effect.void;
     },
-    worktreeHead: (path) => {
-      t3Call(`worktreeHead ${path}`);
-      const answer = world.head;
+    worktreeCheckout: (path) => {
+      t3Call(`worktreeCheckout ${path}`);
+      const answer =
+        world.checkouts[path] ?? new SessionsError({ operation: "worktree-head", cause: path });
       return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
     },
   };
@@ -3476,11 +3482,17 @@ describe("advance: done on a branch the session made itself", () => {
   const OWN = "t3/kpi-push-screen";
   const NOT_ITS_BRANCH = "the session reported PR #12 but its branch is not this session's branch";
   const BOUND: Line = { event: "branch_bound", data: { pr: 12, branch: OWN } };
+  /** Issue 11 building in thread-2, launched with no branch or worktree recorded. */
+  const siblingStarted: ReadonlyArray<RunEvent> = STARTED.map((event) =>
+    event.event === "session_launched"
+      ? { ...event, data: { ...event.data, thread_id: "thread-2", worktree: null, branch: null } }
+      : event,
+  );
   /** A run whose session pushed `OWN` from its worktree, whose HEAD is the pull request's head. */
   const ownBranchRig = (pr: Partial<PullRequest> = {}) => {
     const rig = rigFor();
     rig.world.pr = { ...defaultPr(), headRef: OWN, ...pr };
-    rig.world.head = "abc123";
+    rig.world.checkouts["/t3/wt"] = { head: "abc123", branch: pr.headRef ?? OWN };
     return rig;
   };
   const assertUnbound = (rig: Rig, outcome: AdvanceOutcome, publicReason = NOT_ITS_BRANCH) => {
@@ -3499,12 +3511,12 @@ describe("advance: done on a branch the session made itself", () => {
         prUrl: URL12,
       });
       assert.deepStrictEqual(linesOf(rig), [...STARTED, BOUND, PR_OPENED]);
-      assert.ok(rig.t3.includes("worktreeHead /t3/wt"), rig.t3.join("\n"));
+      assert.ok(rig.t3.includes("worktreeCheckout /t3/wt"), rig.t3.join("\n"));
       // Once bound, the ledger is the proof: the worktree is not read again.
       clearCalls(rig);
-      rig.world.head = "def456";
+      rig.world.checkouts["/t3/wt"] = { head: "def456", branch: null };
       assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
-      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")));
+      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeCheckout")));
       assert.deepStrictEqual(linesOf(rig), [...STARTED, BOUND, PR_OPENED]);
     }),
   );
@@ -3515,7 +3527,8 @@ describe("advance: done on a branch the session made itself", () => {
       assertUnbound(rig, yield* advanceIn(rig));
       // The worktree is read before the stuck path removes it.
       assert.ok(
-        rig.order.indexOf("t3:worktreeHead /t3/wt") < rig.order.indexOf("t3:removeWorktree /t3/wt"),
+        rig.order.indexOf("t3:worktreeCheckout /t3/wt") <
+          rig.order.indexOf("t3:removeWorktree /t3/wt"),
         rig.order.join("\n"),
       );
     }),
@@ -3556,7 +3569,7 @@ describe("advance: done on a branch the session made itself", () => {
       const rig = ownBranchRig();
       setStatus(rig, "completed", DONE_MESSAGE, { worktreePath: null });
       assertUnbound(rig, yield* advanceIn(rig));
-      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")));
+      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeCheckout")));
     }),
   );
 
@@ -3585,6 +3598,37 @@ describe("advance: done on a branch the session made itself", () => {
         ],
         ["its pull request", OWN, [elsewhere, PR_OPENED]],
         ["the pull request it left", OWN, [elsewhere, PR_LEFT]],
+        [
+          "the branch it resumed from",
+          OWN,
+          [
+            {
+              ...elsewhere,
+              data: {
+                ...(elsewhere.data as object),
+                resumed_from: { run: "rawphp__softfac__11__0", branch: OWN },
+              },
+            } as RunEvent,
+          ],
+        ],
+        [
+          "the branch it was interrupted on",
+          OWN,
+          [
+            elsewhere,
+            {
+              event: "session_interrupted",
+              data: {
+                resumes: 0,
+                relaunch: false,
+                run_ordinal: 1,
+                branch: OWN,
+                t3_error: null,
+                ended_in_pass: 0,
+              },
+            } as RunEvent,
+          ],
+        ],
         // T3's launch branch of the other worktree, which the ledger names only by its folder.
         [
           "its worktree's launch branch",
@@ -3596,7 +3640,22 @@ describe("advance: done on a branch the session made itself", () => {
         const rig = ownBranchRig({ headRef });
         seed(rig.dataDir, other, events);
         assertUnbound(rig, yield* advanceIn(rig));
-        assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")), what);
+        // Its ledger decides: its live worktree is not asked.
+        assert.ok(!rig.t3.includes("thread thread-2"), what);
+      }
+    }),
+  );
+
+  it.effect("is stuck when another issue's ledger cannot be read", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      seed(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 }, STARTED);
+      const path = runPath(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 });
+      NodeFS.chmodSync(path, 0o000);
+      try {
+        assertUnbound(rig, yield* advanceIn(rig));
+      } finally {
+        NodeFS.chmodSync(path, 0o600);
       }
     }),
   );
@@ -3625,25 +3684,103 @@ describe("advance: done on a branch the session made itself", () => {
         assert.ok(!linesOf(unsafe).some((line) => line.event === "branch_bound"));
         const unclaimed = rigFor(STARTED.filter((event) => event.event !== "claimed"));
         unclaimed.world.pr = { ...defaultPr(), headRef: OWN };
-        unclaimed.world.head = "abc123";
-        yield* Effect.result(advanceIn(unclaimed));
+        unclaimed.world.checkouts["/t3/wt"] = { head: "abc123", branch: OWN };
+        assert.strictEqual((yield* advanceIn(unclaimed)).kind, "stuck");
         assert.ok(!linesOf(unclaimed).some((line) => line.event === "branch_bound"));
-        assert.ok(!unclaimed.t3.some((call) => call.startsWith("worktreeHead")));
+        assert.ok(!unclaimed.t3.some((call) => call.startsWith("worktreeCheckout")));
       }),
   );
 
   it.effect("is stuck for a pull request opened in the claim's own second", () =>
     Effect.gen(function* () {
-      // The claim is at 10:13:16.123; GitHub's second cannot show the pull request came after it.
-      const rig = ownBranchRig({ createdAt: "2026-10-04T10:13:16Z" });
+      const claimMs = Date.parse("2026-10-04T10:13:16Z");
+      const rig = rigFor(STARTED, { ms: () => claimMs });
+      rig.world.pr = { ...defaultPr(), headRef: OWN, createdAt: "2026-10-04T10:13:16Z" };
+      rig.world.checkouts["/t3/wt"] = { head: "abc123", branch: OWN };
       assertUnbound(rig, yield* advanceIn(rig));
+    }),
+  );
+
+  it.effect("is stuck when the worktree is not on the pull request's branch", () =>
+    Effect.gen(function* () {
+      // A detached HEAD at the pull request's head, or another branch at it.
+      for (const branch of [null, "t3code/abc"]) {
+        const rig = ownBranchRig();
+        rig.world.checkouts["/t3/wt"] = { head: "abc123", branch };
+        assertUnbound(rig, yield* advanceIn(rig));
+      }
+    }),
+  );
+
+  it.effect("is stuck while another issue's live worktree holds the pull request", () =>
+    Effect.gen(function* () {
+      // Issue 11's session made the branch and opened the pull request, and has not reported it:
+      // its ledger names neither yet.
+      const holds: ReadonlyArray<[string, Thread, Checkout | SessionsError | undefined]> = [
+        [
+          "its thread is on the branch",
+          { worktreePath: "/t3/wt2", branch: OWN, archived: false },
+          undefined,
+        ],
+        [
+          "its checkout is on the branch",
+          { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false },
+          { head: "f00", branch: OWN },
+        ],
+        [
+          "its HEAD is the head",
+          { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false },
+          { head: "abc123", branch: null },
+        ],
+        [
+          "its checkout cannot be read",
+          { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false },
+          new SessionsError({ operation: "worktree-head", cause: "gone" }),
+        ],
+      ];
+      for (const [what, thread, checkout] of holds) {
+        const rig = ownBranchRig();
+        seed(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+        rig.world.threads["thread-2"] = thread;
+        if (checkout !== undefined) rig.world.checkouts["/t3/wt2"] = checkout;
+        const outcome = yield* advanceIn(rig);
+        assert.strictEqual(outcome.kind, "stuck", what);
+      }
+    }),
+  );
+
+  it.effect("binds when another issue's live worktree is elsewhere or its thread is gone", () =>
+    Effect.gen(function* () {
+      const elsewhere = ownBranchRig();
+      seed(elsewhere.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      elsewhere.world.threads["thread-2"] = {
+        worktreePath: "/t3/wt2",
+        branch: "t3code/xyz",
+        archived: false,
+      };
+      elsewhere.world.checkouts["/t3/wt2"] = { head: "f00", branch: "t3code/xyz" };
+      assert.strictEqual((yield* advanceIn(elsewhere)).kind, "ready-for-gate");
+      const gone = ownBranchRig();
+      seed(gone.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      gone.world.threads["thread-2"] = new ThreadNotFoundError({ threadId: "thread-2" });
+      assert.strictEqual((yield* advanceIn(gone)).kind, "ready-for-gate");
+      const failed = ownBranchRig();
+      seed(failed.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      failed.world.threads["thread-2"] = new SessionsError({
+        operation: "thread",
+        cause: "timeout",
+      });
+      assert.strictEqual((yield* advanceIn(failed)).kind, "stuck");
     }),
   );
 
   it.effect("is stuck when the worktree's HEAD cannot be read", () =>
     Effect.gen(function* () {
       const rig = ownBranchRig();
-      rig.world.head = new SessionsError({ operation: "worktree-head", cause: "not a git repo" });
+      rig.world.checkouts["/t3/wt"] = new SessionsError({
+        operation: "worktree-head",
+        cause: "not a git repo",
+      });
       assertUnbound(rig, yield* advanceIn(rig));
     }),
   );
@@ -3667,7 +3804,7 @@ describe("advance: a branch an earlier attempt's session made", () => {
       };
       const outcome = yield* advance(interruptible(second.ctx), second.run);
       assert.strictEqual(outcome.kind, "ready-for-gate", JSON.stringify(outcome));
-      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")));
+      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeCheckout")));
     }),
   );
 });

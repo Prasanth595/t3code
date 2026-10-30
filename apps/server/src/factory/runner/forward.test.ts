@@ -341,7 +341,7 @@ const rigFor = (
       t3.push(`archive ${threadId}`);
       return Effect.void;
     },
-    worktreeHead: () => Effect.die("no worktree head"),
+    worktreeCheckout: () => Effect.die("no worktree head"),
     removeWorktree: (path) => {
       t3.push(`removeWorktree ${path}`);
       return Effect.void;
