@@ -59,7 +59,7 @@ import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, formatModelSlugName } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
@@ -9478,6 +9478,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
+          options?: { readonly nativeToolCall?: boolean },
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
@@ -9500,7 +9501,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeToolInput,
               null,
             );
-          } else if (!heldForEcho) {
+          } else if (!heldForEcho && options?.nativeToolCall !== false) {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
@@ -9517,7 +9518,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             // The SDK blocks prompt echoes on permission answers; release held output except for ExitPlanMode.
             yield* releaseHeldRootFrames(context);
-            if (toolName !== "Agent") {
+            if (toolName !== "Agent" && options?.nativeToolCall !== false) {
               yield* ensureToolCallStarted({
                 context,
                 nativeItemId: nativeRequestId,
@@ -9718,6 +9719,49 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) =>
           runPromise(
             Effect.gen(function* () {
+              if (request.dialogKind === "refusal_fallback_prompt") {
+                const { originalModel, fallbackModel } = request.payload;
+                if (typeof originalModel !== "string" || typeof fallbackModel !== "string") {
+                  return { behavior: "cancelled" as const };
+                }
+                const question = `${formatModelSlugName(originalModel)}'s safeguards flagged this message.`;
+                const switchLabel = `Switch to ${formatModelSlugName(fallbackModel)}`;
+                const result = yield* canUseToolEffect(
+                  "AskUserQuestion",
+                  {
+                    questions: [
+                      {
+                        header: "Message flagged",
+                        question,
+                        options: [
+                          {
+                            label: switchLabel,
+                            description: "Send the same message again on the fallback model.",
+                          },
+                          { label: "Stop", description: "End the turn without retrying." },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                  },
+                  {
+                    signal: callbackOptions.signal,
+                    requestId: callbackOptions.requestId,
+                    toolUseID: request.toolUseID ?? callbackOptions.requestId,
+                  },
+                  { nativeToolCall: false },
+                );
+                if (result.behavior !== "allow") return { behavior: "cancelled" as const };
+                const answers =
+                  result.updatedInput === undefined
+                    ? undefined
+                    : Reflect.get(result.updatedInput, "answers");
+                return typeof answers === "object" &&
+                  answers !== null &&
+                  Reflect.get(answers, question) === switchLabel
+                  ? { behavior: "completed" as const, result: "retry_fallback" as const }
+                  : { behavior: "cancelled" as const };
+              }
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
@@ -9985,7 +10029,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
             canUseTool,
             onUserDialog,
-            supportedDialogKinds: ["resume_return"],
+            supportedDialogKinds: ["resume_return", "refusal_fallback_prompt"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
