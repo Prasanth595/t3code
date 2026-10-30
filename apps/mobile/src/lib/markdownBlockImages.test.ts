@@ -36,6 +36,12 @@ describe("images inside running text", () => {
       type: "paragraph",
       children: [{ type: "text", value: "See\n>" }],
     });
+    expect(markdownWithBlockImages("> See ![a](a.png)\n    > keep")).toBe(
+      "> See\n>\n> ![a](a.png)\n>\n> \\> keep",
+    );
+    expect(markdownWithBlockImages("> See\n    > ![a](a.png)")).toBe(
+      "> See\n    >\n>\n> ![a](a.png)",
+    );
   });
 
   it("keeps text after an image from opening a block", () => {

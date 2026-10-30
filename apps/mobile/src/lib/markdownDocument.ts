@@ -417,7 +417,7 @@ export function markdownWithBlockImages(markdown: string): string {
       .replace(/\[[ xX]\]\s*$/, "")
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
-    const separator = `[ \\t]*(?:\\\\?\\r?\\n(?:[ \\t]*>){0,${markers.split(">").length - 1}}[ \\t]*)?`;
+    const separator = `[ \\t]*(?:\\\\?\\r?\\n(?: {0,3}>){0,${markers.split(">").length - 1}}[ \\t]*)?`;
     const beforeImage = new RegExp(`(?:^|[^ \\t])(${separator})$`);
     const afterImage = new RegExp(`^${separator}`);
     const editCount = edits.length;
