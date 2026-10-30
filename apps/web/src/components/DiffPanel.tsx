@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type { ScopedThreadRef, RunId, ReviewDiffPreviewInput } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -349,13 +349,15 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
+  const selectedGitSourceKind = selectedGitScope === "unstaged" ? "working-tree" : "branch-range";
   const branchDiffPreviewInput =
     canReadFiles && isGitSelection && activeThread && activeCwd
-      ? {
+      ? ({
           cwd: activeCwd,
+          sourceKind: selectedGitSourceKind,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
-        }
+        } satisfies ReviewDiffPreviewInput)
       : undefined;
   const canRefreshGitDiff =
     isGitRepo && isGitSelection && activeThread != null && activeCwd != null;
@@ -377,7 +379,7 @@ export default function DiffPanel({
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+    (source) => source.kind === selectedGitSourceKind,
   );
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = refreshPreviewQuery;
