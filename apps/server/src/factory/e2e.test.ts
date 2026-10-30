@@ -603,7 +603,12 @@ const scenario = (spec: Spec) =>
           // What the passes listed is the clone, read from T3's projects.
           assert.deepStrictEqual(loop.status, {
             state: "running",
-            settings: { pollSeconds: 10, maxConcurrentRuns: 1, repos: [REPO] },
+            settings: {
+              pollSeconds: 10,
+              maxConcurrentRuns: 1,
+              deployWaitMinutes: 120,
+              repos: [REPO],
+            },
           });
 
           const sessions = yield* Sessions.FactorySessions;

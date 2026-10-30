@@ -32,6 +32,18 @@ export interface FactoryStatus {
   readonly state: "running" | "idle";
   readonly reason: string | null;
   readonly paused_by_hand: { readonly since: string; readonly for_ms: number } | null;
+  /**
+   * The build autodeploy has waiting, which holds claims back unless snoozed; null when none;
+   * absent from older servers. `deploy_by` is when it installs over the runs in progress, null
+   * while snoozed.
+   */
+  readonly deploy_pending?: {
+    readonly commit: string | null;
+    readonly since: string;
+    readonly waited_ms: number;
+    readonly deploy_by: string | null;
+    readonly snoozed_until: string | null;
+  } | null;
   readonly runs: ReadonlyArray<{
     readonly id: string;
     readonly state: string | null;
