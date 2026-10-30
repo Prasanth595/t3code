@@ -315,7 +315,11 @@ function activePiBranch(
   return branch.toReversed();
 }
 
-function isPiConversationRecord(record: DecodedTranscriptRecord): boolean {
+function isPiConversationRecord(
+  record: DecodedTranscriptRecord,
+): record is DecodedTranscriptRecord & {
+  readonly message: typeof TranscriptMessage.Type & { readonly role: "user" | "assistant" };
+} {
   return (
     record.type === "message" &&
     (record.message?.role === "user" || record.message?.role === "assistant")
@@ -449,11 +453,11 @@ function parseAgentSessionRecords(
   for (const record of input.source === "pi" ? activePiBranch(records) : records) {
     recordIndex += 1;
     if (input.source === "pi") {
-      if (!isPiConversationRecord(record) || record.message === undefined) continue;
+      if (!isPiConversationRecord(record)) continue;
       const text = extractText(record.message.content);
       if (text.length === 0) continue;
       retainMessage({
-        role: record.message.role === "user" ? "user" : "assistant",
+        role: record.message.role,
         text,
         createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
         codexResponseUser: false,
@@ -1114,35 +1118,37 @@ export const make = Effect.gen(function* () {
       return listDirectory(directory);
     };
     const transcripts: Array<TranscriptCandidate> = [];
-    const addTranscript = Effect.fnUntraced(function* (filePath: string) {
-      if (operationsRemaining <= 0) {
-        truncated = true;
-        return;
-      }
-      operationsRemaining -= 1;
-      const stats = yield* statOption(filePath);
-      if (Option.isSome(stats) && stats.value.type === "File" && Option.isSome(stats.value.mtime)) {
-        transcripts.push({
-          filePath,
-          mtimeMs: stats.value.mtime.value.getTime(),
-          providerInstanceId,
-          size: Number(stats.value.size),
-        });
-      }
-    });
-
     for (const entry of yield* readDirectory(sessionsDir)) {
       if (operationsRemaining <= 0) {
         truncated = true;
         break;
       }
       const entryPath = path.join(sessionsDir, entry);
-      if (entry.endsWith(".jsonl")) {
-        yield* addTranscript(entryPath);
-        continue;
-      }
-      for (const nested of yield* readDirectory(entryPath)) {
-        if (nested.endsWith(".jsonl")) yield* addTranscript(path.join(entryPath, nested));
+      const filePaths = entry.endsWith(".jsonl")
+        ? [entryPath]
+        : (yield* readDirectory(entryPath))
+            .filter((nested) => nested.endsWith(".jsonl"))
+            .map((nested) => path.join(entryPath, nested));
+
+      for (const filePath of filePaths) {
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          break;
+        }
+        operationsRemaining -= 1;
+        const stats = yield* statOption(filePath);
+        if (
+          Option.isSome(stats) &&
+          stats.value.type === "File" &&
+          Option.isSome(stats.value.mtime)
+        ) {
+          transcripts.push({
+            filePath,
+            mtimeMs: stats.value.mtime.value.getTime(),
+            providerInstanceId,
+            size: Number(stats.value.size),
+          });
+        }
       }
     }
     return { transcripts, truncated };
@@ -1229,12 +1235,12 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const configuredHome = instance.environment?.findLast(
-          (variable) => variable.name === homeVariable,
-        )?.value;
-        const environmentHome =
-          typeof configuredHome === "string" ? configuredHome : hostEnvironment[homeVariable];
+        const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
+          const configured = instance.environment?.findLast(
+            (variable) => variable.name === name,
+          )?.value;
+          return typeof configured === "string" ? configured : hostEnvironment[name];
+        };
 
         let homePath: string;
         if (source === "pi") {
@@ -1246,15 +1252,19 @@ export const make = Effect.gen(function* () {
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+          homePath = resolveClaudeConfigDir(
+            config.value.homePath,
+            environmentHome("CLAUDE_CONFIG_DIR"),
+          );
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
+          const codexHome = environmentHome("CODEX_HOME");
           const codexSettings =
             config.value.homePath.trim().length === 0 &&
             config.value.shadowHomePath.trim().length === 0 &&
-            environmentHome?.trim()
-              ? { ...config.value, homePath: environmentHome }
+            codexHome?.trim()
+              ? { ...config.value, homePath: codexHome }
               : config.value;
           const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
             Effect.provideService(Path.Path, path),

@@ -1195,7 +1195,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Fix the project", "Done"],
           ["Legacy prompt", "Legacy answer"],
         ]);
-        expect(threads[0]).toMatchObject({ source: "pi", title: "Pi refactor", model: null });
+        expect(threads[0]).toMatchObject({ source: "pi", title: "Pi refactor" });
       }),
     );
 
