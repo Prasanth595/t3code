@@ -80,7 +80,7 @@ const PI_DEFAULT_MODEL: ServerProviderModel = {
 interface PiDiscovery extends PiDiscoveredCommands {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly authenticated: boolean;
-  /** Pi's active model when Pi does not list it as available, so it cannot start a turn. */
+  /** Pi's active model when Pi lists no model of its provider, so it cannot start a turn. */
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
 }
 
@@ -178,7 +178,8 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
-  // Pi lists only models it holds credentials for, including extension, virtual and --api-key ones.
+  // Pi lists only models of providers it holds credentials for, including extension, virtual and
+  // --api-key ones. Turns need only the provider's credentials, so uncatalogued model ids still run.
   const activeModel = recordField(stateData, "model");
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
@@ -190,7 +191,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     unavailableActiveModel:
       activeProvider !== undefined &&
       activeModelId !== undefined &&
-      !discoveredModels.some((model) => model.slug === `${activeProvider}/${activeModelId}`)
+      !discoveredModels.some((model) => model.subProvider === activeProvider)
         ? { provider: activeProvider, id: activeModelId }
         : undefined,
   } satisfies PiDiscovery;
@@ -255,7 +256,7 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
     model: { readonly provider: string; readonly id: string },
   ) {
     const label = `Pi default (${model.provider}/${model.id})`;
-    const unavailable = `${label} is not among Pi's available models. Choose another model, or check that provider's setup in Pi.`;
+    const unavailable = `${label} uses ${model.provider}, which has no available models in Pi. Choose another model, or check that provider's setup and the Pi launch arguments.`;
     if (
       compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0 ||
       launchArgs.includes("--api-key")
