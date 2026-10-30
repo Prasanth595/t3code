@@ -50,6 +50,7 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("1.2.3-alpha-1", "1.2.3-alpha-2")).toBeLessThan(0);
     expect(compareSemverVersions("1.2.3-alpha-2", "1.2.3-alpha-1")).toBeGreaterThan(0);
     expect(compareSemverVersions("1.2.3-alpha-1.2", "1.2.3-alpha-1.10")).toBeLessThan(0);
+    expect(compareSemverVersions("1.2.3-alpha.1+build-2", "1.2.3-alpha.1+build-3")).toBe(0);
   });
 
   it("supports comparison comparators", () => {
