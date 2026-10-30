@@ -147,7 +147,9 @@ const androidSdk = Effect.gen(function* () {
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
     const adbPath = adb
       ? path.join(root, "platform-tools", adbBinary)
-      : yield* resolveCommandPath(adbBinary, { env: environment });
+      : windows
+        ? null
+        : yield* resolveCommandPath(adbBinary, { env: environment });
     return { root, adb: adbPath !== null, adbPath, emulator, avdmanager, legacyAvdmanager };
   });
   const candidates = explicit
@@ -214,9 +216,10 @@ const hubSdkEnvironment = Effect.fn("LocalDeviceHost.hubSdkEnvironment")(functio
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   if (
+    platform === "win32" ||
     !sdk.root ||
     !sdk.adbPath ||
-    sdk.adbPath === path.join(sdk.root, "platform-tools", platform === "win32" ? "adb.exe" : "adb")
+    sdk.adbPath === path.join(sdk.root, "platform-tools", "adb")
   ) {
     return environment;
   }
