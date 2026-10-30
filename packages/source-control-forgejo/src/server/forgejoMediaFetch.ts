@@ -17,15 +17,13 @@ export const make = Effect.gen(function* () {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
 
   return Effect.fn("ForgejoMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
-    const server = new URL(request.url);
+    const server = URL.parse(request.url);
+    if (!server || server.protocol !== "https:" || server.username || server.password) return null;
     // Read on every fetch, so media loads as soon as the user signs in.
-    const token = yield* cli.fjToken(server.host);
+    const token = yield* cli.mediaToken(server.href);
+    if (!token) return null;
     let target = server;
     for (let hop = 0; ; hop += 1) {
-      // Only the server the token belongs to sees it, never the object store a redirect hands
-      // the file to.
-      const authorization =
-        token !== null && target.origin === server.origin ? `token ${token}` : null;
       const response: HttpClientResponse.HttpClientResponse = yield* httpClient
         .execute(
           HttpClientRequest.get(target.toString()).pipe(
@@ -33,7 +31,7 @@ export const make = Effect.gen(function* () {
               ...request.headers,
               // The bytes are streamed straight through, so never let an encoding layer in.
               "accept-encoding": "identity",
-              ...(authorization === null ? {} : { authorization }),
+              authorization: `token ${token}`,
             }),
           ),
         )
@@ -41,8 +39,8 @@ export const make = Effect.gen(function* () {
       const location = response.headers.location;
       if (response.status < 300 || response.status >= 400) return response;
       if (!location || hop >= MAX_REDIRECTS) return null;
-      const next = new URL(location, target);
-      if (next.protocol !== "https:") return null;
+      const next = URL.parse(location, target);
+      if (!next || next.origin !== server.origin || next.username || next.password) return null;
       target = next;
     }
   });

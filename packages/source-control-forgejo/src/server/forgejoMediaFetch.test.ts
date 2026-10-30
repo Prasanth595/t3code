@@ -15,14 +15,15 @@ const fetchWith = (
   Effect.provide(
     Layer.mergeAll(
       Layer.mock(ForgejoCli.ForgejoCli)({
-        fjToken: (host) => Effect.succeed(host === "git.example.test" ? "fj-token" : null),
+        mediaToken: (url) =>
+          Effect.succeed(new URL(url).origin === "https://git.example.test" ? "fj-token" : null),
       }),
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) => {
           const url = new URL(request.url);
           sent.push([url.host, request.headers.authorization]);
-          const route = routes[url.host] ?? { status: 404 };
+          const route = routes[url.href] ?? routes[url.host] ?? { status: 404 };
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -46,11 +47,8 @@ describe("ForgejoMediaFetch", () => {
         url: `https://git.example.test${UPLOAD}`,
         headers: { range: "bytes=0-1" },
       });
-      expect(response?.status).toBe(200);
-      expect(sent).toEqual([
-        ["git.example.test", "token fj-token"],
-        ["objects.example.test", undefined],
-      ]);
+      expect(response).toBeNull();
+      expect(sent).toEqual([["git.example.test", "token fj-token"]]);
     }).pipe(
       fetchWith(
         {
@@ -63,13 +61,39 @@ describe("ForgejoMediaFetch", () => {
     );
   });
 
-  it.effect("loads an upload from a server fj has no login for without a credential", () => {
+  it.effect("loads a same-origin redirect with the configured token", () => {
+    const sent: Array<[string, string | undefined]> = [];
+    return Effect.gen(function* () {
+      const fetchMedia = yield* ForgejoMediaFetch.make;
+      const response = yield* fetchMedia({
+        url: `https://git.example.test${UPLOAD}`,
+        headers: { range: "bytes=0-1" },
+      });
+      expect(response?.status).toBe(206);
+      expect(response?.request.headers.range).toBe("bytes=0-1");
+      expect(sent).toEqual([
+        ["git.example.test", "token fj-token"],
+        ["git.example.test", "token fj-token"],
+      ]);
+    }).pipe(
+      fetchWith(
+        {
+          [`https://git.example.test${UPLOAD}`]: { status: 302, location: "/files/image.png" },
+          "https://git.example.test/files/image.png": { status: 206 },
+        },
+        sent,
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("does not request an unconfigured server", () => {
     const sent: Array<[string, string | undefined]> = [];
     return Effect.gen(function* () {
       const fetchMedia = yield* ForgejoMediaFetch.make;
       const response = yield* fetchMedia({ url: `https://codeberg.org${UPLOAD}`, headers: {} });
-      expect(response?.status).toBe(200);
-      expect(sent).toEqual([["codeberg.org", undefined]]);
+      expect(response).toBeNull();
+      expect(sent).toEqual([]);
     }).pipe(fetchWith({ "codeberg.org": { status: 200 } }, sent), Effect.scoped);
   });
 });
