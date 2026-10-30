@@ -158,8 +158,8 @@ describe("thread arrangement drafts", () => {
     });
   });
 
-  it("pins a settled thread in one command, carrying its slot", () => {
-    const saved = [thread("a", { settledOverride: "settled", settledAt: NOW })];
+  it.each(["settled", null] as const)("pins a thread settled before saving (%s), carrying its slot", (settledOverride) => {
+    const saved = [thread("a", { settledOverride, settledAt: NOW })];
     const draft = applyThreadMove(
       saved,
       key(saved[0]!),
@@ -170,7 +170,9 @@ describe("thread arrangement drafts", () => {
       NOW,
     );
 
-    expect(commandsFor(saved, draft)).toEqual({ a: [{ type: "pin", orderKey: "p3" }] });
+    const live = [{ ...saved[0]!, settledOverride: "settled" as const }];
+    const shown = withThreadDrafts(live, recordThreadMove(new Map(), saved, draft));
+    expect(commandsFor(live, shown)).toEqual({ a: [{ type: "pin", orderKey: "p3" }] });
   });
 
   it("settles without key writes, even after earlier draft moves", () => {

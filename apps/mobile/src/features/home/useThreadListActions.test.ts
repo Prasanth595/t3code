@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
   dropBusy: false,
   failedAction: null as string | null,
+  failure: new Error("Server rejected action") as unknown,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
@@ -27,6 +28,7 @@ const state = vi.hoisted(() => ({
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
+    message?: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
@@ -39,7 +41,7 @@ vi.mock("react", () => ({
 vi.mock("react-native", () => ({
   Alert: {
     alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-      state.alerts.push({ title, buttons }),
+      state.alerts.push({ title, message: _message, buttons }),
   },
 }));
 vi.mock("expo-haptics", () => ({
@@ -48,7 +50,7 @@ vi.mock("expo-haptics", () => ({
 }));
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-    state.alerts.push({ title, buttons }),
+    state.alerts.push({ title, message: _message, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
@@ -114,7 +116,10 @@ vi.mock("../../state/thread-order", () => ({
   },
 }));
 vi.mock("../../state/threads", () => ({
-  environmentThreadShells: { threadShellsAtom: "thread-shells" },
+  environmentThreadShells: {
+    threadShellsAtom: "thread-shells",
+    navigationThreadShellsAtom: "thread-shells",
+  },
   threadEnvironment: Object.fromEntries(
     [
       "archive",
@@ -138,8 +143,7 @@ vi.mock("../../state/threads", () => ({
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
-        if (action === state.failedAction)
-          return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
+        if (action === state.failedAction) return AsyncResult.failure(Cause.fail(state.failure));
         state.afterRequest?.();
         return AsyncResult.success(undefined);
       },
@@ -190,6 +194,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.failure = new Error("Server rejected action");
 });
 
 afterEach(() => {
@@ -199,6 +204,30 @@ afterEach(() => {
 });
 
 describe("thread arrangement save recovery", () => {
+  it.each([
+    [new Error("Server rejected pin"), "Server rejected pin"],
+    [{ reason: "offline" }, "The thread could not be pinned."],
+    [new Error(" "), "The thread could not be pinned."],
+  ])("reports a readable pin failure (%s)", async (failure, message) => {
+    const thread = makeThread();
+    state.shells = [thread];
+    state.failedAction = "pin";
+    state.failure = failure;
+
+    expect(
+      await useThreadListActions().saveThreadArrangement(
+        new Map([
+          [
+            scopedThreadKey(thread.environmentId, thread.id),
+            { pinnedAt: "2026-10-26T00:00:00.000Z" },
+          ],
+        ]),
+      ),
+    ).toBe(false);
+    expect(state.alerts.at(-1)).toMatchObject({ title: "Could not pin thread", message });
+    expect(state.dropBusy).toBe(false);
+  });
+
   it("keeps an unavailable thread's draft for retry instead of reporting a successful save", async () => {
     const thread = makeThread({ pinnedAt: "2026-10-26T00:00:00.000Z", pinOrderKey: "a" });
     const drafts = new Map([
