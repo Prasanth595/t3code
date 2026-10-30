@@ -3894,11 +3894,12 @@ describe("PiAdapterV2", () => {
     {
       pi: "clears its native queue",
       clearQueue: { steering: ["Use the other file"], followUp: ["Then summarize"] },
-      notice:
+      notices: [
         "Stop cleared 2 queued messages Pi had not read:\n\nUse the other file\n\nThen summarize",
+      ],
     },
-    { pi: "predates clear_queue", clearQueue: "unknown_command", notice: undefined },
-  ] as const)("Stop aborts and retires Pi when it $pi", ({ clearQueue, notice }) =>
+    { pi: "predates clear_queue", clearQueue: "unknown_command", notices: [] },
+  ] as const)("Stop aborts and retires Pi when it $pi", ({ clearQueue, notices }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       fake.setClearQueue(clearQueue);
@@ -3932,20 +3933,15 @@ describe("PiAdapterV2", () => {
           .filter((type) => type === "clear_queue" || type === "abort"),
         ["clear_queue", "abort"],
       );
-      const noticeOrStopped = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-        (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
-        (event.type === "provider_session.updated" && event.providerSession.status === "stopped");
-      if (notice !== undefined) {
-        const cleared = yield* takeEvent(noticeOrStopped);
-        assert.equal(
-          cleared.type === "turn_item.updated" && cleared.turnItem.type === "system_notice"
-            ? cleared.turnItem.message
-            : undefined,
-          notice,
+      const emitted: Array<string> = [];
+      yield* takeEvent((event) => {
+        if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice")
+          emitted.push(event.turnItem.message);
+        return (
+          event.type === "provider_session.updated" && event.providerSession.status === "stopped"
         );
-      }
-      const stopped = yield* takeEvent(noticeOrStopped);
-      assert.equal(stopped.type, "provider_session.updated");
+      });
+      assert.deepEqual(emitted, notices);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
