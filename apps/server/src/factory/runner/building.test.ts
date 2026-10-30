@@ -3641,6 +3641,8 @@ describe("advance: done on a branch the session made itself", () => {
                 ended_in_pass: 0,
               },
             } as RunEvent,
+            // A relaunch moves its newest branch on; the interruption still names the old one.
+            launched("t3code/relaunched", "/t3/wt3"),
           ],
         ],
         // T3's launch branch of the other worktree, which the ledger names only by its folder.
