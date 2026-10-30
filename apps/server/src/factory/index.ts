@@ -249,16 +249,15 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
     })),
   );
   if (defaulted !== undefined && (found.text === null || factoryOptIn(found.text) === "no")) {
-    const resolved =
-      defaultProject === undefined
-        ? Result.fail([
-            {
-              file: PROJECT_CONFIG_PATH,
-              message:
-                "the machine config has no default_project, and the repo has no factory block",
-            },
-          ])
-        : resolveDefault(defaultProject, found.branch, defaulted.files);
+    const resolved: Result.Result<ProjectConfig, ReadonlyArray<ConfigError>> = defaultProject ===
+    undefined
+      ? Result.fail([
+          {
+            file: PROJECT_CONFIG_PATH,
+            message: "the machine config has no default_project, and the repo has no factory block",
+          },
+        ])
+      : resolveDefault(defaultProject, found.branch, defaulted.files);
     if (Result.isSuccess(resolved)) return resolved.success;
     return yield* Effect.fail<ProjectReadError>({
       kind: "config",
