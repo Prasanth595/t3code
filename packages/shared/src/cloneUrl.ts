@@ -35,11 +35,11 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   // Azure's transports use different hosts and put the repository marker in
   // different positions; changing only the scheme produces an invalid clone URL.
   if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
-    const azure = /^v3\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(parsed.path);
+    const azure = /^v3\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)$/.exec(parsed.path);
     return azure ? `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}` : null;
   }
   if (parsed.protocol === "https" && parsed.host.toLowerCase() === "dev.azure.com") {
-    const azure = /^([^/]+)\/([^/]+)\/_git\/([^/]+)$/.exec(parsed.path);
+    const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
     return azure ? `git@ssh.dev.azure.com:v3/${azure[1]}/${azure[2]}/${azure[3]}` : null;
   }
   return protocol === "ssh"

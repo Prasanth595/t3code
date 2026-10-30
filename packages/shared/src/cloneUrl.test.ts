@@ -91,6 +91,12 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("git@ssh.dev.azure.com:v3/Fabrikam/fab_repo", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://dev.azure.com/Fabrikam/_git/fab_repo", "ssh")).toBeNull();
     expect(
+      cloneUrlForProtocol("git@ssh.dev.azure.com:v3/Fabrikam?token/Project1/fab_repo", "https"),
+    ).toBeNull();
+    expect(
+      cloneUrlForProtocol("https://dev.azure.com/Fabrikam/Project1/_git/fab_repo#main", "ssh"),
+    ).toBeNull();
+    expect(
       cloneUrlForProtocol(
         "ssh://git@ssh.dev.azure.com:2222/v3/Fabrikam/Project1/fab_repo",
         "https",
