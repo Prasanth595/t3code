@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { ProjectImportStep } from "../onboarding/ProjectImportStep";
@@ -17,6 +17,13 @@ export function ImportProjectsDialog({
   // Freeze the targets so a reconnect elsewhere does not rescan mid-selection.
   const [scanIds] = useState(environmentIds);
   const scans = useProjectScans(scanIds);
+  const [initialScans] = useState(scans);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cached scan can be up to 30s old on reopen, so rescan once to pick up new conversations; scans already in flight are left alone
+  useEffect(() => {
+    for (const scan of initialScans) {
+      if (scan.data !== null && !scan.isPending) scan.refresh();
+    }
+  }, [initialScans]);
   const [isImporting, setIsImporting] = useState(false);
   const isLoadingProjects =
     scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending);
