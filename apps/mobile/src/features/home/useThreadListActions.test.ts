@@ -30,6 +30,7 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  heldActions: new Map<string, Promise<void>>(),
 }));
 
 vi.mock("react", () => ({
@@ -138,6 +139,7 @@ vi.mock("../../state/threads", () => ({
         input: { threadId: string; orderKey?: string };
       }) => {
         state.requests.push({ action, ...request });
+        await state.heldActions.get(action);
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
@@ -192,6 +194,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.heldActions = new Map();
 });
 
 afterEach(() => {
@@ -460,6 +463,41 @@ describe("thread action undo", () => {
     await useThreadListActions().archiveThread(makeThread());
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+  });
+});
+
+describe("thread actions while another action is pending", () => {
+  it("un-settles a thread whose settle is still pending", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    const settleResponse = Promise.withResolvers<void>();
+    state.heldActions.set("settle", settleResponse.promise);
+
+    const settled = actions.settleThread(thread);
+    const unsettled = actions.unsettleThread(thread);
+    settleResponse.resolve();
+
+    const results = await Promise.all([settled, unsettled]);
+
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle"]);
+    expect(results).toEqual([true, true]);
+  });
+
+  it("settles again after un-settling while the first settle is still pending", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    const settleResponse = Promise.withResolvers<void>();
+    state.heldActions.set("settle", settleResponse.promise);
+
+    const pending = [
+      actions.settleThread(thread),
+      actions.unsettleThread(thread),
+      actions.settleThread(thread),
+    ];
+    settleResponse.resolve();
+
+    expect(await Promise.all(pending)).toEqual([true, true, true]);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "settle"]);
   });
 });
 
