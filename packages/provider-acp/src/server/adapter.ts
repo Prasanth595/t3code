@@ -243,6 +243,7 @@ export interface AcpAdapterV2Flavor {
   ) => EffectAcpSchema.SessionNotification;
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+    context?: { readonly cwd: string | null },
   ) => Effect.Effect<void>;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -5810,8 +5811,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
                 yield* (
-                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                    Effect.void
+                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands, {
+                    cwd: input.runtimePolicy.cwd,
+                  }) ?? Effect.void
                 );
               }
               if (
