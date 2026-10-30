@@ -923,7 +923,8 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     yield* clear;
     return false;
   }
-  const age = world.nowMs() - pending.writtenMs;
+  const now = world.nowMs();
+  const age = now - pending.writtenMs;
   if (age > PENDING_STALE_MS) {
     pass.line(
       `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting; delete it if autodeploy is off`,
@@ -932,7 +933,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     return false;
   }
   const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
-  const wait = deployWait(pending, world.deploySnooze(), world.nowMs());
+  const wait = deployWait(pending, world.deploySnooze(), now);
   // Null only for a missing or stale marker, which returned above.
   if (wait === null) return false;
   if (wait.snoozedUntilMs !== null) {
@@ -942,7 +943,7 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     yield* clear;
     return false;
   }
-  const waited = Math.max(0, world.nowMs() - wait.clockFromMs);
+  const waited = Math.max(0, now - wait.clockFromMs);
   pass.line(
     `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
   );
