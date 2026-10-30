@@ -506,7 +506,10 @@ export function markdownAccessibility(
 ) {
   const rendered = fileEmbedLabel
     ? markdownWithFileEmbeds(
-        markdownWithInlineFileLinks(markdownWithHtml(markdown), ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdownWithInlineFileLinks(
+          markdownForNativeParsing(markdown),
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+        ),
         fileEmbedLabel,
       )
     : {

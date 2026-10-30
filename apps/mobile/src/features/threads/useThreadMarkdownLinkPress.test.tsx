@@ -14,7 +14,7 @@ vi.mock("./useOpenLinkedThread", () => ({
   useOpenLinkedThread: () => (target: unknown) => harness.navigate("Thread", target),
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { get: () => [] } }));
-vi.mock("../../state/threads", () => ({ environmentThreadShells: { threadRefsAtom: {} } }));
+vi.mock("../../state/entities", () => ({ resolveThreadLink: () => null }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => navigation }));
 vi.mock("../../native/useOpenPullRequest", () => ({
   useOpenPullRequest: () => harness.openPullRequest,

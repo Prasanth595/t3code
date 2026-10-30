@@ -1,9 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells } from "../../state/threads";
+import { resolveThreadLink } from "../../state/entities";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useCallback, type Dispatch, type SetStateAction } from "react";
@@ -32,19 +32,22 @@ export function useThreadMarkdownLinkPress(props: {
   const openLinkedThread = useOpenLinkedThread();
   return useCallback(
     (href: string, imageEmbed = false) => {
-      // A thread link names a thread in this feed's environment.
-      const linkedThreadId = parseThreadLinkHref(href);
-      if (linkedThreadId) {
-        const source = scopeThreadRef(environmentId, linkedThreadId);
+      const link = parseThreadLinkHref(href);
+      if (link) {
+        const resolved = resolveThreadLink(
+          (atom) => appAtomRegistry.get(atom),
+          link,
+          environmentId,
+        );
         const target =
-          resolveThreadLinkRef(
-            source,
-            appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
-          ) ?? source;
-        openLinkedThread({
-          environmentId: String(target.environmentId),
-          threadId: String(target.threadId),
-        });
+          resolved ??
+          (link.environmentId === null ? scopeThreadRef(environmentId, link.threadId) : null);
+        if (target) {
+          openLinkedThread({
+            environmentId: String(target.environmentId),
+            threadId: String(target.threadId),
+          });
+        }
         return;
       }
       const media = resolveMarkdownMediaPreview(href, {

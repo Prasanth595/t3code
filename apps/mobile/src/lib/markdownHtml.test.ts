@@ -377,6 +377,9 @@ describe("Windows paths in native Markdown", () => {
     const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
     expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
     expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
+    expect(
+      markdownAccessibility(markdown, () => null).targets.map((target) => target.href),
+    ).toEqual([image, paren, link, image, amp, htmlAmp, image]);
   });
 });
 
