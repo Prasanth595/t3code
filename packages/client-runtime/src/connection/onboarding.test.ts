@@ -20,6 +20,7 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  type ConnectionRegistration,
   PrimaryConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -162,22 +163,36 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  saved?: {
+    readonly targets: ReadonlyArray<BearerConnectionTarget>;
+    readonly profiles: ReadonlyArray<BearerConnectionProfile>;
+    readonly credentials: ReadonlyMap<string, BearerConnectionCredential>;
+    readonly registered: Array<ConnectionRegistration>;
+  },
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
     layerPairingHttp(calls, options),
     Layer.mock(Persistence.ConnectionTargetStore)({
-      list: Effect.succeed([]),
+      list: Effect.succeed(saved?.targets ?? []),
       listDisabled: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
+      register: (registration) => Effect.sync(() => saved?.registered.push(registration)),
       setEnabled: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
-    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
+    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({
+      get: (connectionId) =>
+        Effect.succeed(
+          Option.fromUndefinedOr(
+            saved?.profiles.find((profile) => profile.connectionId === connectionId),
+          ),
+        ),
+    }),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
-      get: () => Effect.succeedNone,
+      get: (connectionId) =>
+        Effect.succeed(Option.fromUndefinedOr(saved?.credentials.get(connectionId))),
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
@@ -616,6 +631,76 @@ describe("connection onboarding", () => {
       });
     }),
   );
+
+  it.effect("edits the paired address, not one the server reported, with the paired token", () => {
+    const pairedTarget = new BearerConnectionTarget({
+      environmentId: PAIRED_ENVIRONMENT_ID,
+      connectionId: PAIRED_PROFILE.connectionId,
+      label: PAIRED_PROFILE.label,
+    });
+    const learnedId = `learned:${PAIRED_ENVIRONMENT_ID}:http://100.101.102.103:3773@${PAIRED_PROFILE.connectionId}`;
+    const learnedTarget = new BearerConnectionTarget({ ...pairedTarget, connectionId: learnedId });
+    const learnedProfile = new BearerConnectionProfile({
+      connectionId: learnedId,
+      environmentId: PAIRED_ENVIRONMENT_ID,
+      label: PAIRED_PROFILE.label,
+      httpBaseUrl: "http://100.101.102.103:3773/",
+      wsBaseUrl: "ws://100.101.102.103:3773/",
+      learned: true,
+      network: "tailscale",
+    });
+    const registered: Array<ConnectionRegistration> = [];
+    return Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const before = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      // The reported address sorts ahead of the paired one.
+      expect(before?.target).toEqual(learnedTarget);
+
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Renamed environment",
+        httpBaseUrl: "https://renamed.example.test",
+      });
+
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      const routes = entry === undefined ? [] : connectionRoutes(entry);
+      expect(routes.map((route) => route.target)).toEqual([
+        learnedTarget,
+        new BearerConnectionTarget({ ...pairedTarget, label: "Renamed environment" }),
+      ]);
+      expect(routes[1]?.profile).toEqual(
+        Option.some(
+          new BearerConnectionProfile({
+            ...PAIRED_PROFILE,
+            label: "Renamed environment",
+            httpBaseUrl: "https://renamed.example.test/",
+            wsBaseUrl: "wss://renamed.example.test/",
+          }),
+        ),
+      );
+      expect(registered).toMatchObject([
+        {
+          target: { connectionId: PAIRED_PROFILE.connectionId },
+          credential: { token: "paired-token" },
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding(undefined, [], {
+          targets: [learnedTarget, pairedTarget],
+          profiles: [learnedProfile, PAIRED_PROFILE],
+          credentials: new Map([
+            [
+              PAIRED_PROFILE.connectionId,
+              new BearerConnectionCredential({ token: "paired-token" }),
+            ],
+          ]),
+          registered,
+        }),
+      ),
+    );
+  });
 
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {
