@@ -6,6 +6,7 @@
  * crash matrix, a recorded gate pass, and the real `gh` client (`tracker/github.test.ts`).
  */
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -3612,6 +3613,19 @@ describe("advance: done on a branch the session made itself", () => {
           ],
         ],
         [
+          "the branch it plans to resume from",
+          OWN,
+          [elsewhere, step(`launch-sending resumed-from ${OWN}`)],
+        ],
+        [
+          "the branch it relaunches on",
+          OWN,
+          [
+            elsewhere,
+            { event: "regate_relaunching", data: { attempt: 1, branch: OWN, message: "fix it" } },
+          ],
+        ],
+        [
           "the branch it was interrupted on",
           OWN,
           [
@@ -3642,6 +3656,20 @@ describe("advance: done on a branch the session made itself", () => {
         assertUnbound(rig, yield* advanceIn(rig));
         // Its ledger decides: its live worktree is not asked.
         assert.ok(!rig.t3.includes("thread thread-2"), what);
+      }
+    }),
+  );
+
+  it.effect("is stuck when the runs cannot be listed", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      // The run's own file stays open to write; only the listing fails.
+      const runs = NodePath.dirname(runPath(rig.dataDir, rig.run));
+      NodeFS.chmodSync(runs, 0o300);
+      try {
+        assertUnbound(rig, yield* advanceIn(rig));
+      } finally {
+        NodeFS.chmodSync(runs, 0o700);
       }
     }),
   );
@@ -3720,7 +3748,7 @@ describe("advance: done on a branch the session made itself", () => {
         [
           "its thread is on the branch",
           { worktreePath: "/t3/wt2", branch: OWN, archived: false },
-          undefined,
+          { head: "f00", branch: "t3code/xyz" },
         ],
         [
           "its checkout is on the branch",
@@ -3766,6 +3794,19 @@ describe("advance: done on a branch the session made itself", () => {
       assert.strictEqual((yield* advanceIn(gone)).kind, "ready-for-gate");
       const failed = ownBranchRig();
       seed(failed.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      for (const thread of [
+        { worktreePath: "/t3/wt2", branch: OWN, archived: true },
+        { worktreePath: null, branch: "t3code/xyz", archived: false },
+      ]) {
+        const quiet = ownBranchRig();
+        seed(quiet.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+        quiet.world.threads["thread-2"] = thread;
+        assert.strictEqual(
+          (yield* advanceIn(quiet)).kind,
+          "ready-for-gate",
+          JSON.stringify(thread),
+        );
+      }
       failed.world.threads["thread-2"] = new SessionsError({
         operation: "thread",
         cause: "timeout",
