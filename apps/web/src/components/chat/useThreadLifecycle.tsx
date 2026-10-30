@@ -12,7 +12,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { useNowAfter } from "../../hooks/useDeadline";
+import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -28,6 +28,11 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
+  type BackgroundWorkStopRequest,
+  isBackgroundWorkStopPending,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
@@ -383,21 +388,39 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   // The interrupt path also accepts a completed run while its provider still
   // has background work.
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
-  const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
-  const isStoppingBackgroundWork =
-    stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
+  const [backgroundWorkStop, setBackgroundWorkStop] = useState<BackgroundWorkStopRequest | null>(
+    null,
+  );
+  const isStoppingBackgroundWork = isBackgroundWorkStopPending(
+    backgroundWorkStop,
+    `${environmentId}:${activeThreadId}`,
+    pendingBackgroundTasks,
+    useDeadlinePassed(backgroundWorkStop?.retryAt ?? null),
+  );
   const handleStopBackgroundWork = async () => {
-    if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    if (
+      isStoppingBackgroundWork ||
+      !activeThread ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    )
       return;
-    const requestKey = `${environmentId}:${activeThread.id}`;
-    setStoppingBackgroundWorkKey(requestKey);
+    const request: BackgroundWorkStopRequest = {
+      threadKey: `${environmentId}:${activeThread.id}`,
+      taskIds: pendingBackgroundTasks.map((task) => task.taskId),
+      retryAt: null,
+    };
+    setBackgroundWorkStop(request);
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
     });
-    // Acceptance does not confirm termination. Allow retry while the provider
-    // finishes stopping the tasks or reports a failure.
-    setStoppingBackgroundWorkKey((current) => (current === requestKey ? null : current));
+    setBackgroundWorkStop((current) =>
+      current !== request
+        ? current
+        : result._tag === "Failure"
+          ? null
+          : { ...request, retryAt: Date.now() + BACKGROUND_WORK_STOP_RETRY_AFTER_MS },
+    );
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);

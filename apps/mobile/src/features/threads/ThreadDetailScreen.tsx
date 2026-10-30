@@ -58,7 +58,11 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { useDeadlinePassed } from "../../lib/clock";
 import {
+  BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
+  type BackgroundWorkStopRequest,
+  isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -578,8 +582,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       );
     }
   };
-  const [statusRequest, setStatusRequest] = useState<{ threadKey: string } | null>(null);
-  const statusPending = statusRequest?.threadKey === selectedThreadKey;
+  const [statusRequest, setStatusRequest] = useState<BackgroundWorkStopRequest | null>(null);
+  const statusPending = isBackgroundWorkStopPending(
+    statusRequest,
+    selectedThreadKey,
+    props.selectedThread.pendingBackgroundTasks,
+    useDeadlinePassed(statusRequest?.retryAt ?? null),
+  );
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(
     useCallback(() => {
@@ -611,7 +620,14 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
     if (statusPending || !props.canOperateThread) return;
-    const request = { threadKey: selectedThreadKey };
+    const request: BackgroundWorkStopRequest = {
+      threadKey: selectedThreadKey,
+      taskIds:
+        action === "stop"
+          ? props.selectedThread.pendingBackgroundTasks.map((task) => task.taskId)
+          : [],
+      retryAt: null,
+    };
     setStatusRequest(request);
     const target = {
       environmentId: props.environmentId,
@@ -646,8 +662,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 ...target,
                 input: { ...target.input, visitedAt: wokeAt ?? lifecycleNow },
               });
-    // An accepted interrupt can leave tasks running. Release the action for retry.
-    setStatusRequest((current) => (current === request ? null : current));
+    setStatusRequest((current) =>
+      current !== request
+        ? current
+        : action === "stop" && result._tag !== "Failure"
+          ? { ...request, retryAt: Date.now() + BACKGROUND_WORK_STOP_RETRY_AFTER_MS }
+          : null,
+    );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
