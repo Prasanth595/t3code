@@ -31,7 +31,6 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import {
-  isNonRepositoryGitStderr,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
@@ -52,7 +51,7 @@ const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const makeNonRepositoryHandle = () =>
+const makeNonRepositoryHandle = (stderr = "fatal: not a git repository") =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
@@ -61,7 +60,7 @@ const makeNonRepositoryHandle = () =>
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
     stdout: Stream.empty,
-    stderr: Stream.encodeText(Stream.make("fatal: not a git repository")),
+    stderr: Stream.encodeText(Stream.make(stderr)),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -124,14 +123,29 @@ const makeDriverReleasingLock = (
     return { driver, failures };
   });
 
-it("treats a .git file that points to a missing folder as no repository", () => {
-  // Git 2.56 and later; older Git says "not a git repository" for the same case.
-  assert.isTrue(
-    isNonRepositoryGitStderr(
-      "fatal: gitfile does not point to a valid repository: /tmp/removed/.git/worktrees/feature\n",
-    ),
-  );
-});
+it.effect.each([
+  "fatal: not a git repository (or any of the parent directories): .git",
+  "fatal: gitfile does not point to a valid repository: /tmp/removed/.git/worktrees/feature\n",
+])("treats %s as a non-repository", (stderr) =>
+  Effect.gen(function* () {
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.succeed(makeNonRepositoryHandle(stderr))),
+      ),
+    );
+    const cwd = "/removed-worktree";
+    const error = yield* driver
+      .execute({ operation: "test.nonRepository", cwd, args: ["status"] })
+      .pipe(Effect.flip);
+    assert.equal(error.reason, "not_a_repository");
+    assert.isFalse((yield* driver.statusDetails(cwd)).isRepo);
+    assert.isFalse((yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false })).isRepo);
+    const refs = yield* driver.listRefs({ cwd });
+    assert.isFalse(refs.isRepo);
+    assert.deepEqual(refs.refs, []);
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 describe("Git output collection", () => {
   // Git writes in arbitrary chunk sizes; one byte per chunk splits every
