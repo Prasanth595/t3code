@@ -39,7 +39,7 @@ export const make = Effect.gen(function* () {
       const location = response.headers.location;
       if (response.status < 300 || response.status >= 400) return response;
       if (!location || hop >= MAX_REDIRECTS) return null;
-      const next = URL.parse(location, target);
+      const next = URL.parse(location, target.href);
       if (!next || next.origin !== server.origin || next.username || next.password) return null;
       target = next;
     }
