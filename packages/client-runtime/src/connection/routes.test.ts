@@ -4,11 +4,12 @@ import * as Option from "effect/Option";
 
 import {
   BearerConnectionProfile,
+  SshConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
 import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
-import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, RelayConnectionTarget, SshConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -248,6 +249,42 @@ describe("learned routes", () => {
     expect(ids(routes)).toEqual(["lan", "relay"]);
     expect(routes!.map((route) => route.target.label)).toEqual(["Studio", "Studio"]);
     expect(profileOf(routes![0]!).label).toBe("Studio");
+
+    // Without an endpoint report, learned routes stay as saved.
+    const unreported = mergeLearnedRoutes({
+      label: "Studio",
+      entry: entryWithRoutes(entry, [LAN, learned("old", "http://192.168.1.20:3773/"), RELAY]),
+      activeRoute: RELAY,
+      reported: undefined,
+      allowInsecure: true,
+    });
+    expect(ids(unreported)).toEqual(["lan", "old", "relay"]);
+    expect(unreported!.map((route) => route.target.label)).toEqual(["Studio", "Studio", "Studio"]);
+
+    const ssh: ConnectionRoute = {
+      target: new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Desk",
+        connectionId: "ssh",
+      }),
+      profile: Option.some(
+        new SshConnectionProfile({
+          connectionId: "ssh",
+          environmentId: ENVIRONMENT_ID,
+          label: "Desk",
+          target: { alias: "desk", hostname: "desk", username: null, port: null },
+        }),
+      ),
+    };
+    const overSsh = mergeLearnedRoutes({
+      label: "Studio",
+      entry: { target: ssh.target, profile: ssh.profile, enabled: true },
+      activeRoute: ssh,
+      reported: [],
+      allowInsecure: true,
+    });
+    expect(ids(overSsh)).toEqual(["ssh"]);
+    expect(profileOf(overSsh![0]!).label).toBe("Studio");
   });
 
   it("borrows the paired token when learned over a bearer route", () => {

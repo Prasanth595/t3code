@@ -208,7 +208,8 @@ export function hasRelayRoute(
 export function mergeLearnedRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
   readonly activeRoute: ConnectionRoute;
-  readonly reported: ReadonlyArray<ReportedEndpoint>;
+  /** Undefined when the server sends no endpoint report, which keeps learned routes as saved. */
+  readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
   /** The label the server reports now, which replaces the one saved at pairing. */
   readonly label: string;
   /** Plain HTTP routes are unusable from an HTTPS page (mixed content). */
@@ -218,8 +219,11 @@ export function mergeLearnedRoutes(input: {
   const active = input.activeRoute.target;
   const previous = connectionRoutes(entry);
   const saved = previous.map((route) => withLabel(route, label));
-  if (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget") {
-    return null;
+  if (
+    input.reported === undefined ||
+    (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget")
+  ) {
+    return routesSignature(previous) === routesSignature(saved) ? null : saved;
   }
   const activeProfile = Option.getOrNull(input.activeRoute.profile);
   const authorization =
@@ -306,14 +310,16 @@ export function mergeLearnedRoutes(input: {
       ),
     });
   }
-  const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
-    routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${route.target.label}`,
-      )
-      .join("\n");
-  return signature(previous) === signature(next) ? null : next;
+  return routesSignature(previous) === routesSignature(next) ? null : next;
+}
+
+function routesSignature(routes: ReadonlyArray<ConnectionRoute>): string {
+  return routes
+    .map(
+      (route) =>
+        `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${route.target.label}`,
+    )
+    .join("\n");
 }
 
 function withLabel(route: ConnectionRoute, label: string): ConnectionRoute {

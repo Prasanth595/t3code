@@ -896,7 +896,7 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
     readonly label: string;
   }) {
     return yield* withLeaseLock(
