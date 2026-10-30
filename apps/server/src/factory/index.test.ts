@@ -32,6 +32,7 @@ import {
   type WatchedListing,
   type WatchedProject,
 } from "./config.ts";
+import type { Defaulted } from "./defaultProject.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
@@ -103,7 +104,7 @@ const watching = (
   );
   return Layer.succeed(
     FactoryWatchedRepos,
-    FactoryWatchedRepos.of({ list: listing, listAndRemember: listing }),
+    FactoryWatchedRepos.of({ list: () => listing, listAndRemember: () => listing }),
   );
 };
 
@@ -1314,10 +1315,12 @@ describe("liveWorld", () => {
     root: string,
     withLastGood = false,
     repo = REPO,
+    onMachine: MachineConfig = machine,
+    defaulted?: Defaulted,
   ) => {
     const readings: Array<RepoConfigReading> = [];
     const world = liveWorld(
-      machine,
+      onMachine,
       "/factory-test/data",
       process,
       NodeServices.layer,
@@ -1345,10 +1348,84 @@ describe("liveWorld", () => {
         prunedAt: new Map(),
       },
     );
-    return Effect.result(world.project({ repo, path: root })).pipe(
-      Effect.map((result) => ({ result, readings })),
-    );
+    return Effect.result(
+      world.project({ repo, path: root, ...(defaulted !== undefined && { defaulted }) }),
+    ).pipe(Effect.map((result) => ({ result, readings })));
   };
+
+  describe("with the machine's default_project", () => {
+    const withDefault: MachineConfig = {
+      ...machine,
+      defaultProject: {
+        instructors: ["rawphp"],
+        limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+      },
+    };
+
+    it.effect("a repo with its own factory block runs on that block alone", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "main" });
+        const { result } = yield* readProject(process, "/p", false, REPO, withDefault);
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) {
+          assert.deepStrictEqual(result.success, {
+            instructors: ["tomkaczocha"],
+            base: "main",
+            provision: [],
+            gate: ["make"],
+            requiredChecks: [],
+            limits: { minutes: 1, gateRetries: 0, checksMinutes: 30, interruptionResumes: 2 },
+            autonomy: "pr",
+          });
+        }
+      }),
+    );
+
+    it.effect("a repo on the default runs on it, with no call to GitHub, and says so", () =>
+      Effect.gen(function* () {
+        const { process, calls } = baseConfigGh({ base: "main" });
+        const { result, readings } = yield* readProject(process, "/p", false, REPO, withDefault, {
+          base: "main",
+          files: {
+            packageJson: '{"scripts":{"test":"vitest"}}',
+            composerJson: null,
+            lockfiles: ["package-lock.json"],
+          },
+        });
+        const expected = {
+          instructors: ["rawphp"],
+          base: "main",
+          provision: ["npm ci"],
+          gate: ["npm run test"],
+          requiredChecks: [],
+          limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+          autonomy: "pr" as const,
+        };
+        assert.deepStrictEqual(Result.isSuccess(result) && result.success, expected);
+        assert.deepStrictEqual(readings, [{ kind: "ok", project: expected }]);
+        assert.deepStrictEqual(calls, []);
+      }),
+    );
+
+    it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "main" });
+        const { result, readings } = yield* readProject(process, "/p", false, REPO, withDefault, {
+          base: "main",
+          files: { packageJson: null, composerJson: null, lockfiles: [] },
+        });
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.strictEqual(result.failure.kind, "config");
+        assert.strictEqual(readings.length, 1);
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.strictEqual(reading.errors.length, 1);
+          assert.include(reading.errors[0]?.message, "no gate could be inferred");
+        }
+      }),
+    );
+  });
 
   it.effect("a project config committed on its own base branch is loaded", () =>
     Effect.gen(function* () {
@@ -2929,8 +3006,8 @@ describe("reloading the machine config", () => {
           Layer.succeed(
             FactoryWatchedRepos,
             FactoryWatchedRepos.of({
-              list: counted("list"),
-              listAndRemember: counted("listAndRemember"),
+              list: () => counted("list"),
+              listAndRemember: () => counted("listAndRemember"),
             }),
           ),
         );

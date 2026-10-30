@@ -1256,6 +1256,7 @@ repos:
             repo: "rawphp/softfac",
             path: "/softfac",
             title: "Softfac",
+            default_config: false,
             factory: {
               instructors: ["i"],
               base: "main",
@@ -1276,10 +1277,18 @@ repos:
             repo: "a/b",
             path: "/b",
             title: "Bee",
+            default_config: false,
             factory: null,
             errors: [{ file: ".dw/config.yml", message: "cannot read" }],
           },
-          { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
+          {
+            repo: "c/d",
+            path: "/d",
+            title: "Dee",
+            default_config: false,
+            factory: null,
+            errors: null,
+          },
         ]);
       },
     ),
