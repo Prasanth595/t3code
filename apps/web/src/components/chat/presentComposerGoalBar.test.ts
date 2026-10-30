@@ -77,4 +77,25 @@ describe("presentComposerGoalBar", () => {
   it("ignores a /goal command that is only part of a message", () => {
     expect(present("paused", "please /goal resume")?.title).toBe("Goal paused");
   });
+
+  it("does not advertise pause or resume for a provider that rejects them", () => {
+    expect(present("active", "/goal pause", { canPauseResume: false })?.title).toBe("Goal set");
+    expect(present("paused", "/goal resume", { canPauseResume: false })).toMatchObject({
+      title: "Goal paused",
+      emphasizing: null,
+      playback: null,
+    });
+  });
+
+  it("ignores a goal command when the draft has an attachment", () => {
+    expect(
+      presentComposerGoalBar({
+        goal: goal("active"),
+        working: false,
+        prompt: "/goal clear",
+        canPauseResume: true,
+        hasAttachments: true,
+      }),
+    ).toMatchObject({ title: "Goal set", emphasizing: null });
+  });
 });

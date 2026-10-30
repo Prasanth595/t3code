@@ -4,8 +4,13 @@ import { presentProviderGoal } from "@t3tools/client-runtime/state/thread-execut
 /** A `/goal` command filling the composer, when the whole draft is that command. */
 type ComposerGoalCommandIntent = "show" | "clear" | "pause" | "resume" | "set";
 
-function composerGoalCommandIntent(prompt: string): ComposerGoalCommandIntent | null {
-  return parseGoalCommand({ text: prompt })?.type ?? null;
+function composerGoalCommandIntent(input: {
+  readonly prompt: string;
+  readonly hasAttachments: boolean;
+}): ComposerGoalCommandIntent | null {
+  // Attachments make the message an ordinary prompt, matching parseGoalCommand.
+  if (input.hasAttachments) return null;
+  return parseGoalCommand({ text: input.prompt })?.type ?? null;
 }
 
 /** Pause an active goal, or play a goal that is waiting. Codex only; Claude has neither. */
@@ -34,13 +39,21 @@ export function presentComposerGoalBar(input: {
   readonly goal: OrchestrationV2ProviderGoal | null;
   readonly working: boolean;
   readonly prompt: string;
-  /** Codex can pause and resume. Claude treats those words as a new objective. */
+  /** Codex can pause and resume. Claude rejects those commands. */
   readonly canPauseResume: boolean;
+  /** The draft includes an image or file, so `/goal` is sent as an ordinary prompt. */
+  readonly hasAttachments?: boolean;
 }): ComposerGoalBarModel | null {
   const { goal } = input;
   if (goal === null || goal.status === "complete") return null;
   const presentation = presentProviderGoal(goal, input.working);
-  const intent = composerGoalCommandIntent(input.prompt);
+  const parsed = composerGoalCommandIntent({
+    prompt: input.prompt,
+    hasAttachments: input.hasAttachments === true,
+  });
+  // Claude rejects pause and resume; do not label a draft the server will refuse.
+  const intent =
+    !input.canPauseResume && (parsed === "pause" || parsed === "resume") ? null : parsed;
   const resting = {
     objective: presentation.objective,
     usage: presentation.usage,

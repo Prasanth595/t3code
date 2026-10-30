@@ -57,7 +57,7 @@ export function ComposerGoalBar({
         <TooltipPopup side="top">{model.objective}</TooltipPopup>
       </Tooltip>
       {model.usage === null ? null : (
-        <span className="shrink-0 tabular-nums text-muted-foreground">{model.usage}</span>
+        <span className="min-w-0 truncate tabular-nums text-muted-foreground">{model.usage}</span>
       )}
       {model.playback !== null || showClear ? (
         <span className="flex shrink-0 items-center gap-1">

@@ -3090,6 +3090,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     working: props.threadWorking,
     prompt: activePendingProgress ? activePendingProgress.customAnswer : prompt,
     canPauseResume: selectedProvider === "codex",
+    hasAttachments: composerImages.length + composerFiles.length > 0,
   });
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
