@@ -13,6 +13,7 @@ import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
 import { BeltRail } from "./BeltRail";
+import { DeployBanner } from "./DeployBanner";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
 import { TouchLink } from "./TouchLink";
@@ -28,6 +29,42 @@ const subscribeToSeconds = (onSecond: () => void) => {
   return () => clearInterval(timer);
 };
 const wholeSecond = () => Math.floor(Date.now() / 1000) * 1000;
+
+/** An accepted Update now: what to say, and whether the server has since gone away. */
+interface Updating {
+  readonly message: string;
+  readonly away: boolean;
+}
+
+/**
+ * The updates still under way: one ends once its build no longer waits, or once its server answers
+ * again after a read failed, as the install restarts it. The same map when nothing changed.
+ */
+const settleUpdating = (
+  updating: ReadonlyMap<EnvironmentId, Updating>,
+  environments: ReadonlyArray<FactoryEnvironment>,
+): ReadonlyMap<EnvironmentId, Updating> => {
+  let next: Map<EnvironmentId, Updating> | null = null;
+  for (const [environmentId, entry] of updating) {
+    const status = environments.find((e) => e.environmentId === environmentId)?.status;
+    let settled: Updating | null = entry;
+    if (status === undefined) settled = null;
+    else if (status.status === "error") settled = entry.away ? entry : { ...entry, away: true };
+    else if (entry.away || status.data?.deploy_pending == null) settled = null;
+    if (settled === entry) continue;
+    next ??= new Map(updating);
+    if (settled === null) next.delete(environmentId);
+    else next.set(environmentId, settled);
+  }
+  return next ?? updating;
+};
+
+const withMember = <T,>(set: ReadonlySet<T>, member: T, present: boolean): ReadonlySet<T> => {
+  const next = new Set(set);
+  if (present) next.add(member);
+  else next.delete(member);
+  return next;
+};
 
 /**
  * The seconds to the next pass, or that one is running: ticking once a second from this component's
@@ -246,6 +283,11 @@ export function FactoryBelt({
   // outlive the readout.
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const [stopNote, setStopNote] = useState<string | null>(null);
+  // The environments with a snooze or Update now in flight, the accepted Update nows, and the
+  // answer of the latest one that failed.
+  const [deployBusy, setDeployBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
+  const [updating, setUpdating] = useState<ReadonlyMap<EnvironmentId, Updating>>(() => new Map());
+  const [deployNote, setDeployNote] = useState<string | null>(null);
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
@@ -269,6 +311,8 @@ export function FactoryBelt({
     answered.length > 0 &&
     answered.every(({ environmentId }) => recent.get(environmentId)?.status !== "loading");
   if (open === undefined && known) setOpen(belt.newest);
+  const settled = settleUpdating(updating, environments);
+  if (settled !== updating) setUpdating(settled);
   if (selected === undefined) return null;
 
   const stop = async ({ key, environmentId, id, issue }: BeltRun) => {
@@ -292,8 +336,32 @@ export function FactoryBelt({
       .find((environment) => environment.environmentId === environmentId)
       ?.status.refresh();
   };
-  const since = selected.status.data?.paused_by_hand?.since;
-  const pausedSince = since === undefined ? null : Date.parse(since);
+  const deploy = async ({ environmentId, status }: FactoryEnvironment, now: boolean) => {
+    setDeployBusy((current) => withMember(current, environmentId, true));
+    setDeployNote(null);
+    try {
+      if (now) {
+        const { kicked } = await factoryApi.deployNow(environmentId);
+        const message = kicked
+          ? "Updating. The server restarts once the build is installed."
+          : "Updating within 10 minutes.";
+        setUpdating((current) => new Map(current).set(environmentId, { message, away: false }));
+      } else {
+        await factoryApi.snoozeDeploy(environmentId);
+      }
+    } catch (error) {
+      setDeployNote(messageOf(error));
+    }
+    setDeployBusy((current) => withMember(current, environmentId, false));
+    status.refresh();
+  };
+  // A hand pause names the hold before an update does.
+  const report = selected.status.data;
+  const held = report?.paused_by_hand
+    ? { why: "paused by hand" as const, since: Date.parse(report.paused_by_hand.since) }
+    : report?.deploy_pending && report.deploy_pending.snoozed_until === null
+      ? { why: "held for update" as const, since: Date.parse(report.deploy_pending.since) }
+      : null;
 
   return (
     <div className="relative flex flex-col gap-4" data-factory-belt="">
@@ -306,6 +374,20 @@ export function FactoryBelt({
           onSelect={setPickedId}
           selectedId={selected.environmentId}
         />
+        {report ? (
+          <DeployBanner
+            busy={deployBusy.has(selected.environmentId)}
+            onDeployNow={() => void deploy(selected, true)}
+            onSnooze={() => void deploy(selected, false)}
+            status={report}
+            updating={settled.get(selected.environmentId)?.message ?? null}
+          />
+        ) : null}
+        {deployNote ? (
+          <p className="break-words text-sm text-muted-foreground" role="status">
+            {deployNote}
+          </p>
+        ) : null}
         <ControlBar
           busy={busy.has(selected.environmentId)}
           counters={known ? belt.counters : { runsToday: "-", mergedToday: "-", stuck: "-" }}
@@ -320,7 +402,7 @@ export function FactoryBelt({
             onOpenChange={setOpen}
             onStop={(run) => void stop(run)}
             open={open}
-            pausedSince={pausedSince !== null && !Number.isNaN(pausedSince) ? pausedSince : null}
+            claimsHeld={held !== null && !Number.isNaN(held.since) ? held : null}
             selectedId={selected.environmentId}
             stopping={stopping}
             tileRef={tileRef}

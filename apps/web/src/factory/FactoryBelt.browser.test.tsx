@@ -727,7 +727,7 @@ describe("a waiting update", () => {
   const deployBy = at(16, 10);
   const waiting = (
     pending: Partial<NonNullable<FactoryStatus["deploy_pending"]>> = {},
-  ): FactoryStatus["deploy_pending"] => ({
+  ): NonNullable<FactoryStatus["deploy_pending"]> => ({
     commit: SHA,
     since: iso(since),
     waited_ms: NOW - since,

@@ -92,7 +92,7 @@ function Post({
   count: number | string;
   /** The line under the label. */
   note: string;
-  /** Claims are paused by hand: the note is the pause, and takes the label's place. */
+  /** Claims are held, by hand or for an update: the note says so, and takes the label's place. */
   paused: boolean;
   open: boolean;
   dim: boolean;
@@ -315,7 +315,7 @@ export function BeltRail({
   belt,
   known,
   selectedId,
-  pausedSince,
+  claimsHeld,
   nowMs,
   open,
   onOpenChange,
@@ -327,8 +327,8 @@ export function BeltRail({
   /** Whether the recent runs lists the Done post counts from have all answered. */
   known: boolean;
   selectedId: EnvironmentId;
-  /** When claims were paused by hand in the selected environment, or null. */
-  pausedSince: number | null;
+  /** Why and since when the selected environment claims nothing new, or null while it claims. */
+  claimsHeld: { readonly why: "paused by hand" | "held for update"; readonly since: number } | null;
   nowMs: number;
   open: Station | null;
   onOpenChange: (station: Station | null) => void;
@@ -338,10 +338,10 @@ export function BeltRail({
   /** On every tile: how the belt's motion finds the element of a run. */
   tileRef: RefCallback<HTMLElement>;
 }) {
-  const paused = pausedSince !== null;
+  const paused = claimsHeld !== null;
   const noteOf = (station: Station) => {
-    if (station === "claimed" && pausedSince !== null) {
-      return `claims paused by hand since ${formatClock(pausedSince)}`;
+    if (station === "claimed" && claimsHeld !== null) {
+      return `claims ${claimsHeld.why} since ${formatClock(claimsHeld.since)}`;
     }
     // The Done bin says what finished.
     return station === "done" ? "" : NOTE[station];
