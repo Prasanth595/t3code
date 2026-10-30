@@ -23,7 +23,7 @@ function ProviderCustomColorPanel(props: {
   const [syncedValue, setSyncedValue] = useState(props.value);
   if (syncedValue !== props.value) {
     setSyncedValue(props.value);
-    if (currentColor !== props.value) {
+    if (currentColor !== props.value.toLowerCase()) {
       setHsv(hexToHsv(props.value));
       setHexDraft(null);
     }
