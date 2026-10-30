@@ -368,6 +368,24 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       Effect.map((result) => result.stdout.trim()),
     );
 
+  const operationInProgress = Effect.fn("ThreadLocalCheckout.operationInProgress")(function* (
+    cwd: string,
+  ) {
+    for (const marker of OPERATION_MARKERS) {
+      const markerPath = (yield* run("gitPath", cwd, [
+        "rev-parse",
+        "--git-path",
+        marker,
+      ])).stdout.trim();
+      if (yield* occupied(path.resolve(cwd, markerPath))) return true;
+    }
+    return false;
+  });
+  const statusOf = (operation: string, cwd: string) =>
+    run(operation, cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).pipe(
+      Effect.map((result) => parsePorcelainStatus(result.stdout)),
+    );
+
   const projection = yield* threadManagement
     .getThreadRecords(input.threadId, [])
     .pipe(operationFailed(`Unable to read thread ${input.threadId}`));
@@ -871,6 +889,17 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     operationFailed("Unable to read the local checkout's git folder"),
   );
 
+  if (
+    yield* operationInProgress(localPath).pipe(
+      operationFailed("Unable to inspect the local checkout"),
+    )
+  ) {
+    return yield* fail(
+      "local_operation_in_progress",
+      "The local checkout is in the middle of a merge, rebase, cherry-pick, revert or bisect. Finish or abort it first.",
+    );
+  }
+
   // A crash between git steps leaves a move half done. Its journal lets the next attempt undo what
   // it can show this move did: nothing is reverted unless it still matches the journal.
   const journalFile = path.join(
@@ -940,6 +969,19 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       // Undoing it switches branches too, so the same checks guard it.
       yield* refuseIfLocalBusy();
       yield* refuseIfWorktreeShared(yield* realPath(journal.value.sourceRoot));
+      if (
+        (yield* fileSystem
+          .exists(journal.value.sourceRoot)
+          .pipe(operationFailed("Unable to inspect the interrupted worktree"))) &&
+        (yield* operationInProgress(journal.value.sourceRoot).pipe(
+          operationFailed("Unable to inspect the interrupted worktree"),
+        ))
+      ) {
+        return yield* fail(
+          "worktree_operation_in_progress",
+          "Finish or abort the worktree's git operation before recovering the interrupted move.",
+        );
+      }
     }
     if (!sameWorktree) {
       // The thread has moved on: the interrupted move re-pointed it, or it was handed off again.
@@ -998,24 +1040,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     ),
   );
 
-  const operationInProgress = Effect.fn("ThreadLocalCheckout.operationInProgress")(function* (
-    cwd: string,
-  ) {
-    for (const marker of OPERATION_MARKERS) {
-      const markerPath = (yield* run("gitPath", cwd, [
-        "rev-parse",
-        "--git-path",
-        marker,
-      ])).stdout.trim();
-      if (yield* occupied(path.resolve(cwd, markerPath))) return true;
-    }
-    return false;
-  });
-  const statusOf = (operation: string, cwd: string) =>
-    run(operation, cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).pipe(
-      Effect.map((result) => parsePorcelainStatus(result.stdout)),
-    );
-
   // The first folder on the way to `relative` that is a symlink or not a folder; writing through
   // a symlinked folder would land outside the checkout.
   const blockedAncestor = Effect.fn("ThreadLocalCheckout.blockedAncestor")(function* (
@@ -1033,16 +1057,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     return null;
   });
 
-  if (
-    yield* operationInProgress(localPath).pipe(
-      operationFailed("Unable to inspect the local checkout"),
-    )
-  ) {
-    return yield* fail(
-      "local_operation_in_progress",
-      "The local checkout is in the middle of a merge, rebase, cherry-pick, revert or bisect. Finish or abort it first.",
-    );
-  }
   const localChanges = (yield* statusOf("localStatus", localPath).pipe(
     operationFailed("Unable to read the local checkout's status"),
   )).filter((entry) => !isUntracked(entry));

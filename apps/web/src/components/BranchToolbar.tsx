@@ -309,7 +309,7 @@ const RunContextSelector = memo(function RunContextSelector({
     );
   }
 
-  return (
+  const renderMenu = (moveItem?: ReactNode) => (
     <Menu>
       <MenuTrigger
         render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
@@ -454,9 +454,16 @@ const RunContextSelector = memo(function RunContextSelector({
               </MenuRadioItem>
             ) : null}
           </MenuRadioGroup>
+          {moveItem}
         </MenuGroup>
       </MenuPopup>
     </Menu>
+  );
+
+  return moveToLocalTarget !== null && !forceNewWorktree ? (
+    <MoveToLocalCheckoutMenu target={moveToLocalTarget} renderMenu={renderMenu} />
+  ) : (
+    renderMenu()
   );
 });
 

@@ -50,9 +50,7 @@ interface Fixture {
 }
 
 const gitLayer = GitVcsDriver.layer.pipe(
-  Layer.provide(
-    ServerConfig.layerTest(process.cwd(), "/tmp/test-pr/t3code-move-to-local/round2-review/config"),
-  ),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "move-to-local-recovery-" })),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -63,7 +61,6 @@ const makeFixture = Effect.fn("makeFixture")(function* () {
   // Canonical, as the move resolves paths: macOS temp folders sit behind the /var symlink.
   const root = yield* fs.realPath(
     yield* fs.makeTempDirectoryScoped({
-      directory: "/tmp/test-pr/t3code-move-to-local/round2-review",
       prefix: "fixture-",
     }),
   );
@@ -395,6 +392,32 @@ describe("rollback and recovery safety", () => {
         journalRetained: yield* fs.exists(journalFile(f)),
       }).toEqual({ branch: "feature", fileStillHere: true, journalRetained: true });
     }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect.each(["local", "worktree"] as const)(
+    "recovery refuses an unfinished merge in the %s checkout",
+    (checkout) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        yield* fs.writeFileString(`${f.worktree}/new.txt`, "new file\n");
+        yield* simulateCrashAfterCopy(f);
+        const marker = yield* f.git(f[checkout], ["rev-parse", "--absolute-git-dir"]);
+        const markerPath = `${marker}/MERGE_HEAD`;
+        const head = yield* f.git(f[checkout], ["rev-parse", "HEAD"]);
+        yield* fs.writeFileString(markerPath, `${head}\n`);
+        const before = yield* fs.readFileString(journalFile(f));
+
+        expectCode(
+          yield* Effect.exit(makeHarness({ fixture: f }).move()),
+          checkout === "local" ? "local_operation_in_progress" : "worktree_operation_in_progress",
+        );
+        expect(yield* currentBranch(f, f.local)).toBe("feature");
+        expect(yield* currentBranch(f, f.worktree)).toBe("HEAD");
+        expect(yield* fs.readFileString(`${f.local}/new.txt`)).toBe("new file\n");
+        expect(yield* fs.readFileString(journalFile(f))).toBe(before);
+        expect(yield* fs.readFileString(markerPath)).toBe(`${head}\n`);
+      }).pipe(Effect.provide(gitLayer)),
   );
 
   it.effect("recovery leaves a handed-off detached worktree alone", () =>

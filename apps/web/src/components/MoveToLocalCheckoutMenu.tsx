@@ -28,12 +28,18 @@ export interface MoveToLocalCheckoutTarget {
 }
 
 /** Wraps a worktree thread's locked workspace label in a menu that moves it to the local checkout. */
-export function MoveToLocalCheckoutMenu(props: {
-  readonly target: MoveToLocalCheckoutTarget;
-  /** The label's element without children; it becomes the menu trigger when the move is allowed. */
-  readonly trigger: ReactElement;
-  readonly children: ReactNode;
-}) {
+export function MoveToLocalCheckoutMenu(
+  props: {
+    readonly target: MoveToLocalCheckoutTarget;
+  } & (
+    | { readonly trigger: ReactElement; readonly children: ReactNode; readonly renderMenu?: never }
+    | {
+        readonly renderMenu: (item?: ReactNode) => ReactNode;
+        readonly trigger?: never;
+        readonly children?: never;
+      }
+  ),
+) {
   const { environmentId, threadId } = props.target;
   const composerMenuProps = useComposerMenuProps();
   const thread = useQuietThreadShell(scopeThreadRef(environmentId, threadId));
@@ -45,7 +51,9 @@ export function MoveToLocalCheckoutMenu(props: {
   const [confirming, setConfirming] = useState(false);
 
   if (!canWriteSourceControl || !canOperate) {
-    return cloneElement(props.trigger, undefined, props.children);
+    return props.renderMenu
+      ? props.renderMenu()
+      : cloneElement(props.trigger, undefined, props.children);
   }
 
   const running = (thread?.runtime?.activeRunId ?? null) !== null;
@@ -66,21 +74,27 @@ export function MoveToLocalCheckoutMenu(props: {
     );
   };
 
+  const item = (
+    <MenuItem disabled={running} onClick={() => setConfirming(true)}>
+      <FolderInputIcon />
+      {running ? "Move to local checkout (wait for the turn to end)" : "Move to local checkout…"}
+    </MenuItem>
+  );
+
   return (
     <>
-      <Menu modal={false}>
-        <MenuTrigger render={props.trigger} aria-label="Workspace actions">
-          {props.children}
-        </MenuTrigger>
-        <MenuPopup align="start" {...composerMenuProps}>
-          <MenuItem disabled={running} onClick={() => setConfirming(true)}>
-            <FolderInputIcon />
-            {running
-              ? "Move to local checkout (wait for the turn to end)"
-              : "Move to local checkout…"}
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
+      {props.renderMenu ? (
+        props.renderMenu(item)
+      ) : (
+        <Menu modal={false}>
+          <MenuTrigger render={props.trigger} aria-label="Workspace actions">
+            {props.children}
+          </MenuTrigger>
+          <MenuPopup align="start" {...composerMenuProps}>
+            {item}
+          </MenuPopup>
+        </Menu>
+      )}
       <MoveToLocalCheckoutDialog
         environmentId={environmentId}
         threadId={threadId}
