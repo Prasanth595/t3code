@@ -1,3 +1,4 @@
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -217,6 +218,7 @@ export function startThreadNotifications(
         attention,
         settled,
         completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
+        snoozed: effectiveSnoozed(thread, { now: new Date().toISOString() }),
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -227,6 +229,7 @@ export function startThreadNotifications(
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
         quiet: state.raw.latestRunStopRequested === true,
+        snoozed: state.snoozed,
       });
     }
   };

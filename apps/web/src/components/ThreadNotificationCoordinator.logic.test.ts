@@ -10,13 +10,15 @@ const working: ThreadNotificationObservation = {
   attention: null,
   settled: false,
   completedAt: null,
+  snoozed: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
   settled: true,
   completedAt: at,
+  snoozed: false,
 });
-const visible = { archived: false, quiet: false };
+const visible = { archived: false, quiet: false, snoozed: false };
 
 function harness() {
   const notify = vi.fn();
@@ -35,6 +37,27 @@ describe("createThreadNotificationGate", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("does not notify completion while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe({ ...completed(1), snoozed: true }, { ...visible, snoozed: true });
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+    observe(completed(1));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("still notifies attention while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(
+      { attention: "run-1:approval", settled: false, completedAt: null, snoozed: true },
+      { ...visible, snoozed: true },
+    );
+    expect(notify.mock.calls).toEqual([["thread", "input"]]);
   });
 
   it("drops a completion when the thread resumes within the grace", () => {
@@ -65,7 +88,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(500);
-    observe({ attention: "run-1:approval", settled: false, completedAt: null });
+    observe({ attention: "run-1:approval", settled: false, completedAt: null, snoozed: false });
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     vi.advanceTimersByTime(60_000);
     // The request resolves and the same run reads as completed again.
@@ -96,7 +119,7 @@ describe("createThreadNotificationGate", () => {
     observe(completed(1));
     vi.advanceTimersByTime(500);
     observe(working);
-    observe({ attention: "run-1:approval", settled: false, completedAt: null });
+    observe({ attention: "run-1:approval", settled: false, completedAt: null, snoozed: false });
     vi.advanceTimersByTime(60_000);
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
@@ -108,7 +131,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ attention: "run-1:limited", settled: false, completedAt: null, snoozed: false });
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
     expect(notify.mock.calls).toEqual([
@@ -122,7 +145,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(500);
-    observe({ attention: "run-2:approval", settled: false, completedAt: null });
+    observe({ attention: "run-2:approval", settled: false, completedAt: null, snoozed: false });
     observe(working);
     observe(completed(2));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
