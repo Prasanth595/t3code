@@ -256,7 +256,7 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
     const unavailable = `${label} is not among Pi's available models. Choose another model, or check that provider's setup in Pi.`;
     if (compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0) return unavailable;
     const command = piSettings.binaryPath || "pi";
-    const missingCredentials = yield* resolveSpawnCommand(
+    const output = yield* resolveSpawnCommand(
       command,
       ["auth", "check", "--provider", model.provider, "--json", "--no-refresh"],
       { env: environment },
@@ -270,15 +270,12 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
           }),
         ),
       ),
-      Effect.map((output) =>
-        Option.exists(
-          decodePiAuthCheck(output.stdout.trim()),
-          (check) => check.reason === "credentials_not_configured",
-        ),
-      ),
-      Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
-      Effect.map(Option.getOrElse(() => false)),
-      Effect.orElseSucceed(() => false),
+      Effect.timeout(VERSION_PROBE_TIMEOUT_MS),
+      Effect.option,
+    );
+    const missingCredentials = Option.exists(
+      Option.flatMap(output, (result) => decodePiAuthCheck(result.stdout)),
+      (check) => check.reason === "credentials_not_configured",
     );
     return missingCredentials
       ? `${label} has no credentials configured for ${model.provider}. Choose another model, or run \`pi\` in a terminal and use /login or configure its API key.`
@@ -497,15 +494,16 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 
   const discovery = discoveryExit.value.value;
   const models = piModelsFromSettings(piSettings.customModels, discovery.models);
-  const activeModelMessage =
-    discovery.authenticated && discovery.unavailableActiveModel !== undefined
-      ? yield* describeUnavailablePiModel(
+  const message = !discovery.authenticated
+    ? "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+    : discovery.unavailableActiveModel === undefined
+      ? undefined
+      : yield* describeUnavailablePiModel(
           piSettings,
           environment,
           version,
           discovery.unavailableActiveModel,
-        )
-      : undefined;
+        );
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: piSettings.enabled,
@@ -516,16 +514,9 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     probe: {
       installed: true,
       version,
-      status: discovery.authenticated && activeModelMessage === undefined ? "ready" : "warning",
+      status: message === undefined ? "ready" : "warning",
       auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
-      ...(!discovery.authenticated
-        ? {
-            message:
-              "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent.",
-          }
-        : activeModelMessage !== undefined
-          ? { message: activeModelMessage }
-          : {}),
+      ...(message === undefined ? {} : { message }),
     },
   });
 });
