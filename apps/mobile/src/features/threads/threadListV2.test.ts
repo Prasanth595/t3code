@@ -137,8 +137,9 @@ describe("resolveThreadListV2Status", () => {
   });
 
   it.each([
-    { roster: "dev server", task: { kind: "command" }, status: "ready" },
-    { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },
+    { roster: "dev server", task: { kind: "command", awaited: false }, status: "ready" },
+    { roster: "dev server watchdog", task: { kind: "monitor", awaited: false }, status: "ready" },
+    { roster: "unmarked command", task: { kind: "command" }, status: "waiting" },
     { roster: "awaited command", task: { kind: "command", awaited: true }, status: "waiting" },
   ] as const)(
     "presents an unseen completion with a $roster roster as $status",

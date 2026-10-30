@@ -7709,7 +7709,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
+  it.effect("keeps the agent's awaited marks on background tasks, until they end", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -7740,7 +7740,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }
         });
         const marks = (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) =>
-          tasks.map((task) => [task.taskId, task.awaited === true]);
+          tasks.map((task) => [task.taskId, task.awaited ?? null]);
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -7768,13 +7768,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
           [
             [WAKE_TASK_ID, true],
+            ["dev-server", null],
+          ],
+        );
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["dev-server"],
+          awaited: false,
+        });
+        assert.deepStrictEqual(
+          marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === false))),
+          [
+            [WAKE_TASK_ID, true],
             ["dev-server", false],
           ],
         );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
 
-        // A replacing level rebuilds every entry; the mark must survive it.
+        // A replacing level rebuilds every entry; both marks must survive it.
         yield* Queue.offer(
           harness.sdkMessages,
           roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000302"),
@@ -7799,7 +7811,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
           ["dev-server", false],
-          [WAKE_TASK_ID, false],
+          [WAKE_TASK_ID, null],
         ]);
 
         yield* awaitBackgroundTasks({
@@ -7811,7 +7823,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
           [
             ["dev-server", true],
-            [WAKE_TASK_ID, false],
+            [WAKE_TASK_ID, null],
           ],
         );
         const released = yield* awaitBackgroundTasks({
@@ -7824,7 +7836,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           marks(yield* nextRoster((tasks) => !tasks.some((task) => task.awaited === true))),
           [
             ["dev-server", false],
-            [WAKE_TASK_ID, false],
+            [WAKE_TASK_ID, null],
           ],
         );
       }).pipe(

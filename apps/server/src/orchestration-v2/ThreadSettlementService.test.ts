@@ -135,12 +135,26 @@ describe("isAutoSettlementCandidate", () => {
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({
           pendingBackgroundTasks: [
-            { taskId: "dev", kind: "command", description: "vp run dev --share" },
+            {
+              taskId: "dev",
+              kind: "command",
+              description: "vp run dev --share",
+              awaited: false,
+            },
           ],
         }),
         NOW_MS,
       ),
     ).toBe(true);
+  });
+
+  it("keeps a thread whose agent may be waiting on an unmarked command", () => {
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ pendingBackgroundTasks: [{ taskId: "tests", kind: "command" }] }),
+        NOW_MS,
+      ),
+    ).toBe(false);
   });
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {

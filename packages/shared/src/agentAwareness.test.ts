@@ -154,8 +154,13 @@ describe("projectThreadAwarenessV2", () => {
   });
 
   it.each([
-    ["only a dev server", "completed", [{ taskId: "dev", kind: "command" }]],
-    ["a dev server's watchdog monitor", "completed", [{ taskId: "watch", kind: "monitor" }]],
+    ["only a dev server", "completed", [{ taskId: "dev", kind: "command", awaited: false }]],
+    [
+      "a dev server's watchdog monitor",
+      "completed",
+      [{ taskId: "watch", kind: "monitor", awaited: false }],
+    ],
+    ["an unmarked command", "running", [{ taskId: "deploy", kind: "command" }]],
     [
       "a command the agent waits on",
       "running",
@@ -165,7 +170,7 @@ describe("projectThreadAwarenessV2", () => {
       "a dev server and a subagent",
       "running",
       [
-        { taskId: "dev", kind: "command" },
+        { taskId: "dev", kind: "command", awaited: false },
         { taskId: "review", kind: "subagent" },
       ],
     ],

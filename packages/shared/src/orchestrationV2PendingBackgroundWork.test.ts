@@ -7,9 +7,19 @@ import {
 
 describe("backgroundWorkHoldsCompletion", () => {
   it.each([
-    ["a dev server", false, [{ taskId: "dev", kind: "command" }]],
-    ["a dev server's watchdog monitor", false, [{ taskId: "watch", kind: "monitor" }]],
+    ["an unmarked command", true, [{ taskId: "tests", kind: "command" }]],
+    ["an unmarked monitor", true, [{ taskId: "watch", kind: "monitor" }]],
     ["a command the agent waits on", true, [{ taskId: "tests", kind: "command", awaited: true }]],
+    ["a dev server left running", false, [{ taskId: "dev", kind: "command", awaited: false }]],
+    ["its watchdog left running", false, [{ taskId: "watch", kind: "monitor", awaited: false }]],
+    [
+      "a dev server beside a command the agent waits on",
+      true,
+      [
+        { taskId: "dev", kind: "command", awaited: false },
+        { taskId: "tests", kind: "command" },
+      ],
+    ],
     ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
@@ -109,7 +119,9 @@ describe("derivePendingBackgroundWork", () => {
         },
       ],
     });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    expect(tasks).toEqual([
+      { taskId: "cmd-1", description: "npm test", kind: "command", awaited: false },
+    ]);
   });
 
   it("excludes rolled_back items when the latest run is waiting", () => {
@@ -146,6 +158,7 @@ describe("derivePendingBackgroundWork", () => {
         taskId: "cmd-new",
         description: "still pending",
         kind: "command",
+        awaited: false,
       },
     ]);
   });
@@ -173,7 +186,9 @@ describe("derivePendingBackgroundWork", () => {
         },
       ],
     });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    expect(tasks).toEqual([
+      { taskId: "cmd-1", description: "npm test", kind: "command", awaited: false },
+    ]);
   });
 
   it("dedupes roster entries against turn items by native task id", () => {
@@ -306,6 +321,7 @@ describe("derivePendingBackgroundWork", () => {
         taskId: "cmd-null",
         description: "orphan item",
         kind: "command",
+        awaited: false,
       },
     ]);
   });
@@ -356,7 +372,7 @@ describe("derivePendingBackgroundWork kinds", () => {
         kind: "subagent",
         childThreadId: "thread:child",
       },
-      { taskId: "cmd", description: "npm test", kind: "command" },
+      { taskId: "cmd", description: "npm test", kind: "command", awaited: false },
     ]);
   });
 
