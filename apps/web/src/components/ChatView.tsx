@@ -3445,9 +3445,11 @@ export default function ChatView(props: ChatViewProps) {
                       >
                         <div className="relative z-10">
                           {goalNow ? (
-                            <div className="px-3 pt-3">
-                              <ThreadNowLine item={goalNow} />
-                            </div>
+                            <ComposerSurface.Main>
+                              <div className="px-3 pt-3">
+                                <ThreadNowLine item={goalNow} />
+                              </div>
+                            </ComposerSurface.Main>
                           ) : null}
                           {showProviderSubagentBar ? (
                             <ProviderSubagentBar
