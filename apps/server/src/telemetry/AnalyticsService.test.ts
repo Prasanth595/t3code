@@ -19,6 +19,8 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ServerSettingsError } from "@t3tools/contracts";
+import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -284,6 +286,133 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           batches.flatMap((batch) => batch.map((event) => event.event)),
           [...Array.from({ length: 20 }, (_, index) => `before-opt-out-${index}`), "after-opt-in"],
         );
+      }),
+  );
+
+  it.effect.each([
+    { operation: "flush", snapshotFailure: false },
+    { operation: "flush", snapshotFailure: true },
+    { operation: "record", snapshotFailure: true },
+  ])(
+    "preserves new events after a stale $operation consent result (failure: $snapshotFailure)",
+    ({ operation, snapshotFailure }) =>
+      Effect.gen(function* () {
+        const checked = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const pauseNextSnapshot = yield* Ref.make(false);
+        const settingsLayer = Layer.effect(
+          ServerSettings.ServerSettingsService,
+          Effect.map(ServerSettings.ServerSettingsService, (settings) => {
+            const service: ServerSettings.ServerSettingsService["Service"] = {
+              ...settings,
+              withSettingsSnapshot: (use) =>
+                Ref.getAndSet(pauseNextSnapshot, false).pipe(
+                  Effect.flatMap((pause) => {
+                    if (!pause) return settings.withSettingsSnapshot(use);
+                    const snapshot = snapshotFailure
+                      ? settings.withSettingsSnapshot(() =>
+                          Effect.fail(
+                            new ServerSettingsError({
+                              settingsPath: "test settings",
+                              operation: "read-file",
+                              cause: "unavailable",
+                            }),
+                          ),
+                        )
+                      : settings.withSettingsSnapshot(use);
+                    const resume = Deferred.succeed(checked, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                    );
+                    return snapshot.pipe(
+                      Effect.tap(() => resume),
+                      Effect.tapError(() => resume),
+                    );
+                  }),
+                ),
+            };
+            return service;
+          }),
+        ).pipe(Layer.provide(ServerSettings.layerTest({ telemetryEnabled: false })));
+        const batches = yield* sendFor(
+          0,
+          respondWithStatus(204),
+          Effect.gen(function* () {
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            const settings = yield* ServerSettings.ServerSettingsService;
+            yield* Ref.set(pauseNextSnapshot, true);
+            const pending = yield* (
+              operation === "flush" ? analytics.flush : analytics.record("unavailable-consent")
+            ).pipe(Effect.forkChild);
+            yield* Deferred.await(checked);
+            yield* settings.updateSettings({ telemetryEnabled: true });
+            yield* analytics.record("after-opt-in");
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(pending);
+            yield* analytics.flush;
+          }),
+          false,
+          settingsLayer,
+        );
+        assert.deepEqual(
+          batches.flat().map((event) => event.event),
+          ["after-opt-in"],
+        );
+      }),
+  );
+
+  it.effect(
+    "starts HTTP under the consent guard and releases it before waiting for a response",
+    () =>
+      Effect.gen(function* () {
+        const checked = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const checks = yield* Ref.make(0);
+        let optedOut = false;
+        const admittedWhileEnabled: boolean[] = [];
+        const settingsLayer = Layer.effect(
+          ServerSettings.ServerSettingsService,
+          Effect.map(ServerSettings.ServerSettingsService, (settings) => {
+            const service: ServerSettings.ServerSettingsService["Service"] = {
+              ...settings,
+              withSettingsSnapshot: (use) =>
+                settings.withSettingsSnapshot(use).pipe(
+                  Effect.tap(() =>
+                    Effect.gen(function* () {
+                      if ((yield* Ref.updateAndGet(checks, (count) => count + 1)) === 2) {
+                        yield* Deferred.succeed(checked, undefined);
+                        yield* Deferred.await(release);
+                      }
+                    }),
+                  ),
+                ),
+            };
+            return service;
+          }),
+        ).pipe(Layer.provide(ServerSettings.layerTest()));
+        yield* sendFor(
+          0,
+          (request) =>
+            Effect.gen(function* () {
+              admittedWhileEnabled.push(!optedOut);
+              yield* Deferred.await(release);
+              return yield* respondWithStatus(204)(request);
+            }),
+          Effect.gen(function* () {
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            const settings = yield* ServerSettings.ServerSettingsService;
+            yield* analytics.record("before-opt-out");
+            yield* Ref.set(checks, 0);
+            const flushing = yield* analytics.flush.pipe(Effect.forkChild);
+            yield* Deferred.await(checked);
+            yield* settings.updateSettings({ telemetryEnabled: false });
+            optedOut = true;
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(flushing);
+          }),
+          true,
+          settingsLayer,
+        );
+        assert.deepEqual(admittedWhileEnabled, [true]);
       }),
   );
 

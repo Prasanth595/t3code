@@ -8,6 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -178,7 +179,7 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((enabled) => (enabled ? operation : Effect.void)),
         ),
       )
-      .pipe(Effect.catch(() => discardBufferedEvents));
+      .pipe(Effect.ignore);
 
   const enqueueBufferedEvent = (
     uuid: string,
@@ -216,8 +217,6 @@ export const make = Effect.gen(function* () {
     events: ReadonlyArray<BufferedAnalyticsEvent>,
     delivery: DeliveryState,
   ) {
-    if (!(yield* isEnabled)) return yield* discardBufferedEvents;
-    if ((yield* Ref.get(deliveryRef)) !== delivery) return;
     const { distinctId, installId } = yield* identity;
     if (!telemetryConfig.enabled || !distinctId) return;
 
@@ -247,11 +246,26 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    const request = yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
-      Effect.flatMap(httpClient.execute),
+    );
+    const response = yield* settings
+      .withSettingsSnapshot((snapshot) =>
+        Effect.gen(function* () {
+          if (!(yield* refreshConsent(snapshot))) return;
+          if ((yield* Ref.get(deliveryRef)) !== delivery) return;
+          // Start fetch before releasing consent; wait for its response outside the settings lock.
+          return yield* httpClient
+            .execute(request)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (!response) return;
+    yield* Fiber.join(response).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.timeout(SEND_TIMEOUT),
+      Effect.ensuring(Fiber.interrupt(response)),
     );
   });
 
@@ -262,7 +276,7 @@ export const make = Effect.gen(function* () {
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
-    if (!(yield* isEnabled)) return yield* discardBufferedEvents;
+    if (!(yield* isEnabled)) return;
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
@@ -271,7 +285,7 @@ export const make = Effect.gen(function* () {
       }
 
       const sent = yield* Effect.result(sendBatch(batch, delivery));
-      if (!(yield* isEnabled)) return yield* discardBufferedEvents;
+      if (!(yield* isEnabled)) return;
       // Opt-out replaces delivery state; an in-flight request must not restore its batch.
       if ((yield* Ref.get(deliveryRef)) !== delivery) return;
       if (Result.isSuccess(sent)) {
