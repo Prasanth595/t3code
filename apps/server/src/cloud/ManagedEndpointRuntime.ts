@@ -118,12 +118,7 @@ const QUIC_STALL_WINDOW_MS = 5 * 60_000;
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
 const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
-// The connector's fibers outlive the span that started them, so the trace file
-// misses their messages, and a desktop backend's stdout reaches disk only after
-// a crash. This file keeps what the runtime logs, connector output included.
 export const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
-const RELAY_CLIENT_LOG_MAX_BYTES = 1024 * 1024;
-const RELAY_CLIENT_LOG_MAX_FILES = 2;
 
 /** Preserve user-chosen PATH binaries and overrides; CLI downloads require consent. */
 function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): boolean {
@@ -212,14 +207,13 @@ export const make = Effect.gen(function* () {
   const { logsDir } = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   const relayClientLogPath = path.join(logsDir, RELAY_CLIENT_LOG_FILE);
-  // A synchronous append per line keeps a timer off an idle server; the
-  // connector logs a few lines a minute.
+  // Synchronous appends avoid a flush timer for this low-volume log.
   const relayClientLog = yield* Effect.try(
     () =>
       new RotatingFileSink({
         filePath: relayClientLogPath,
-        maxBytes: RELAY_CLIENT_LOG_MAX_BYTES,
-        maxFiles: RELAY_CLIENT_LOG_MAX_FILES,
+        maxBytes: 1024 * 1024,
+        maxFiles: 2,
       }),
   ).pipe(
     Effect.map((sink) =>
@@ -238,8 +232,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.as(undefined)),
     ),
   );
-  // Fibers inherit their loggers, so the connector fibers forked under
-  // applyConfig write here too.
+  // Forked connector fibers inherit this logger after the applyConfig span ends.
   const withRelayClientLog = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     relayClientLog ? Effect.withLogger(effect, relayClientLog) : effect;
 
