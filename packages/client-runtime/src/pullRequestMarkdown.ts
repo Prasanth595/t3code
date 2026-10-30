@@ -15,7 +15,7 @@ export type PullRequestBodySegment =
       readonly rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
     };
 
-export type PullRequestBodyTableCell = {
+type PullRequestBodyTableCell = {
   readonly header: boolean;
   readonly segments: ReadonlyArray<PullRequestBodySegment>;
 };
@@ -80,7 +80,13 @@ function mediaTableAt(
   }
   if (!TABLE_END_PATTERN.test(lines[end]!)) return null;
   const html = lines.slice(start, end + 1).join("\n");
-  if (/<caption\b/iu.test(html) || (html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
+  if ((html.match(TABLE_TAG_PATTERN)?.length ?? 0) > 1) return null;
+  // Only cell content is represented; leave other content in Markdown rather than dropping it.
+  const outsideCells = html
+    .replace(TABLE_ROW_PATTERN, (_match, row: string) => row.replace(TABLE_CELL_PATTERN, ""))
+    .replace(/<\/?(?:table|thead|tbody|tfoot)\b[^>]*>/giu, "")
+    .trim();
+  if (outsideCells.length > 0) return null;
   const rows = Array.from(html.matchAll(TABLE_ROW_PATTERN), ([, row]) =>
     Array.from(row!.matchAll(TABLE_CELL_PATTERN), ([, tag, content]) => ({
       header: tag!.toLowerCase() === "th",

@@ -167,25 +167,28 @@ describe("media on custom hosts", () => {
     ]);
   });
 
-  it("keeps the caption of a media table instead of dropping it", () => {
-    const segments = splitPullRequestBody(
-      "<table>\n<caption>Before upgrading</caption>\n<tr><td>\n\nhttps://example.com/a.mp4\n\n</td></tr>\n</table>",
-    );
-    expect(segments.some((segment) => segment.kind === "table")).toBe(false);
-    expect(segments).toContainEqual(
-      expect.objectContaining({
-        kind: "markdown",
-        text: expect.stringContaining("Before upgrading"),
-      }),
-    );
-    expect(segments).toContainEqual(
-      expect.objectContaining({
-        kind: "attachment",
-        url: "https://example.com/a.mp4",
-        media: "video",
-      }),
-    );
-  });
+  it.each(["<caption>Before upgrading</caption>", "Before upgrading", "<tr>Before upgrading</tr>"])(
+    "keeps table content outside cells: %s",
+    (extra) => {
+      const segments = splitPullRequestBody(
+        `<table>\n${extra}\n<tr><td>\n\nhttps://example.com/a.mp4\n\n</td></tr>\n</table>`,
+      );
+      expect(segments.some((segment) => segment.kind === "table")).toBe(false);
+      expect(segments).toContainEqual(
+        expect.objectContaining({
+          kind: "markdown",
+          text: expect.stringContaining("Before upgrading"),
+        }),
+      );
+      expect(segments).toContainEqual(
+        expect.objectContaining({
+          kind: "attachment",
+          url: "https://example.com/a.mp4",
+          media: "video",
+        }),
+      );
+    },
+  );
 });
 
 describe("change request reference autolinks", () => {
