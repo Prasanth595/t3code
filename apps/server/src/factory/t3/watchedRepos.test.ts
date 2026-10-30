@@ -163,6 +163,8 @@ interface Fixture {
   readonly factoryDir?: string;
   /** Read as the settings page does, writing nothing; by default the pass's read, which remembers. */
   readonly readOnly?: boolean;
+  /** Whether the machine config has a `default_project`; off by default. */
+  readonly withDefault?: boolean;
 }
 
 const pathsAt = (factoryDir: string) =>
@@ -202,7 +204,10 @@ const listed = (fixture: Fixture) => {
       yield* store.apply(projectEvent("project.deleted", id, "", (sequence += 1)));
     }
     const watched = yield* WatchedRepos.FactoryWatchedRepos;
-    return yield* fixture.readOnly === true ? watched.list : watched.listAndRemember;
+    const withDefault = fixture.withDefault ?? false;
+    return yield* fixture.readOnly === true
+      ? watched.list(withDefault)
+      : watched.listAndRemember(withDefault);
   }).pipe(Effect.provide(layer));
 };
 
@@ -462,7 +467,7 @@ describe("FactoryWatchedRepos.list", () => {
           const store = yield* ProjectStore.ProjectStoreV2;
           yield* store.apply(projectEvent("project.created", "p-unopted", root, 1));
           const watched = yield* WatchedRepos.FactoryWatchedRepos;
-          return yield* watched.list;
+          return yield* watched.list(false);
         }).pipe(Effect.provide(layer));
         assert.deepStrictEqual(list.repos, []);
         assert.deepStrictEqual(asked, []);
@@ -785,4 +790,158 @@ describe("FactoryWatchedRepos.list", () => {
       }),
     );
   });
+});
+
+/**
+ * A clone of a local "origin" whose default branch `main` holds `files` (path to text), with
+ * `origin/HEAD`. Returns the clone and a way to commit more files on origin and fetch them.
+ */
+const cloneWithFiles = (name: string, files: Readonly<Record<string, string>>) => {
+  const root = tempDir(name);
+  const source = NodePath.join(root, "source");
+  NodeFS.mkdirSync(source);
+  git(source, "init", "-q", "-b", "main");
+  const commit = (more: Readonly<Record<string, string>>) => {
+    for (const [file, text] of Object.entries(more)) {
+      NodeFS.mkdirSync(NodePath.dirname(NodePath.join(source, file)), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(source, file), text);
+      git(source, "add", file);
+    }
+    git(source, "commit", "-q", "--allow-empty", "-m", "files");
+  };
+  commit({ "README.md": "hello\n", ...files });
+  git(root, "clone", "-q", "source", "clone");
+  const clone = NodePath.join(root, "clone");
+  return {
+    clone,
+    commitOnOrigin: (more: Readonly<Record<string, string>>) => {
+      commit(more);
+      git(clone, "fetch", "-q", "origin");
+    },
+  };
+};
+
+const PACKAGE = JSON.stringify({ scripts: { test: "vitest" } });
+
+describe("FactoryWatchedRepos with the machine's default_project", () => {
+  it.effect("watches a checkout with no .dw/config.yml, with its committed manifests", () =>
+    Effect.gen(function* () {
+      const { clone } = cloneWithFiles("no-file", {
+        "package.json": PACKAGE,
+        "package-lock.json": "{}",
+      });
+      const list = yield* listed({
+        projects: [["p-no-file", clone]],
+        identities: new Map([[clone, WIDGETS]]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list, {
+        repos: [
+          {
+            repo: "acme/widgets",
+            path: clone,
+            title: "Title of p-no-file",
+            defaulted: {
+              base: "main",
+              files: { packageJson: PACKAGE, composerJson: null, lockfiles: ["package-lock.json"] },
+            },
+          },
+        ],
+        departed: [],
+        unresolved: [],
+      });
+    }),
+  );
+
+  it.effect("watches a checkout whose .dw/config.yml has no factory block", () =>
+    Effect.gen(function* () {
+      const { clone } = cloneWithFiles("no-key", {
+        ".dw/config.yml": "tracker:\n  backend: do-work-io\n",
+        "composer.json": '{"scripts":{"test":"pest"}}',
+      });
+      const list = yield* listed({
+        projects: [["p-no-key", clone]],
+        identities: new Map([[clone, WIDGETS]]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(
+        list.repos.map((entry) => entry.defaulted),
+        [
+          {
+            base: "main",
+            files: {
+              packageJson: null,
+              composerJson: '{"scripts":{"test":"pest"}}',
+              lockfiles: [],
+            },
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("leaves the same checkouts unwatched without the default", () =>
+    Effect.gen(function* () {
+      const { clone } = cloneWithFiles("off", { "package.json": PACKAGE });
+      const list = yield* listed({
+        projects: [["p-off", clone]],
+        identities: new Map([[clone, WIDGETS]]),
+      });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
+    }),
+  );
+
+  it.effect("lists a repo with its own factory block as before, with nothing defaulted", () =>
+    Effect.gen(function* () {
+      const root = checkout("own-block", FACTORY_CONFIG);
+      const list = yield* listed({
+        projects: [["p-own", root]],
+        identities: new Map([[root, WIDGETS]]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list.repos, [
+        { repo: "acme/widgets", path: root, title: "Title of p-own" },
+      ]);
+    }),
+  );
+
+  it.effect("leaves out a folder that is no git checkout, and asks nothing of it", () =>
+    Effect.gen(function* () {
+      const root = checkout("plain-folder", null);
+      const list = yield* listed({
+        projects: [["p-plain", root]],
+        identities: new Map([[root, WIDGETS]]),
+        withDefault: true,
+      });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
+    }),
+  );
+
+  it.effect(
+    "reads the manifests afresh on every call: a script added on origin shows next time",
+    () =>
+      Effect.gen(function* () {
+        const { clone, commitOnOrigin } = cloneWithFiles("changes", { "package.json": PACKAGE });
+        const fixture: Fixture = {
+          projects: [["p-changes", clone]],
+          identities: new Map([[clone, WIDGETS]]),
+          withDefault: true,
+          factoryDir: tempDir("factory-changes"),
+        };
+        const before = yield* listed(fixture);
+        const lint = JSON.stringify({ scripts: { test: "vitest", lint: "eslint" } });
+        commitOnOrigin({ "package.json": lint, "yarn.lock": "" });
+        const again = yield* listed(fixture);
+        assert.deepStrictEqual(before.repos[0]?.defaulted?.files, {
+          packageJson: PACKAGE,
+          composerJson: null,
+          lockfiles: [],
+        });
+        assert.deepStrictEqual(again.repos[0]?.defaulted?.files, {
+          packageJson: lint,
+          composerJson: null,
+          lockfiles: ["yarn.lock"],
+        });
+      }),
+  );
 });
