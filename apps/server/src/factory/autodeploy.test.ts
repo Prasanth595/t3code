@@ -8,6 +8,8 @@ import * as NodePath from "node:path";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { formatTs } from "./ledger/time.ts";
+
 const script = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts/autodeploy.sh");
 const TOKEN = "test-token";
 
@@ -823,6 +825,124 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(result.deploys).toHaveLength(1);
     expect(result.output).toMatch(/waited [01]s of deploy_wait_minutes 120/);
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^\\d+ ${sha}\\n$`));
+  });
+});
+
+describe("autodeploy.sh snoozed or asked to deploy now", () => {
+  const dataDir = () => NodePath.join(home, ".config/t3fac/factory");
+  const pendingFile = () => NodePath.join(dataDir(), "deploy-pending");
+  const snoozeFile = () => NodePath.join(dataDir(), "deploy-snoozed");
+  const nowFile = () => NodePath.join(dataDir(), "deploy-now");
+  const nowSecs = () => {
+    const stamp = NodePath.join(tmp, "now");
+    NodeFS.writeFileSync(stamp, "");
+    return Math.floor(NodeFS.statSync(stamp).mtimeMs / 1000);
+  };
+  const writePending = (secondsAgo: number, sha = "0".repeat(40)) => {
+    NodeFS.mkdirSync(dataDir(), { recursive: true });
+    const since = nowSecs() - secondsAgo;
+    NodeFS.writeFileSync(pendingFile(), `${since} ${sha}\n`);
+    return since;
+  };
+  const writeSnooze = (end: number) => {
+    NodeFS.mkdirSync(dataDir(), { recursive: true });
+    NodeFS.writeFileSync(snoozeFile(), `${end}\n`);
+  };
+  const askNow = () => {
+    NodeFS.mkdirSync(dataDir(), { recursive: true });
+    NodeFS.writeFileSync(nowFile(), `${nowSecs()}\n`);
+  };
+  const BUSY = status([{ state: "building" }]);
+
+  beforeEach(() => {
+    setupSandbox();
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("an active snooze skips a busy and an idle tick and keeps deploy-pending fresh", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    const since = writePending(3 * 3600, sha);
+    const end = nowSecs() + 1800;
+    writeSnooze(end);
+    for (const body of [BUSY, IDLE]) {
+      const old = nowSecs() - 20 * 60;
+      NodeFS.utimesSync(pendingFile(), old, old);
+      const before = nowSecs() * 1000;
+      statusBodies = [body];
+      const result = await runAutodeploy();
+      expect(result.status).toBe(0);
+      expect(result.deploys).toEqual([]);
+      expect(lines(result.output)).toEqual([
+        expect.stringContaining(`not deploying ${short}: snoozed until ${formatTs(end * 1000)}`),
+      ]);
+      expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(`${since} ${sha}\n`);
+      expect(NodeFS.statSync(pendingFile()).mtimeMs).toBeGreaterThanOrEqual(before);
+      expect(NodeFS.readFileSync(snoozeFile(), "utf8")).toBe(`${end}\n`);
+    }
+  });
+
+  it("an expired snooze starts the wait again from its end, and is deleted", async () => {
+    const sha = commitToOrigin("second");
+    writePending(110 * 60, sha);
+    const end = nowSecs() - 60;
+    writeSnooze(end);
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.deploys).toEqual([]);
+    expect(result.output).toMatch(/waited 1m of deploy_wait_minutes 120/);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(`${end} ${sha}\n`);
+    expect(NodeFS.existsSync(snoozeFile())).toBe(false);
+  });
+
+  it("deploy-now installs while the status reports a run in progress", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    writePending(60, sha);
+    askNow();
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(result.output.match(/deploying /g)).toHaveLength(1);
+    expect(result.output).toContain(
+      `deploying ${short} now, as asked from the Factory page, although a factory run is in progress`,
+    );
+  });
+
+  it("deploy-now on an idle tick says so without a reason", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    askNow();
+    const result = await runAutodeploy();
+    expect(result.deploys).toHaveLength(2);
+    expect(lines(result.output)[0]).toMatch(
+      new RegExp(`deploying ${short} now, as asked from the Factory page$`),
+    );
+  });
+
+  it("both markers are gone after a deploy", async () => {
+    commitToOrigin("second");
+    writeSnooze(nowSecs() - 60);
+    askNow();
+    const result = await runAutodeploy();
+    expect(result.deploys).toHaveLength(2);
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+    expect(NodeFS.existsSync(snoozeFile())).toBe(false);
+    expect(NodeFS.existsSync(nowFile())).toBe(false);
+  });
+
+  it("both markers are gone when nothing is pending", async () => {
+    writeSnooze(nowSecs() + 1800);
+    askNow();
+    const result = await runAutodeploy();
+    expect(result.output).toBe("");
+    expect(NodeFS.existsSync(snoozeFile())).toBe(false);
+    expect(NodeFS.existsSync(nowFile())).toBe(false);
   });
 });
 

@@ -46,10 +46,13 @@ import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
+import { DeployKick } from "./deployKick.ts";
 import * as ServerExitService from "./exit.ts";
 import {
   CLIENTS_PATH,
   CONFIG_PATH,
+  DEPLOY_NOW_PATH,
+  DEPLOY_SNOOZE_PATH,
   DISMISS_PATH,
   FactoryRoutes,
   RESTART_PATH,
@@ -205,12 +208,15 @@ interface World {
   readonly clock?: Clock.Clock;
   /** Serve the routes behind the server's browser CORS layer. */
   readonly cors?: boolean;
+  /** What kickstarting the autodeploy job answers; false (it fails) when unset. */
+  readonly kicks?: boolean;
 }
 
-/** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
+/** What the loop was asked to do: `count` wakes, `reloads` config reloads; `kicks` autodeploy kickstarts. */
 interface Calls {
   count: number;
   reloads: number;
+  kicks: number;
 }
 
 const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
@@ -244,6 +250,12 @@ const worldContext = (
         })
       : Effect.fail(new WatchedReposError({ cause: new Error(world.watchFails) }));
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
+    Context.add(DeployKick, {
+      kick: Effect.sync(() => {
+        wakes.kicks += 1;
+        return world.kicks ?? false;
+      }),
+    }),
     Context.add(
       ServerExitService.ServerExit,
       ServerExitService.make(
@@ -314,7 +326,7 @@ const serving = <A>(
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const { cookieName } = yield* SessionStore.SessionStore;
     const dir = world.dir ?? tempDir("factory");
-    const wakes = { count: 0, reloads: 0 };
+    const wakes = { count: 0, reloads: 0, kicks: 0 };
     const exits = makeExits();
     const context = worldContext(auth, world, dir, wakes, exits);
     // Issued on the live clock: the handler checks expiry on it, not on the test clock.
@@ -367,7 +379,12 @@ const serving = <A>(
 const idle: FactoryStatus = { state: "idle", reason: "no factory config" };
 const running: FactoryStatus = {
   state: "running",
-  settings: { pollSeconds: 45, maxConcurrentRuns: 2, repos: ["rawphp/softfac"] },
+  settings: {
+    pollSeconds: 45,
+    maxConcurrentRuns: 2,
+    deployWaitMinutes: 120,
+    repos: ["rawphp/softfac"],
+  },
 };
 
 const json = async (response: Response) => (await response.json()) as Record<string, unknown>;
@@ -383,6 +400,8 @@ const FACTORY_ROUTES = [
   ["GET", "/api/factory/config"],
   ["POST", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
+  ["POST", "/api/factory/deploy/snooze"],
+  ["POST", "/api/factory/deploy/now"],
   ["GET", "/api/factory/auth/clients"],
 ] as const;
 
@@ -437,6 +456,8 @@ describe("every factory route", () => {
         "/api/factory/claims/resume",
         "/api/factory/attention/dismiss",
         "/api/factory/restart",
+        "/api/factory/deploy/snooze",
+        "/api/factory/deploy/now",
       ]) {
         const response = await call("POST", path, tokens.read);
         assert.strictEqual(response.status, 403, path);
@@ -446,6 +467,9 @@ describe("every factory route", () => {
       assert.strictEqual(wakes.count, 0);
       assert.strictEqual(exits.count, 0);
       assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "claims-paused")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "deploy-snoozed")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "deploy-now")));
+      assert.strictEqual(wakes.kicks, 0);
     }),
   );
 });
@@ -627,6 +651,98 @@ describe("POST /api/factory/restart", () => {
       const late = await call("POST", RESTART_PATH, tokens.maintain);
       assert.strictEqual(late.status, 409);
       assert.strictEqual(exits.count, 1, "a pending restart never exits twice");
+    }),
+  );
+});
+
+describe("a waiting deploy: snooze and update now", () => {
+  const SHA = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
+  const snoozeFile = (dir: string) => NodePath.join(dir, "deploy-snoozed");
+  const nowFile = (dir: string) => NodePath.join(dir, "deploy-now");
+  /** `deploy-pending` as autodeploy writes it; its mtime, just now, keeps it fresh. */
+  const writePending = (dir: string) =>
+    NodeFS.writeFileSync(NodePath.join(dir, "deploy-pending"), `${Math.floor(T0 / 1000)} ${SHA}\n`);
+
+  it("is served at the paths the issue names", () => {
+    assert.strictEqual(DEPLOY_SNOOZE_PATH, "/api/factory/deploy/snooze");
+    assert.strictEqual(DEPLOY_NOW_PATH, "/api/factory/deploy/now");
+  });
+
+  it.effect("snooze writes an hour from now privately, and again replaces the time", () =>
+    Effect.gen(function* () {
+      // Before the live clock the sessions are issued on, so they have not expired by it.
+      yield* TestClock.setTime(T0);
+      return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
+        const first = await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+        assert.strictEqual(first.status, 200);
+        const until = Math.floor(T0 / 1000) + 3600;
+        assert.deepStrictEqual(await json(first), { snoozed_until: formatTs(until * 1000) });
+        assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until}\n`);
+        assert.strictEqual(NodeFS.statSync(snoozeFile(dir)).mode & 0o777, 0o600);
+
+        // A snooze about to end: a second one starts the hour again from now.
+        NodeFS.writeFileSync(snoozeFile(dir), `${until - 3500}\n`);
+        const again = await json(await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate));
+        assert.deepStrictEqual(again, { snoozed_until: formatTs(until * 1000) });
+        assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until}\n`);
+      });
+    }),
+  );
+
+  it.effect("the status shows a snoozed build", () =>
+    serving({ status: running }, async (call, { tokens, dir }) => {
+      writePending(dir);
+      const snoozed = await json(await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate));
+      const status = await json(await call("GET", STATUS_PATH, tokens.read));
+      const pending = status.deploy_pending as Record<string, unknown>;
+      assert.strictEqual(pending.commit, SHA);
+      assert.strictEqual(pending.snoozed_until, snoozed.snoozed_until);
+      assert.isNull(pending.deploy_by);
+    }),
+  );
+
+  it.effect("update now answers 409 when no build is waiting, and writes and kicks nothing", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      const response = await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
+      assert.strictEqual(response.status, 409);
+      assert.strictEqual((await json(response)).message, "no build is waiting to deploy");
+      assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+      assert.strictEqual(wakes.kicks, 0);
+    }),
+  );
+
+  it.effect(
+    "update now asks autodeploy to install, ends a snooze, and a failed kick is no error",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        writePending(dir);
+        await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+        const response = await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
+        assert.strictEqual(response.status, 202);
+        const body = await json(response);
+        assert.strictEqual(body.kicked, false);
+        assert.include(String(body.message), "next autodeploy tick");
+        assert.isTrue(NodeFS.existsSync(nowFile(dir)));
+        assert.isFalse(NodeFS.existsSync(snoozeFile(dir)));
+        assert.strictEqual(wakes.kicks, 1);
+      }),
+  );
+
+  it.effect("update now says so when the kick started the tick", () =>
+    serving({ kicks: true }, async (call, { tokens, dir }) => {
+      writePending(dir);
+      const body = await json(await call("POST", DEPLOY_NOW_PATH, tokens.maintain));
+      assert.strictEqual(body.kicked, true);
+    }),
+  );
+
+  it.effect("update now needs environment:maintain", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      writePending(dir);
+      const response = await call("POST", DEPLOY_NOW_PATH, tokens.operate);
+      assert.strictEqual(response.status, 403);
+      assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+      assert.strictEqual(wakes.kicks, 0);
     }),
   );
 });

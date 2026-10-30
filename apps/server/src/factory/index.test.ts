@@ -285,7 +285,7 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
     assert.deepStrictEqual(status, {
       state: "running",
-      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, deployWaitMinutes: 120, repos: ["a/b"] },
     });
     // The start is recorded before the first pass, and the stop as the scope closes, for
     // `interrupted` to weigh a run the restart cut off against.
@@ -330,7 +330,7 @@ it.effect("logs one warning for a repos key left in the file and still starts", 
     // It watches what T3 lists, not what the file names.
     assert.deepStrictEqual(status, {
       state: "running",
-      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, deployWaitMinutes: 120, repos: ["a/b"] },
     });
   }),
 );
@@ -2853,7 +2853,12 @@ describe("reloading the machine config", () => {
         assert.strictEqual((yield* Fiber.join(pass))?.errors, 1);
         assert.deepStrictEqual(loop.status, {
           state: "running",
-          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+          settings: {
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            deployWaitMinutes: 120,
+            repos: ["a/b"],
+          },
         });
         assert.ok(
           calls.some((call) => call.startsWith("gh ") && call.includes("a/b")),
@@ -2916,7 +2921,12 @@ describe("reloading the machine config", () => {
           // The pass under way listed a/b, and what was listed last is what the status reports.
           assert.deepStrictEqual(loop.status, {
             state: "running",
-            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+            settings: {
+              pollSeconds: 60,
+              maxConcurrentRuns: 1,
+              deployWaitMinutes: 120,
+              repos: ["a/b"],
+            },
           });
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(first);
@@ -2928,7 +2938,12 @@ describe("reloading the machine config", () => {
           yield* Fiber.join(next);
           assert.deepStrictEqual(loop.status, {
             state: "running",
-            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+            settings: {
+              pollSeconds: 60,
+              maxConcurrentRuns: 1,
+              deployWaitMinutes: 120,
+              repos: ["c/d"],
+            },
           });
           const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
           const firstNew = calls.findIndex((call) => call.includes("c/d"));
@@ -3210,7 +3225,12 @@ describe("reloading the machine config", () => {
         });
         assert.deepStrictEqual(loop.status, {
           state: "running",
-          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+          settings: {
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            deployWaitMinutes: 120,
+            repos: ["a/b"],
+          },
         });
         yield* Deferred.succeed(release, undefined);
       }),
@@ -3252,7 +3272,12 @@ describe("reloading the machine config", () => {
           // What the last listing named stands; the pass that could not list said so and worked nothing.
           assert.deepStrictEqual(loop.status, {
             state: "running",
-            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+            settings: {
+              pollSeconds: 60,
+              maxConcurrentRuns: 1,
+              deployWaitMinutes: 120,
+              repos: ["a/b"],
+            },
           });
           assert.ok(
             logs.some((line) => line.includes("cannot list the T3 projects: store down")),

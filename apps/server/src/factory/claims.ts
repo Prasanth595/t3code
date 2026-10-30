@@ -16,6 +16,25 @@ export const PAUSE_FILE = "claims-paused";
 /** The file in the data dir that autodeploy.sh writes while a build waits to be installed. */
 export const DEPLOY_PENDING_FILE = "deploy-pending";
 
+/**
+ * The file in the data dir that snoozes a waiting build: `<epoch seconds>`, the snooze's end.
+ * Until then the pass claims as normal and autodeploy.sh installs nothing.
+ */
+export const DEPLOY_SNOOZED_FILE = "deploy-snoozed";
+
+/** The file in the data dir that asks autodeploy.sh to install the waiting build on its next tick. */
+export const DEPLOY_NOW_FILE = "deploy-now";
+
+/** How long one snooze lasts. */
+export const DEPLOY_SNOOZE_MS = 60 * 60_000;
+
+/**
+ * Three ticks of the 10-minute autodeploy job: a `deploy-pending` not rewritten in that long
+ * belongs to an autodeploy that is not asking about runs, so it holds nothing back.
+ * autodeploy.sh's `pending_stale_minutes` is the same span; change both together.
+ */
+export const PENDING_STALE_MS = 30 * 60_000;
+
 /** Claims held back by a person, as the data dir has it. */
 export interface HandPause {
   /**
@@ -120,6 +139,96 @@ export const loadPendingDeploy = (dataDir: string): PendingDeploy | null => {
   };
 };
 
+/**
+ * The end of the snooze in `deploy-snoozed`, in Unix epoch milliseconds, whether or not it has
+ * passed; null when there is no regular file or its text is not whole seconds.
+ */
+export const loadDeploySnooze = (dataDir: string): number | null => {
+  const marker = readMarker(NodePath.join(dataDir, DEPLOY_SNOOZED_FILE));
+  if (marker === null) return null;
+  const text = marker.text.trim();
+  return /^[0-9]{1,12}$/.test(text) ? Number(text) * 1000 : null;
+};
+
+/** A build waiting to be installed, as the pass and the status take it. */
+export interface DeployWait {
+  readonly pending: PendingDeploy;
+  /** The end of the snooze in force, or null. */
+  readonly snoozedUntilMs: number | null;
+  /**
+   * When `deploy_wait_minutes` counts from: the first wait, or the end of a snooze that has ended
+   * when that is later. Null while a snooze is in force.
+   */
+  readonly clockFromMs: number | null;
+}
+
+/**
+ * The waiting build from the two markers as of `nowMs`: null when nothing is pending or the marker
+ * is older than {@link PENDING_STALE_MS}.
+ */
+export const deployWait = (
+  pending: PendingDeploy | null,
+  snoozeEndMs: number | null,
+  nowMs: number,
+): DeployWait | null => {
+  if (pending === null || nowMs - pending.writtenMs > PENDING_STALE_MS) return null;
+  if (snoozeEndMs !== null && snoozeEndMs > nowMs) {
+    return { pending, snoozedUntilMs: snoozeEndMs, clockFromMs: null };
+  }
+  return {
+    pending,
+    snoozedUntilMs: null,
+    clockFromMs: Math.max(pending.sinceMs, snoozeEndMs ?? pending.sinceMs),
+  };
+};
+
+/** Writes `text` to `path` whole or not at all, private to the owner, replacing what is there. */
+const writeMarker = (path: string, text: string) => {
+  const temp = `${path}.${process.pid}.tmp`;
+  const fd = NodeFS.openSync(
+    temp,
+    NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+    0o600,
+  );
+  try {
+    NodeFS.writeFileSync(fd, text);
+    NodeFS.fsyncSync(fd);
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+  try {
+    NodeFS.renameSync(temp, path);
+  } catch (error) {
+    NodeFS.rmSync(temp, { force: true });
+    throw error;
+  }
+};
+
+/** Removes a marker file; one that is not there is fine. */
+const removeMarker = (path: string) => {
+  try {
+    NodeFS.unlinkSync(path);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+};
+
+/**
+ * Snoozes the waiting build for {@link DEPLOY_SNOOZE_MS} from `nowMs`, replacing any snooze, and
+ * returns the end in milliseconds. The file holds whole seconds, so the end is too.
+ */
+export const snoozeDeploy = (dataDir: string, nowMs: number): number => {
+  const endSecs = Math.floor((nowMs + DEPLOY_SNOOZE_MS) / 1000);
+  writeMarker(NodePath.join(dataDir, DEPLOY_SNOOZED_FILE), `${endSecs}\n`);
+  return endSecs * 1000;
+};
+
+/** Asks autodeploy.sh to install the waiting build on its next tick, ending any snooze. */
+export const requestDeployNow = (dataDir: string, nowMs: number) => {
+  writeMarker(NodePath.join(dataDir, DEPLOY_NOW_FILE), `${Math.floor(nowMs / 1000)}\n`);
+  removeMarker(NodePath.join(dataDir, DEPLOY_SNOOZED_FILE));
+};
+
 /** What {@link pauseClaims} found. */
 export type Paused =
   /** Claims were not paused, and now are. */
@@ -135,25 +244,7 @@ export type Paused =
 export const pauseClaims = (dataDir: string, nowMs: number): Paused => {
   const pause = loadHandPause(dataDir);
   if (pause !== null) return { kind: "already", sinceMs: pause.sinceMs };
-  const path = NodePath.join(dataDir, PAUSE_FILE);
-  const temp = `${path}.${process.pid}.tmp`;
-  const fd = NodeFS.openSync(
-    temp,
-    NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-    0o600,
-  );
-  try {
-    NodeFS.writeFileSync(fd, `${formatTs(nowMs)}\n`);
-    NodeFS.fsyncSync(fd);
-  } finally {
-    NodeFS.closeSync(fd);
-  }
-  try {
-    NodeFS.renameSync(temp, path);
-  } catch (error) {
-    NodeFS.rmSync(temp, { force: true });
-    throw error;
-  }
+  writeMarker(NodePath.join(dataDir, PAUSE_FILE), `${formatTs(nowMs)}\n`);
   return { kind: "now" };
 };
 
