@@ -1142,7 +1142,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
                 { type: "toolCall", id: "call-1", name: "bash", arguments: {} },
               ],
             }),
-            piMessage("b2", "b1", {
+            piMessage("bn", "b1", { role: "toolResult", content: null }),
+            piMessage("b2", "bn", {
               role: "toolResult",
               content: [{ type: "text", text: "Tool output" }],
             }),

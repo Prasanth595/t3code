@@ -112,6 +112,13 @@ const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(TranscriptRecord));
 const decodeTranscriptValue = Schema.decodeUnknownOption(TranscriptRecord);
+const decodePiEntryLinks = Schema.decodeUnknownOption(
+  Schema.Struct({
+    type: TranscriptRecord.fields.type,
+    id: TranscriptRecord.fields.id,
+    parentId: TranscriptRecord.fields.parentId,
+  }),
+);
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
 
@@ -904,8 +911,12 @@ export const make = Effect.gen(function* () {
               reader.write(decoder.decode());
               recordCount += 1;
               if (recordCount > recordLimit) return false;
-              const decoded = decodeTranscriptValue(reader.finish());
-              if (Option.isSome(decoded)) {
+              const value = reader.finish();
+              const decoded = decodeTranscriptValue(value);
+              if (Option.isNone(decoded) && source === "pi") {
+                // Pi accepts messages this schema rejects, such as null content; keep their tree links.
+                records.push(...Option.toArray(decodePiEntryLinks(value)));
+              } else if (Option.isSome(decoded)) {
                 if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
                 if (source === "claudeAgent") {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
