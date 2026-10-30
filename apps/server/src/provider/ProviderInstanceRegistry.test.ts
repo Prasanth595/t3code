@@ -16,7 +16,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -25,9 +24,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -196,6 +192,61 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provide(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
+  );
+
+  it.effect.each(["replacement", "removal"] as const)(
+    "hides retired instances during reconcile (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const replacementStarted = yield* Deferred.make<void>();
+        const releaseReplacement = yield* Deferred.make<void>();
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              if (input.displayName === "Second") {
+                yield* Deferred.succeed(replacementStarted, undefined);
+                yield* Deferred.await(releaseReplacement);
+              }
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const retiredId = ProviderInstanceId.make("retired");
+        const siblingId = ProviderInstanceId.make("sibling");
+        const nextId = scenario === "replacement" ? retiredId : ProviderInstanceId.make("new");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [retiredId]: entry, [siblingId]: entry },
+        });
+        const sibling = yield* registry.getInstance(siblingId);
+        const reconcile = yield* mutator
+          .reconcile({
+            [siblingId]: entry,
+            [nextId]: {
+              ...entry,
+              displayName: "Second",
+              config: makeCodexConfig({ customModels: ["replacement-model"] }),
+            },
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(replacementStarted);
+        expect(closed).toBe(1);
+        expect(yield* registry.getInstance(retiredId)).toBeUndefined();
+        expect(yield* registry.listInstances).toEqual([sibling]);
+        yield* Deferred.succeed(releaseReplacement, undefined);
+        yield* Fiber.join(reconcile);
+        expect((yield* registry.getInstance(nextId))?.displayName).toBe("Second");
+        expect(yield* registry.getInstance(siblingId)).toBe(sibling);
+        expect(closed).toBe(1);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -647,86 +698,5 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
-  );
-});
-
-describe("ProviderInstanceRegistry — reconcile", () => {
-  const reconcileDriverKind = ProviderDriverKind.make("reconcileTest");
-  const reconcileInstanceId = ProviderInstanceId.make("reconcile_test");
-
-  const makeReconcileInstance = (displayName: string | undefined): ProviderInstance => ({
-    instanceId: reconcileInstanceId,
-    driverKind: reconcileDriverKind,
-    continuationIdentity: {
-      driverKind: reconcileDriverKind,
-      continuationKey: `reconcileTest:${displayName}`,
-    },
-    displayName,
-    enabled: true,
-    // Real effects, so the registry can wrap the snapshot when it builds an entry.
-    snapshot: {
-      getSnapshot: Effect.never,
-      refresh: Effect.never,
-      streamChanges: Stream.empty,
-    } as Partial<ProviderInstance["snapshot"]> as ProviderInstance["snapshot"],
-    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-    textGeneration: {} as ProviderInstance["textGeneration"],
-  });
-
-  // Change runtime config, not only the display name, so the edit always
-  // replaces the instance rather than counting as cosmetic.
-  const configWithName = (displayName: string): ProviderInstanceConfigMap => ({
-    [reconcileInstanceId]: {
-      driver: reconcileDriverKind,
-      displayName,
-      config: { revision: displayName },
-    },
-  });
-
-  it.effect("stops returning a replaced instance before closing its scope", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const closedNames = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
-        const replacementStarted = yield* Deferred.make<void>();
-        const releaseReplacement = yield* Deferred.make<void>();
-
-        const driver: AnyProviderDriver = {
-          driverKind: reconcileDriverKind,
-          metadata: { displayName: "Reconcile test" },
-          configSchema: Schema.Struct({ revision: Schema.String }),
-          defaultConfig: () => ({ revision: "" }),
-          create: ({ displayName }) =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Ref.update(closedNames, (names) => [...names, displayName]),
-              );
-              if (displayName === "Second") {
-                yield* Deferred.succeed(replacementStarted, undefined);
-                yield* Deferred.await(releaseReplacement);
-              }
-              return makeReconcileInstance(displayName);
-            }),
-        };
-
-        const { registry, mutator } = yield* makeProviderInstanceRegistry({
-          drivers: [driver],
-          configMap: configWithName("First"),
-        });
-        expect((yield* registry.getInstance(reconcileInstanceId))?.displayName).toBe("First");
-
-        const reconcileFiber = yield* mutator
-          .reconcile(configWithName("Second"))
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(replacementStarted);
-
-        expect(yield* Ref.get(closedNames)).toEqual(["First"]);
-        expect(yield* registry.getInstance(reconcileInstanceId)).toBeUndefined();
-        expect(yield* registry.listInstances).toEqual([]);
-
-        yield* Deferred.succeed(releaseReplacement, undefined);
-        yield* Fiber.join(reconcileFiber);
-        expect((yield* registry.getInstance(reconcileInstanceId))?.displayName).toBe("Second");
-      }),
-    ),
   );
 });

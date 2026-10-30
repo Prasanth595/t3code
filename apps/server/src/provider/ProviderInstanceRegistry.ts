@@ -179,15 +179,11 @@ const makeReconcile = <R>(input: {
           replacedIds.add(instanceId);
         }
       }
-      // Drop the ids before closing so `getInstance` never returns a closed
-      // runtime while replacements build.
       const retiredIds = [...removedIds, ...replacedIds];
       if (retiredIds.length > 0) {
-        yield* Ref.update(state.entries, (entries) => {
-          const remaining = new Map(entries);
-          for (const id of retiredIds) remaining.delete(id);
-          return remaining;
-        });
+        const remaining = new Map(previousEntries);
+        for (const id of retiredIds) remaining.delete(id);
+        yield* Ref.set(state.entries, remaining);
       }
       for (const id of retiredIds) {
         const live = previousEntries.get(id);
