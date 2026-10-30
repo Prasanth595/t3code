@@ -21,10 +21,9 @@ export function normalizeCursorModelSelection(selection: ModelSelection): ModelS
   if (preset === null) return selection;
   const explicit = selection.options ?? [];
   const options = preset[2]!.split(",").flatMap((entry) => {
-    const [key, value] = entry.split("=");
-    const id = key === "effort" ? "reasoning" : key;
+    const [id, value] = entry.split("=");
     return id !== undefined &&
-      ["reasoning", "context", "fast"].includes(id) &&
+      ["reasoning", "effort", "reasoning_effort", "context", "fast"].includes(id) &&
       value &&
       !explicit.some((option) => option.id === id)
       ? [{ id, value }]

@@ -403,6 +403,7 @@ describe("ACP Registry probe", () => {
         "composer-2",
         "gpt-5.4",
         "claude-opus-4-6",
+        "claude-sonnet-4-6",
       ]);
       expect(yield* probedModels("mock-agent")).toContain(
         "gpt-5.3-codex[reasoning=medium,fast=false]",
