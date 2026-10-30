@@ -149,6 +149,25 @@ describe("OpenCode2Server error details", () => {
 });
 
 describe("OpenCode2Server passwords", () => {
+  it("passes the NVIDIA key to the local server without replacing other provider keys", () => {
+    const environment = OpenCode2Server.serverEnvironment(
+      {
+        PATH: "/bin",
+        NVIDIA_API_KEY: "nvapi-test",
+        OPENAI_API_KEY: "other-test-key",
+        OPENCODE_PASSWORD: "ambient",
+      },
+      Redacted.make("t3-generated"),
+    );
+
+    assert.deepStrictEqual(environment, {
+      PATH: "/bin",
+      NVIDIA_API_KEY: "nvapi-test",
+      OPENAI_API_KEY: "other-test-key",
+      OPENCODE_PASSWORD: "t3-generated",
+    });
+  });
+
   it("hands the spawned server only the T3 password", () => {
     const password = Redacted.make("t3-generated");
     const environment = OpenCode2Server.serverEnvironment(

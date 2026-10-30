@@ -22,6 +22,25 @@ started on 1.x continue on 2.x.
 
 Plan mode uses OpenCode's `plan` agent.
 
+## NVIDIA Build models
+
+OpenCode can use models hosted by [NVIDIA Build](https://build.nvidia.com/). Install
+OpenCode on the environment's machine and enable it in **Settings → Providers**.
+Create an NVIDIA API key, then enter it in that OpenCode instance's **Setup → NVIDIA
+Build API key** field. T3 Code stores the value as a sensitive `NVIDIA_API_KEY`
+environment variable and passes it to the local OpenCode process. This does not
+replace other OpenCode model providers. If you previously stored `NVIDIA_API_KEY`
+as a non-sensitive environment variable, clear it and enter it again in the dedicated
+field; existing non-sensitive entries are not migrated automatically.
+
+Refresh provider status, then choose an NVIDIA model in the OpenCode model picker.
+The available models and their tool support depend on OpenCode's catalog and NVIDIA.
+You can use those models from mobile after configuring the provider on web or desktop.
+
+For an external OpenCode server, configure the NVIDIA key on that server instead;
+the local instance's environment variables are not sent to it. Check NVIDIA's
+current trial terms, limits, and data policies before sending sensitive code.
+
 ## Local or external server
 
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in

@@ -8,6 +8,16 @@ export const openCodeClient = defineProviderClient({
   label: "OpenCode",
   acpRegistryAgentIds: ["opencode", "opencode-v2"],
   settingsSchema: OpenCodeSettings,
+  environmentFields: [
+    {
+      name: "NVIDIA_API_KEY",
+      label: "NVIDIA Build API key",
+      description:
+        "Optional. Enables NVIDIA models in a locally started OpenCode server. For an external server, configure the key on its host.",
+      placeholder: "Paste NVIDIA API key",
+      sensitive: true,
+    },
+  ],
   icon: {
     viewBox: "0 0 32 40",
     fill: { light: "#211E1E", dark: "#F1ECEC" },

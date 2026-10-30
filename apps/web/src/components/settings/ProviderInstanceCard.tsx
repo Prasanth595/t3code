@@ -198,11 +198,11 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
   );
 }
 
-function readProviderEnvironmentVariable(
+function readProviderEnvironmentVariables(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
   name: string,
-): ProviderInstanceEnvironmentVariable | undefined {
-  return environment?.find((variable) => variable.name === name);
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  return environment?.filter((variable) => variable.name === name) ?? [];
 }
 
 function providerEnvironmentWithoutNames(
@@ -226,6 +226,7 @@ export function nextProviderEnvironmentWithFieldValue(
       next.push(variable);
       continue;
     }
+    if (found) continue;
     found = true;
     if (trimmed.length > 0) {
       next.push({
@@ -247,20 +248,45 @@ export function nextProviderEnvironmentWithFieldValue(
   return next;
 }
 
+export function providerEnvironmentFieldDescription(
+  field: ProviderEnvironmentField,
+  variables: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+): string | undefined {
+  const hasNonSensitiveValue =
+    field.sensitive !== false && variables.some((variable) => variable.sensitive === false);
+  if (variables.length > 1) {
+    const warning = hasNonSensitiveValue
+      ? "Multiple entries are saved for this variable, including a non-sensitive value. Clear and re-enter it to store a single sensitive value."
+      : "Multiple entries are saved for this variable. Clear and re-enter it to keep one value.";
+    return [field.description, warning].filter(Boolean).join(" ");
+  }
+  if (hasNonSensitiveValue) {
+    return [
+      field.description,
+      "Previously saved as non-sensitive. Clear and re-enter it to store it as sensitive.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  return field.description;
+}
+
 function ProviderEnvironmentFieldRow(props: {
   readonly field: ProviderEnvironmentField;
-  readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly variables: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly idPrefix: string;
   readonly onCommit: (field: ProviderEnvironmentField, value: string) => void;
   readonly onRemove: (field: ProviderEnvironmentField) => void;
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
-  const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+  // The last entry is the effective value when the process environment is built.
+  const variable = props.variables.at(-1);
+  const value = variable?.valueRedacted ? "" : (variable?.value ?? "");
 
   return (
     <SettingsRow
       title={<label htmlFor={inputId}>{props.field.label}</label>}
-      description={props.field.description}
+      description={providerEnvironmentFieldDescription(props.field, props.variables)}
       control={
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
           {props.field.sensitive === false ? (
@@ -282,17 +308,21 @@ function ProviderEnvironmentFieldRow(props: {
               value={value}
               onCommit={(next) => props.onCommit(props.field, next)}
               placeholder={props.field.placeholder}
-              configured={props.variable?.valueRedacted === true}
+              configured={variable?.valueRedacted === true}
               spellCheck={false}
             />
           )}
-          {props.variable ? (
+          {variable ? (
             <Button
               type="button"
               size="icon-sm"
               variant="ghost-destructive"
               onClick={() => props.onRemove(props.field)}
-              aria-label={`Clear ${props.field.label}`}
+              aria-label={
+                props.variables.length > 1
+                  ? `Clear all ${props.field.label} entries`
+                  : `Clear ${props.field.label}`
+              }
             >
               <XIcon className="size-3.5" />
             </Button>
@@ -782,7 +812,7 @@ export function ProviderInstanceCard({
     updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
   };
   const removeEnvironmentField = (field: ProviderEnvironmentField) => {
-    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, ""));
   };
 
   const titleIconNode = (
@@ -1179,7 +1209,7 @@ export function ProviderInstanceCard({
                 <ProviderEnvironmentFieldRow
                   key={field.name}
                   field={field}
-                  variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                  variables={readProviderEnvironmentVariables(instance.environment, field.name)}
                   idPrefix={`provider-instance-${instanceId}`}
                   onCommit={updateEnvironmentField}
                   onRemove={removeEnvironmentField}

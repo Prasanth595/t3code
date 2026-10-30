@@ -4,6 +4,15 @@ import { describe, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
+describe("parseOpenCodeModelSlug", () => {
+  it("preserves NVIDIA's nested model ID when selecting a model", () => {
+    NodeAssert.deepEqual(
+      OpenCodeRuntime.parseOpenCodeModelSlug("nvidia/nvidia/nemotron-3-super-120b-a12b"),
+      { providerID: "nvidia", modelID: "nvidia/nemotron-3-super-120b-a12b" },
+    );
+  });
+});
+
 describe("toOpenCodeFileParts", () => {
   const attachment = (mimeType: string, sizeBytes = 12) => ({
     type: "file" as const,

@@ -711,6 +711,65 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     ),
   );
 
+  it.effect("lists NVIDIA Build models alongside other providers in OpenCode 1 and 2", () =>
+    Effect.gen(function* () {
+      const modelID = "nvidia/nemotron-3-super-120b-a12b";
+      const slug = `nvidia/${modelID}`;
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["nvidia", "openai"],
+          all: [
+            {
+              id: "nvidia",
+              name: "Nvidia",
+              models: { [modelID]: { id: modelID, name: "Nemotron 3 Super", variants: {} } },
+            },
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", variants: {} } },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+
+      const v1 = yield* checkProvider(makeOpenCodeSettings());
+      NodeAssert.equal(v1.status, "ready");
+      NodeAssert.equal(v1.models.find((model) => model.slug === slug)?.subProvider, "Nvidia");
+      NodeAssert.ok(v1.models.some((model) => model.slug === "openai/gpt-5.4"));
+
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const v2 = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            providerID: "nvidia",
+            providerName: "Nvidia",
+            id: modelID,
+            name: "Nemotron 3 Super",
+            variants: [],
+          },
+          {
+            providerID: "openai",
+            providerName: "OpenAI",
+            id: "gpt-5.4",
+            name: "GPT-5.4",
+            variants: [],
+          },
+        ]),
+      );
+      NodeAssert.equal(v2.status, "ready");
+      NodeAssert.equal(v2.models.find((model) => model.slug === slug)?.subProvider, "Nvidia");
+      NodeAssert.ok(v2.models.some((model) => model.slug === "openai/gpt-5.4"));
+    }),
+  );
+
   it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";
