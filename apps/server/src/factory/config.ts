@@ -93,7 +93,12 @@ export const PROJECT_CONFIG_PATH = ".dw/config.yml";
 
 /** What the last pass found when it read a repo's project config. */
 export type RepoConfigReading =
-  | { readonly kind: "ok"; readonly project: ProjectConfig }
+  | {
+      readonly kind: "ok";
+      readonly project: ProjectConfig;
+      /** The project config is the machine's `default_project`, resolved for the repo. */
+      readonly onDefault?: true;
+    }
   | { readonly kind: "errors"; readonly errors: ReadonlyArray<ConfigError> };
 
 export interface WatchedRepo {

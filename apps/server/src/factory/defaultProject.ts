@@ -26,12 +26,15 @@ export interface RepoFiles {
   readonly lockfiles: ReadonlyArray<string>;
 }
 
-/**
- * What the reader found of a repo it watches on the default: the files on `origin/HEAD`, or null
- * for a checkout with no `origin/HEAD` to read them from.
- */
+/** What a checkout's `origin/HEAD` names, and the files committed at its root. */
+export interface OriginHead {
+  readonly branch: string;
+  readonly files: RepoFiles;
+}
+
+/** What the reader found of a repo it watches on the default: null for a checkout with no `origin/HEAD`. */
 export interface Defaulted {
-  readonly files: RepoFiles | null;
+  readonly head: OriginHead | null;
 }
 
 /** The package managers by lockfile, in the order one is chosen when a repo has several. */
@@ -97,20 +100,26 @@ const failure = (message: string): Result.Result<never, ReadonlyArray<ConfigErro
   Result.fail([{ file: PROJECT_CONFIG_PATH, message }]);
 
 /**
- * The project config of a repo on the default, whose default branch is `base`; or the one error
- * that its files could not be read or that no gate could be inferred from them.
+ * The project config of a repo on the default, whose default branch on GitHub is `base`; or the
+ * one error that the checkout's `origin/HEAD` is missing or names another branch, or that no
+ * gate could be inferred from its files.
  */
 export const resolveDefault = (
   defaultProject: DefaultProject,
   base: string,
-  files: RepoFiles | null,
+  head: OriginHead | null,
 ): Result.Result<ProjectConfig, ReadonlyArray<ConfigError>> => {
-  if (files === null) {
+  if (head === null) {
     return failure(
       "the checkout has no origin/HEAD, so its files cannot be read: run `git remote set-head origin --auto` in it",
     );
   }
-  const { provision, gate } = inferCommands(files);
+  if (head.branch !== base) {
+    return failure(
+      `the checkout's origin/HEAD is ${head.branch}, but the default branch on GitHub is ${base}: run \`git remote set-head origin --auto\` in it`,
+    );
+  }
+  const { provision, gate } = inferCommands(head.files);
   if (gate.length === 0) {
     return failure(
       `no gate could be inferred from package.json or composer.json on ${base}: a factory block in .dw/config.yml is needed`,

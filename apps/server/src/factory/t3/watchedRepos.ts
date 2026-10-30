@@ -170,14 +170,16 @@ export const make = Effect.gen(function* () {
     return shown === null ? ABSENT : { kind: "text", text: shown };
   });
 
-  // The manifests committed at the root of origin's default branch, for a project on the
+  // The branch origin's HEAD names and the manifests committed at its root, for a project on the
   // default. A clone with no `origin/HEAD` has none to read, and its reading says so.
   const defaultedFiles = Effect.fn("WatchedRepos.defaultedFiles")(function* (
     root: string,
   ): Effect.fn.Return<Defaulted | "unresolved"> {
+    const head = yield* gitOutput(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+    if (head === "unresolved") return head;
+    if (head === null) return { head: null };
     const tree = yield* gitOutput(root, ["ls-tree", "--name-only", "origin/HEAD"]);
-    if (tree === "unresolved") return tree;
-    if (tree === null) return { files: null };
+    if (tree === null || tree === "unresolved") return "unresolved";
     const names = new Set(tree.split("\n"));
     const shown = (name: string) =>
       names.has(name) ? gitOutput(root, ["show", `origin/HEAD:${name}`]) : Effect.succeed(null);
@@ -193,7 +195,14 @@ export const make = Effect.gen(function* () {
       return "unresolved";
     }
     return {
-      files: { packageJson, composerJson, lockfiles: LOCKFILES.filter((name) => names.has(name)) },
+      head: {
+        branch: head.trim().replace(/^origin\//, ""),
+        files: {
+          packageJson,
+          composerJson,
+          lockfiles: LOCKFILES.filter((name) => names.has(name)),
+        },
+      },
     };
   });
 

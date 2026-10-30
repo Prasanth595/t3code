@@ -227,7 +227,7 @@ const fromCheckout = Effect.fn("Factory.fromCheckout")(function* (
  * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
  * Either way the config must name the default branch as its `base`. A repo the reader listed on
  * the machine's default (`defaulted`) runs on it unless GitHub's copy has a `factory` block, which
- * wins over a checkout that showed none.
+ * wins over a checkout that showed none; `onDefault` says which it ran on.
  */
 const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
   github: ReturnType<typeof makeGitHub>,
@@ -257,8 +257,8 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
             message: "the machine config has no default_project, and the repo has no factory block",
           },
         ])
-      : resolveDefault(defaultProject, found.branch, defaulted.files);
-    if (Result.isSuccess(resolved)) return resolved.success;
+      : resolveDefault(defaultProject, found.branch, defaulted.head);
+    if (Result.isSuccess(resolved)) return { project: resolved.success, onDefault: true };
     return yield* Effect.fail<ProjectReadError>({
       kind: "config",
       message: resolved.failure.map(formatConfigError).join("; "),
@@ -289,7 +289,7 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
       errors: [{ file, field: "factory.base", message }],
     });
   }
-  return parsed.success;
+  return { project: parsed.success, onDefault: false };
 });
 
 /** What the live world runs its gates with, and what it does when one ends. */
@@ -636,9 +636,12 @@ export const liveWorld = (
           machine.defaultProject,
         ).pipe(Effect.provide(files)),
       ).pipe(
-        Effect.tap((project) =>
-          Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
+        Effect.tap(({ project, onDefault }) =>
+          Effect.sync(() =>
+            onProject?.(watched.repo, { kind: "ok", project, ...(onDefault && { onDefault }) }),
+          ),
         ),
+        Effect.map(({ project }) => project),
         Effect.tapError((error) =>
           // A transient failure with a last good copy says nothing new about the config: the
           // pass runs on that copy and the last reading stands. Without a copy the repo is
