@@ -66,7 +66,7 @@ const fixture = (source = `process.stdout.write(${JSON.stringify(JSON.stringify(
         ...process.env,
         MUSE_NO_AUTO_UPDATE: "1",
         T3_USAGE_TEST: "configured",
-        T3_USAGE_CWD: directory,
+        T3_USAGE_CWD: yield* fs.realPath(directory),
       },
       cwd: directory,
       provider,
