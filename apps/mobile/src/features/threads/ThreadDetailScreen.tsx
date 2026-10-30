@@ -905,6 +905,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         USAGE_LIMITS_PANEL_GAP * 2,
     ),
   );
+  // A long command scrolls inside the card, so its buttons stay above the composer.
+  const approvalMaxHeight = Math.round(screenAreaHeight * 0.4);
   // A toggle animates the card; a new request starts expanded at once.
   const userInputMotion = !userInputToggled
     ? "fresh"
@@ -1505,8 +1507,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     >
                       {props.activePendingApproval ? (
                         <PendingApprovalCard
+                          key={props.activePendingApproval.requestId}
                           canOperateThread={props.canOperateThread}
                           approval={props.activePendingApproval}
+                          maxHeight={approvalMaxHeight}
                           respondingApprovalId={props.respondingApprovalId}
                           onRespond={props.onRespondToApproval}
                         />
