@@ -911,6 +911,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     Math.round(screenAreaHeight * 0.4),
     screenAreaHeight -
       navigationHeaderHeight -
+      controlInsets.bottom -
       liveKeyboardHeight -
       COMPOSER_COLLAPSED_CHROME -
       composerBottomInset -
