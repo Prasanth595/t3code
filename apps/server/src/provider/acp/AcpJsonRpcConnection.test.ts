@@ -17,7 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -294,6 +294,45 @@ describe("AcpSessionRuntime", () => {
         _tag: "AcpProcessGroupTerminationError",
         cause,
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([0, 1])("reuses Windows finalizer cleanup result %s before replacement", (code) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let kills = 0;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+          ...spawner,
+          spawn: (command) => {
+            if (!ChildProcess.isStandardCommand(command) || command.command !== "taskkill") {
+              return spawner.spawn(command);
+            }
+            return spawner.spawn(
+              ChildProcess.make(process.execPath, [
+                "-e",
+                `process.exit(${kills++ === 0 ? code : 128})`,
+              ]),
+            );
+          },
+        }),
+        Effect.scoped,
+      );
+      expect(kills).toBe(1);
+      if (runtime.terminateProcessGroup === undefined) return expect.fail("Missing ACP teardown");
+      if (code === 0) yield* runtime.terminateProcessGroup;
+      else {
+        expect(yield* Effect.flip(runtime.terminateProcessGroup)).toMatchObject({
+          _tag: "AcpProcessGroupTerminationError",
+          exitCode: code,
+        });
+      }
+      expect(kills).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

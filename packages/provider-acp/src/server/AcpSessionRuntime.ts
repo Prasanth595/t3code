@@ -1561,12 +1561,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         return cause?.code === "ESRCH" ? Effect.succeed(false) : Effect.fail(error);
       }),
     );
+  const terminateWindowsProcessTreeWithTaskkillOnce = yield* Effect.cached(
+    terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.uninterruptible,
+    ),
+  );
   const terminateWindowsProcessTree =
-    options.windowsProcessTreeTerminator ??
-    ((pid: number) =>
-      terminateWindowsProcessTreeWithTaskkill(pid).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ));
+    options.windowsProcessTreeTerminator ?? (() => terminateWindowsProcessTreeWithTaskkillOnce);
   const terminatePosixProcessTree = Effect.fn("AcpSessionRuntime.terminatePosixProcessTree")(
     function* (grace: Duration.Input, platformOverride?: NodeJS.Platform) {
       const platform = platformOverride ?? options.processGroupPlatform;
@@ -1639,9 +1641,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       scopeUnit !== undefined
         ? terminateScopedProcess
         : hostPlatform === "win32"
-          ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            )
+          ? terminateWindowsProcessTreeWithTaskkillOnce
           : linuxCgroupLease !== undefined
             ? terminateLinuxCgroupLease(linuxCgroupLease)
             : options.ownDescendantProcessGroups === true
