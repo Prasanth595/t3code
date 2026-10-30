@@ -3143,7 +3143,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.messages
           .filter(
             (message) =>
-              message.notification !== undefined || message.delegatedCompletion !== undefined,
+              message.createdBy !== "user" ||
+              message.scheduledTaskId !== undefined ||
+              message.notification !== undefined ||
+              message.delegatedCompletion !== undefined,
           )
           .map((message) => message.id),
       );
