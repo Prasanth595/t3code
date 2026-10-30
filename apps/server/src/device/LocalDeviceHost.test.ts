@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -310,6 +312,74 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  it.effect.each([
+    { name: "ANDROID_HOME", variable: "ANDROID_HOME" },
+    { name: "ANDROID_SDK_ROOT", variable: "ANDROID_SDK_ROOT" },
+    { name: "the standard SDK location", variable: undefined },
+  ])("accepts a system adb with $name", ({ variable }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-system-adb-" });
+      const root = variable ? `${directory}/sdk` : `${directory}/Android/Sdk`;
+      for (const file of [
+        `${directory}/bin/adb`,
+        `${root}/emulator/emulator`,
+        `${root}/cmdline-tools/latest/bin/avdmanager`,
+      ]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(file, 0o755);
+      }
+      const environment = {
+        HOME: directory,
+        PATH: `${directory}/missing:${directory}/bin`,
+        ...(variable ? { [variable]: root } : {}),
+      };
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, environment),
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
+      expect(sdk).toMatchObject({ root, adb: true, adbPath: `${directory}/bin/adb` });
+      expect(
+        yield* LocalDeviceHost.__testing
+          .platformReason("android")
+          .pipe(
+            Effect.provideService(HostProcess.Environment, environment),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          ),
+      ).toBeNull();
+      yield* fs.remove(`${root}/emulator/emulator`);
+      expect(
+        yield* LocalDeviceHost.__testing
+          .platformReason("android")
+          .pipe(
+            Effect.provideService(HostProcess.Environment, { ...environment, ANDROID_HOME: root }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          ),
+      ).toContain("Android Emulator is missing");
+      yield* fs.writeFileString(`${root}/emulator/emulator`, "emulator fixture");
+      yield* fs.chmod(`${directory}/bin/adb`, 0o644);
+      expect(
+        yield* LocalDeviceHost.__testing.androidSdk.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            ...environment,
+            PATH: `${directory}/bin`,
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toMatchObject({ root, adb: false });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not mistake a system adb for a complete SDK", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* diagnose(["/usr/bin/adb"], { HOME: "/test/home", PATH: "/usr/bin" }, "linux"),
+      ).toContain("Android SDK was not found");
+    }),
+  );
+
   it.effect("discovers the standard macOS SDK without ANDROID_HOME", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";
@@ -325,6 +395,70 @@ describe("Android SDK availability", () => {
     }),
   );
 });
+
+it.effect("makes a system adb available to SDK-only hub resolvers without changing the SDK", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-hub-system-adb-" });
+    const root = path.join(directory, "sdk");
+    const bin = path.join(directory, "bin");
+    yield* fs.makeDirectory(path.join(root, "platform-tools"), { recursive: true });
+    yield* fs.makeDirectory(path.join(root, "emulator"));
+    yield* fs.makeDirectory(path.join(root, "cmdline-tools", "latest", "bin"), { recursive: true });
+    yield* fs.makeDirectory(bin);
+    yield* fs.writeFileString(path.join(root, "emulator", "emulator"), "emulator fixture");
+    yield* fs.writeFileString(
+      path.join(root, "cmdline-tools", "latest", "bin", "avdmanager"),
+      "tools fixture",
+    );
+    yield* fs.writeFileString(path.join(root, "source.properties"), "SDK fixture");
+    const adbPath = path.join(bin, "adb");
+    yield* fs.symlink(process.execPath, adbPath);
+    const environment = { ANDROID_HOME: root, ANDROID_SDK_ROOT: root, PATH: bin };
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const env = yield* LocalDeviceHost.__testing
+      .hubSdkEnvironment(environment, { root, adbPath }, directory)
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    expect(env.ANDROID_HOME).not.toBe(root);
+    expect(env.ANDROID_SDK_ROOT).toBe(env.ANDROID_HOME);
+    expect(env.PATH).toBe(environment.PATH);
+    expect(environment).toEqual({ ANDROID_HOME: root, ANDROID_SDK_ROOT: root, PATH: bin });
+    const hubRoot = env.ANDROID_HOME!;
+    expect(yield* fs.readFileString(path.join(hubRoot, "emulator", "emulator"))).toBe(
+      "emulator fixture",
+    );
+    expect(
+      yield* fs.readFileString(path.join(hubRoot, "cmdline-tools", "latest", "bin", "avdmanager")),
+    ).toBe("tools fixture");
+    expect(yield* fs.readFileString(path.join(hubRoot, "source.properties"))).toBe("SDK fixture");
+    const result = yield* runner.run({
+      command: path.join(hubRoot, "platform-tools", "adb"),
+      args: ["-e", "process.stdout.write('system-adb')"],
+      env,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("system-adb");
+    yield* Scope.close(scope, Exit.void);
+    expect(yield* fs.exists(hubRoot)).toBe(false);
+    expect(yield* fs.readDirectory(path.join(root, "platform-tools"))).toEqual([]);
+    expect(yield* fs.exists(adbPath)).toBe(true);
+    expect(yield* fs.exists(path.join(root, "emulator", "emulator"))).toBe(true);
+    expect(
+      yield* LocalDeviceHost.__testing.hubSdkEnvironment(
+        environment,
+        { root, adbPath: path.join(root, "platform-tools", "adb") },
+        "/must-not-be-used",
+      ),
+    ).toBe(environment);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer)),
+    Effect.provideService(HostProcess.Platform, "linux"),
+  ),
+);
 
 it.effect(
   "recovers an owned Linux runtime directory without overriding explicit environments",
