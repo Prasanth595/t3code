@@ -100,6 +100,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -2913,11 +2914,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const activeElement = document.activeElement;
     setProjectScopeMenuOpen(true, activeElement instanceof HTMLElement ? activeElement : null);
   });
+  const readRoutePanelsOpen = useStableCallback(() => ({
+    terminalOpen: routeTerminalOpen,
+    previewOpen:
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+      "preview",
+  }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase project filter shortcut while the sidebar is mounted
   useEffect(
     () =>
-      registerCommands({ "sidebar.filterByProject": onFilterByProjectShortcut }, { capture: true }),
-    [onFilterByProjectShortcut],
+      registerCommands(
+        { "sidebar.filterByProject": onFilterByProjectShortcut },
+        { capture: true, context: readRoutePanelsOpen },
+      ),
+    [onFilterByProjectShortcut, readRoutePanelsOpen],
   );
 
   const newThreadShortcutLabel =
