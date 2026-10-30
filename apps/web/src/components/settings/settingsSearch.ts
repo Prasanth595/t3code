@@ -600,12 +600,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "voice-input-language",
     title: "Voice input language",
     to: "/settings/chat",
+    targetId: "voice-input",
     searchTerms: ["dictation speech transcription language detect automatic"],
   },
   {
     id: "voice-input-microphone",
     title: "Voice input microphone",
     to: "/settings/chat",
+    targetId: "voice-input",
     searchTerms: ["dictation mic input device headset audio"],
   },
   {
