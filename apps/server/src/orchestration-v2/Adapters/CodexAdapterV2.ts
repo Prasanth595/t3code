@@ -1131,6 +1131,7 @@ interface ActiveCodexTurnContext {
   readonly runningCompactionItemIds: Set<string>;
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
+  readonly asyncQuestions: Map<string, OrchestrationV2RuntimeRequest>;
   readonly itemPositions: Map<
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
@@ -1961,6 +1962,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt: input.startedAt,
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
+            asyncQuestions: new Map(),
             runningCompactionItemIds: new Set(),
           };
           const nativeThreadId = input.turnInput.providerThread.nativeThreadRef?.nativeId;
@@ -2560,6 +2562,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               startedAt: turn.startedAt,
               itemPositions: new Map(),
               fileChangeKindsByItem: new Map(),
+              asyncQuestions: new Map(),
               runningCompactionItemIds: new Set(),
             };
             beginTurnTokenUsage(activeContext);
@@ -4649,6 +4652,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
+        // Codex agents wait on an async question's answer with the interruptible clock.sleep tool.
+        const markAsyncQuestionsAwaited = Effect.fn("CodexAdapterV2.markAsyncQuestionsAwaited")(
+          function* (context: ActiveCodexTurnContext, agentWaiting: boolean) {
+            for (const [id, request] of context.asyncQuestions) {
+              if (
+                request.responseCapability.type === "message" &&
+                (request.responseCapability.agentWaiting === true) === agentWaiting
+              )
+                continue;
+              const runtimeRequest: OrchestrationV2RuntimeRequest = {
+                ...request,
+                responseCapability: agentWaiting
+                  ? { type: "message", agentWaiting }
+                  : { type: "message" },
+              };
+              context.asyncQuestions.set(id, runtimeRequest);
+              yield* emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CODEX_PROVIDER,
+                threadId: context.projectionThreadId,
+                runtimeRequest,
+              });
+            }
+          },
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4685,6 +4714,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             yield* completeProviderRetry(context, yield* DateTime.now);
+            if (payload.item.type === "sleep") {
+              yield* markAsyncQuestionsAwaited(context, true);
+              return;
+            }
             if (payload.item.type !== "reasoning") {
               yield* resolveItemPosition(
                 context,
@@ -4809,6 +4842,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const { context, settled } = resolved;
+
+            if (payload.item.type === "sleep") {
+              yield* markAsyncQuestionsAwaited(context, false);
+              return;
+            }
 
             if (payload.item.type === "reasoning") {
               yield* completeReasoning(payload.turnId, payload.item);
@@ -5025,6 +5063,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: artifacts.node.threadId,
                 runtimeRequest: artifacts.request,
               });
+              context.asyncQuestions.set(String(artifacts.request.id), artifacts.request);
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const ids = current.get(payload.turnId);
                 if (!ids?.has(payload.item.id)) return current;
@@ -5863,6 +5902,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return false;
               }
               input.context.fileChangeKindsByItem.clear();
+              // Stop or failure can end the turn before the sleep item completes.
+              yield* markAsyncQuestionsAwaited(input.context, false);
+              input.context.asyncQuestions.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
                 const retry = current.get(input.context.providerTurnId);
                 if (retry === undefined) {
@@ -6344,6 +6386,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt: now,
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
+            asyncQuestions: new Map(),
             runningCompactionItemIds: new Set(),
           };
           const providerTurn = {
