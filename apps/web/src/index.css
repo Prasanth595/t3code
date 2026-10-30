@@ -2208,8 +2208,6 @@ code {
   font-size: 0.875rem;
 }
 
-/* Top-aligned so wrapped rows share a first line, and the outer columns sit
-   flush with the surrounding prose. */
 /* Message bodies carry the chat font size, so their fixed rem sizes become ratios of the
    0.875rem body; at the default size these resolve to the same pixels as the rules above. */
 .chat-markdown.chat-message h1 {
@@ -2232,6 +2230,12 @@ code {
   font-size: calc(0.75em / 0.875);
 }
 
+.chat-markdown.chat-message :is(a[data-footnote-ref], a[data-footnote-backref]) {
+  font-size: calc(0.6875 * var(--font-size-chat, 0.875rem) / 0.875);
+}
+
+/* Top-aligned so wrapped rows share a first line, and the outer columns sit
+   flush with the surrounding prose. */
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
