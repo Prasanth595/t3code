@@ -138,7 +138,22 @@ it("restores page, within-page offset and zoom after a remount", async () => {
     await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
     await vi.waitFor(() => expect(screen.container.textContent).toContain(zoom));
 
-    await screen.rerender(viewer(3, "restore:b"));
+    await screen.getByRole("button", { name: "Fit width", exact: true }).click();
+    await vi.waitFor(() => {
+      const canvas = region().querySelector("canvas")!;
+      expect(canvas.getBoundingClientRect().width).toBe(region().clientWidth - 32);
+    });
+    const fitTop = region().scrollTop;
+    await screen.rerender(viewer(3, "restore:a"));
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    await vi.waitFor(() => {
+      expect(region().querySelector("canvas")!.getBoundingClientRect().width).toBe(
+        region().clientWidth - 32,
+      );
+      expect(region().scrollTop).toBeCloseTo(fitTop, 0);
+    });
+
+    await screen.rerender(viewer(4, "restore:b"));
     await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
     await expect.element(screen.getByText("Fit width")).toBeVisible();
   } finally {
