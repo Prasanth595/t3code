@@ -52,7 +52,15 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (inventory: unknown) =>
+/** An `authCheck` of undefined fails the test if status runs `pi auth check`. */
+const piDiscoverySpawner = (
+  inventory: unknown,
+  options: {
+    readonly version?: string;
+    readonly state?: unknown;
+    readonly authCheck?: string | undefined;
+  } = {},
+) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     let stdinBuffer = "";
@@ -71,7 +79,9 @@ const piDiscoverySpawner = (inventory: unknown) =>
               ? inventory
               : request.type === "get_commands"
                 ? { commands: [] }
-                : {};
+                : request.type === "get_state"
+                  ? (options.state ?? {})
+                  : {};
           yield* Queue.offer(
             stdout,
             encoder.encode(
@@ -83,16 +93,22 @@ const piDiscoverySpawner = (inventory: unknown) =>
     );
     return ChildProcessSpawner.make((command) => {
       const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      if (args.includes("--version")) {
+        return Effect.succeed(processHandle({ stdout: `pi ${options.version ?? "0.84.3"}\n` }));
+      }
+      if (args[0] === "auth") {
+        return options.authCheck === undefined
+          ? Effect.die("Unexpected pi auth check")
+          : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
+      }
       return Effect.succeed(
-        args.includes("--version")
-          ? processHandle({ stdout: "pi 0.84.3\n" })
-          : ChildProcessSpawner.makeHandle({
-              ...processHandle({}),
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              stdin,
-              stdout: Stream.fromQueue(stdout),
-            }),
+        ChildProcessSpawner.makeHandle({
+          ...processHandle({}),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          stdin,
+          stdout: Stream.fromQueue(stdout),
+        }),
       );
     });
   });
@@ -143,6 +159,49 @@ describe("PiProvider", () => {
         snapshot.models.map((model) => model.slug),
         ["default"],
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      label: "a pinned model without credentials",
+      version: "1.4.0",
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: '{"status":"not_ready","provider":"openai","reason":"credentials_not_configured"}',
+      message: "Pi default (openai/gpt-5) has no credentials configured for openai.",
+    },
+    {
+      label: "a pinned model on Pi without auth check",
+      version: MINIMUM_PI_VERSION,
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: undefined,
+      message: "Pi default (openai/gpt-5) is not among Pi's available models.",
+    },
+    {
+      label: "an extension model Pi lists as available",
+      version: "1.4.0",
+      activeModel: { provider: "router", id: "auto" },
+      authCheck: undefined,
+      message: undefined,
+    },
+  ])("diagnoses Pi's active model readiness for $label", (row) =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "router", id: "auto" },
+          ],
+        },
+        { version: row.version, state: { model: row.activeModel }, authCheck: row.authCheck },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, row.message === undefined ? "ready" : "warning");
+      assert.equal(snapshot.auth.status, "authenticated");
+      if (row.message === undefined) assert.isUndefined(snapshot.message);
+      else assert.include(snapshot.message ?? "", row.message);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

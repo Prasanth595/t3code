@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -62,6 +63,12 @@ const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
  * Version 0.80.5 was the first published package containing both hooks.
  */
 export const MINIMUM_PI_VERSION = "0.80.5";
+/** `pi auth check --json --no-refresh` arrived in 0.84.1. */
+const PI_AUTH_CHECK_VERSION = "0.84.1";
+
+const decodePiAuthCheck = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
+);
 
 const PI_DEFAULT_MODEL: ServerProviderModel = {
   slug: "default",
@@ -73,6 +80,8 @@ const PI_DEFAULT_MODEL: ServerProviderModel = {
 interface PiDiscovery extends PiDiscoveredCommands {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly authenticated: boolean;
+  /** Pi's active model when Pi does not list it as available, so it cannot start a turn. */
+  readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
 }
 
 function piModelsFromSettings(
@@ -169,11 +178,21 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+  // Pi lists only models it holds credentials for, including extension, virtual and --api-key ones.
+  const activeModel = recordField(stateData, "model");
+  const activeProvider = recordString(activeModel, "provider");
+  const activeModelId = recordString(activeModel, "id");
   return {
     models: discoveredModels,
     slashCommands: withPiBuiltinSlashCommands(slashCommands),
     skills,
     authenticated: discoveredModels.length > 0,
+    unavailableActiveModel:
+      activeProvider !== undefined &&
+      activeModelId !== undefined &&
+      !discoveredModels.some((model) => model.slug === `${activeProvider}/${activeModelId}`)
+        ? { provider: activeProvider, id: activeModelId }
+        : undefined,
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
@@ -220,6 +239,52 @@ const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(fu
     }),
   );
 });
+
+/**
+ * Explains why Pi's active model cannot start a turn. On Pi versions with `auth check`, asks it
+ * whether credentials are missing, without refreshing or printing them. That command cannot see
+ * extension providers or a runtime --api-key, so it only refines Pi's own unavailable verdict.
+ */
+const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailablePiModel")(
+  function* (
+    piSettings: PiSettings,
+    environment: NodeJS.ProcessEnv,
+    version: string,
+    model: { readonly provider: string; readonly id: string },
+  ) {
+    const label = `Pi default (${model.provider}/${model.id})`;
+    const unavailable = `${label} is not among Pi's available models. Choose another model, or check that provider's setup in Pi.`;
+    if (compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0) return unavailable;
+    const command = piSettings.binaryPath || "pi";
+    const missingCredentials = yield* resolveSpawnCommand(
+      command,
+      ["auth", "check", "--provider", model.provider, "--json", "--no-refresh"],
+      { env: environment },
+    ).pipe(
+      Effect.flatMap((spawnCommand) =>
+        spawnAndCollect(
+          command,
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            env: environment,
+            shell: spawnCommand.shell,
+          }),
+        ),
+      ),
+      Effect.map((output) =>
+        Option.exists(
+          decodePiAuthCheck(output.stdout.trim()),
+          (check) => check.reason === "credentials_not_configured",
+        ),
+      ),
+      Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+      Effect.map(Option.getOrElse(() => false)),
+      Effect.orElseSucceed(() => false),
+    );
+    return missingCredentials
+      ? `${label} has no credentials configured for ${model.provider}. Choose another model, or run \`pi\` in a terminal and use /login or configure its API key.`
+      : unavailable;
+  },
+);
 
 export const buildInitialPiProviderSnapshot = Effect.fn(
   "PiProviderStatus.buildInitialPiProviderSnapshot",
@@ -432,6 +497,15 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 
   const discovery = discoveryExit.value.value;
   const models = piModelsFromSettings(piSettings.customModels, discovery.models);
+  const activeModelMessage =
+    discovery.authenticated && discovery.unavailableActiveModel !== undefined
+      ? yield* describeUnavailablePiModel(
+          piSettings,
+          environment,
+          version,
+          discovery.unavailableActiveModel,
+        )
+      : undefined;
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: piSettings.enabled,
@@ -442,14 +516,16 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     probe: {
       installed: true,
       version,
-      status: discovery.authenticated ? "ready" : "warning",
+      status: discovery.authenticated && activeModelMessage === undefined ? "ready" : "warning",
       auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
-      ...(discovery.authenticated
-        ? {}
-        : {
+      ...(!discovery.authenticated
+        ? {
             message:
               "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent.",
-          }),
+          }
+        : activeModelMessage !== undefined
+          ? { message: activeModelMessage }
+          : {}),
     },
   });
 });
