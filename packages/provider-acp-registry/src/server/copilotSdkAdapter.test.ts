@@ -2335,4 +2335,38 @@ describe("CopilotSdkAdapterV2", () => {
       vi.useRealTimers();
     }
   });
+
+  it.live("kills the processes under a live Copilot CLI on Linux and macOS", () =>
+    Effect.gen(function* () {
+      // Signals and ps are POSIX; Windows goes through taskkill /T, covered above.
+      if ((yield* HostProcess.Platform) === "win32") return;
+      yield* Effect.promise(async () => {
+        const cli = NodeChildProcess.spawn("sh", ["-c", "sleep 300 & echo $!; wait"], {
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        const exited = new Promise((resolve) => cli.once("exit", resolve));
+        try {
+          const descendant = Number(
+            await new Promise<string>((resolve) =>
+              cli.stdout.once("data", (chunk) => resolve(`${chunk}`)),
+            ),
+          );
+          const tracked = copilotClientProcess({ cliProcess: cli });
+          if (!tracked) return assert.fail("Copilot's process is not tracked");
+          assert.isUndefined(await tracked.killDescendants());
+          cli.kill("SIGKILL");
+          await exited;
+          const state = NodeChildProcess.spawnSync(
+            "ps",
+            ["-o", "stat=", "-p", String(descendant)],
+            { encoding: "utf8" },
+          ).stdout.trim();
+          // Killed: gone, or a zombie until whoever inherited it reaps it.
+          assert.isTrue(state === "" || state.startsWith("Z"), `process ${descendant} is ${state}`);
+        } finally {
+          cli.kill("SIGKILL");
+        }
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
 });
