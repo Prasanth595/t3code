@@ -100,7 +100,7 @@ const encodeRelayAgentActivityStateJson = Schema.encodeEffect(
 
 const decodeRelayAgentActivityState = Schema.decodeUnknownOption(RelayAgentActivityStateSchema);
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return AgentActivityRows.of({
