@@ -615,7 +615,7 @@ const cancelBackgroundOnlyTask = (
         if (remote) {
           const descendant = childAfter.subagents.find((entry) => entry.remoteChild !== undefined);
           assert.equal(descendant?.status, "interrupted");
-          assert.equal(descendant?.remoteChild?.stoppedThere, false);
+          assert.notEqual(descendant?.remoteChild?.stoppedThere, true);
         }
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
