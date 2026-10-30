@@ -1246,7 +1246,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect(
-    "uses the same secret lifecycle for provider config, environment, host tokens, and quota keys",
+    "uses the same secret lifecycle for provider config, environment, host tokens, quota and proxy keys",
     () =>
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -1278,6 +1278,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               enabled: true,
             },
           },
+          providerProxy: {
+            url: "http://proxy.example.test:8317",
+            apiKey: "proxy-client-secret",
+            managementKey: "proxy-management-secret",
+          },
           easDeviceHosts: [
             {
               kind: "eas",
@@ -1297,6 +1302,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "bitbucket-secret",
           "gitcafe-secret",
           "quota-secret",
+          "proxy-client-secret",
+          "proxy-management-secret",
           "expo-secret",
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved);
@@ -1312,6 +1319,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           providerInstances: client.providerInstances,
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
+          providerProxy: client.providerProxy,
           easDeviceHosts: client.easDeviceHosts,
         });
         for (const value of values) assert.include(JSON.stringify(echoed), value);
@@ -1362,6 +1370,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           }),
           sourceControlHostSecretName({ kind: "gitcafe", field: "token", serverHost: null }),
           "usage-limit-source-aHVi",
+          "provider-proxy-YXBpS2V5",
+          "provider-proxy-bWFuYWdlbWVudEtleQ",
         ];
         for (const name of secretNames) {
           assert.isTrue(Option.isSome(yield* store.get(name)), name);
@@ -1374,6 +1384,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             gitcafe: { token: "" },
           },
           usageLimitSources: { [UsageLimitSourceId.make("hub")]: null },
+          providerProxy: { apiKey: "", managementKey: "" },
         });
         for (const name of secretNames) {
           assert.isTrue(Option.isNone(yield* store.get(name)));

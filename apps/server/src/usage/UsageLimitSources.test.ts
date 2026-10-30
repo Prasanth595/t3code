@@ -1,12 +1,17 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
@@ -74,6 +79,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
+      ManagedProviderProxy.ManagedProviderProxy.layerTest(),
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die("Unexpected network request")),
@@ -83,3 +89,70 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
     Effect.scoped,
   ),
 );
+
+it("reports the routing proxy's accounts unless a hub already points at it or owns its id", () => {
+  const hub = {
+    kind: "cliproxy" as const,
+    url: "http://proxy:8317/",
+    managementKey: "hub-key",
+    enabled: true,
+  };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerProxy: { url: "http://proxy:8317/v1", apiKey: "sk", managementKey: "mgmt" },
+  };
+
+  expect(UsageLimitSources.effectiveUsageLimitSources(settings)).toEqual({
+    [UsageLimitSources.PROVIDER_PROXY_SOURCE_ID]: {
+      kind: "cliproxy",
+      label: "Proxy",
+      url: "http://proxy:8317",
+      managementKey: "mgmt",
+      enabled: true,
+    },
+  });
+  // A keyless or disabled hub at the same URL can't report accounts, so the proxy's key applies.
+  for (const unusable of [
+    { ...hub, managementKey: "" },
+    { ...hub, enabled: false },
+  ]) {
+    expect(
+      UsageLimitSources.effectiveUsageLimitSources({
+        ...settings,
+        usageLimitSources: { [UsageLimitSourceId.make("hub")]: unusable },
+      })[UsageLimitSources.PROVIDER_PROXY_SOURCE_ID]?.managementKey,
+    ).toBe("mgmt");
+  }
+  for (const listed of [
+    { [UsageLimitSourceId.make("hub")]: hub },
+    {
+      [UsageLimitSources.PROVIDER_PROXY_SOURCE_ID]: {
+        ...hub,
+        url: "https://other.example.test",
+      },
+    },
+  ]) {
+    expect(
+      UsageLimitSources.effectiveUsageLimitSources({ ...settings, usageLimitSources: listed }),
+    ).toBe(listed);
+  }
+
+  // A managed proxy reports through its own loopback management key; turning the host off hides it.
+  const managed = { url: "http://127.0.0.1:41234", apiKey: "sk", managementKey: "managed-mgmt" };
+  const managedSettings = {
+    ...settings,
+    providerProxy: { ...settings.providerProxy, host: "managed" as const },
+  };
+  expect(
+    UsageLimitSources.effectiveUsageLimitSources(managedSettings, managed)[
+      UsageLimitSources.PROVIDER_PROXY_SOURCE_ID
+    ],
+  ).toMatchObject({ url: "http://127.0.0.1:41234", managementKey: "managed-mgmt" });
+  expect(UsageLimitSources.effectiveUsageLimitSources(managedSettings)).toEqual({});
+  expect(
+    UsageLimitSources.effectiveUsageLimitSources(
+      { ...settings, providerProxy: { ...settings.providerProxy, host: "off" } },
+      managed,
+    ),
+  ).toEqual({});
+});
