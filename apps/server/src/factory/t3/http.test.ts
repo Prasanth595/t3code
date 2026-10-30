@@ -664,36 +664,52 @@ describe("a waiting deploy: snooze and update now", () => {
   const writePending = (dir: string) =>
     NodeFS.writeFileSync(NodePath.join(dir, "deploy-pending"), `${Math.floor(T0 / 1000)} ${SHA}\n`);
 
-  it.effect("snooze writes an hour from now privately, and again replaces the time", () =>
-    Effect.gen(function* () {
-      // Before the live clock the sessions are issued on, so they have not expired by it.
-      yield* TestClock.setTime(T0);
-      return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
-        const first = await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
-        assert.strictEqual(first.status, 200);
-        const until = Math.floor(T0 / 1000) + 3600;
-        assert.deepStrictEqual(await json(first), { snoozed_until: formatTs(until * 1000) });
-        assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until}\n`);
-        assert.strictEqual(NodeFS.statSync(snoozeFile(dir)).mode & 0o777, 0o600);
+  it.effect(
+    "snooze writes an hour from now privately, a second starts it again, a fourth is refused",
+    () =>
+      Effect.gen(function* () {
+        // Before the live clock the sessions are issued on, so they have not expired by it.
+        yield* TestClock.setTime(T0);
+        return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
+          writePending(dir);
+          const first = await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+          assert.strictEqual(first.status, 200);
+          const until = Math.floor(T0 / 1000) + 3600;
+          assert.deepStrictEqual(await json(first), { snoozed_until: formatTs(until * 1000) });
+          assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until} 1\n`);
+          assert.strictEqual(NodeFS.statSync(snoozeFile(dir)).mode & 0o777, 0o600);
 
-        // A snooze about to end: a second one starts the hour again from now.
-        NodeFS.writeFileSync(snoozeFile(dir), `${until - 3500}\n`);
-        const again = await json(await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate));
-        assert.deepStrictEqual(again, { snoozed_until: formatTs(until * 1000) });
-        assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until}\n`);
-      });
-    }),
+          // A snooze about to end: a second one starts the hour again from now.
+          NodeFS.writeFileSync(snoozeFile(dir), `${until - 3500} 1\n`);
+          const again = await json(await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate));
+          assert.deepStrictEqual(again, { snoozed_until: formatTs(until * 1000) });
+          assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until} 2\n`);
+
+          await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+          const fourth = await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+          assert.strictEqual(fourth.status, 409);
+          assert.strictEqual((await json(fourth)).code, "snooze_limit");
+          assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until} 3\n`);
+        });
+      }),
   );
 
-  it.effect("a snooze withdraws an earlier update now", () =>
-    serving({}, async (call, { tokens, dir }) => {
-      writePending(dir);
-      await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
-      assert.isTrue(NodeFS.existsSync(nowFile(dir)));
-      await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
-      assert.isFalse(NodeFS.existsSync(nowFile(dir)));
-      assert.isTrue(NodeFS.existsSync(snoozeFile(dir)));
-    }),
+  it.effect(
+    "a snooze does not undo an update now for the same build, and withdraws an older one",
+    () =>
+      serving({}, async (call, { tokens, dir }) => {
+        writePending(dir);
+        await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
+        const refused = await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+        assert.strictEqual(refused.status, 409);
+        assert.strictEqual((await json(refused)).code, "deploy_now_requested");
+        assert.strictEqual(NodeFS.readFileSync(nowFile(dir), "utf8"), `${SHA}\n`);
+        assert.isFalse(NodeFS.existsSync(snoozeFile(dir)));
+
+        NodeFS.writeFileSync(nowFile(dir), `${"1".repeat(40)}\n`);
+        assert.strictEqual((await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate)).status, 200);
+        assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+      }),
   );
 
   it.effect("the status shows a snoozed build", () =>
@@ -708,18 +724,26 @@ describe("a waiting deploy: snooze and update now", () => {
     }),
   );
 
-  it.effect("update now answers 409 when no build is waiting, and writes and kicks nothing", () =>
-    serving({}, async (call, { tokens, dir, wakes }) => {
-      const response = await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
-      assert.strictEqual(response.status, 409);
-      assert.strictEqual((await json(response)).message, "no build is waiting to deploy");
-      assert.isFalse(NodeFS.existsSync(nowFile(dir)));
-      assert.strictEqual(wakes.kicks, 0);
-    }),
+  it.effect(
+    "snooze and update now answer 409 when no build is waiting, and write and kick nothing",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        for (const [path, token] of [
+          [DEPLOY_NOW_PATH, tokens.maintain],
+          [DEPLOY_SNOOZE_PATH, tokens.operate],
+        ] as const) {
+          const response = await call("POST", path, token);
+          assert.strictEqual(response.status, 409, path);
+          assert.strictEqual((await json(response)).code, "no_deploy_pending");
+        }
+        assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+        assert.isFalse(NodeFS.existsSync(snoozeFile(dir)));
+        assert.strictEqual(wakes.kicks, 0);
+      }),
   );
 
   it.effect(
-    "update now asks autodeploy to install, ends a snooze, and a failed kick is no error",
+    "update now asks autodeploy to install the build shown, ends a snooze, and a failed kick is no error",
     () =>
       serving({}, async (call, { tokens, dir, wakes }) => {
         writePending(dir);
@@ -727,10 +751,14 @@ describe("a waiting deploy: snooze and update now", () => {
         const response = await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
         assert.strictEqual(response.status, 202);
         const body = await json(response);
+        assert.strictEqual(body.commit, SHA);
         assert.strictEqual(body.kicked, false);
         assert.include(String(body.message), "next autodeploy tick");
-        assert.isTrue(NodeFS.existsSync(nowFile(dir)));
-        assert.isFalse(NodeFS.existsSync(snoozeFile(dir)));
+        assert.strictEqual(NodeFS.readFileSync(nowFile(dir), "utf8"), `${SHA}\n`);
+        const status = await json(await call("GET", STATUS_PATH, tokens.read));
+        assert.isNull((status.deploy_pending as Record<string, unknown>).snoozed_until);
+        // The snooze ended, but it still counts against the limit.
+        assert.match(NodeFS.readFileSync(snoozeFile(dir), "utf8"), / 1\n$/);
         assert.strictEqual(wakes.kicks, 1);
       }),
   );

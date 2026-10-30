@@ -27,6 +27,7 @@ import * as AuthHttp from "../../auth/http.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention } from "../attention.ts";
 import {
+  DEPLOY_SNOOZE_LIMIT,
   deployWait,
   loadDeploySnooze,
   loadPendingDeploy,
@@ -334,7 +335,18 @@ const restartRoute = factoryRoute(
   }),
 );
 
-/** Snoozes the waiting build for an hour from now; a second snooze starts the hour again. */
+const NO_DEPLOY_PENDING = { code: "no_deploy_pending", message: "no build is waiting to deploy" };
+
+/** The build autodeploy has waiting, by sha, or null when there is none. */
+const waitingBuild = (factoryDir: string, nowMs: number) => {
+  const wait = deployWait(loadPendingDeploy(factoryDir), loadDeploySnooze(factoryDir), nowMs);
+  return wait?.pending.commit ?? null;
+};
+
+/**
+ * Snoozes the waiting build for an hour from now; a second snooze starts the hour again, up to
+ * {@link DEPLOY_SNOOZE_LIMIT} for one build. It does not undo an update now for that build.
+ */
 const snoozeDeployRoute = factoryRoute(
   "POST",
   DEPLOY_SNOOZE_PATH,
@@ -342,14 +354,38 @@ const snoozeDeployRoute = factoryRoute(
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
-    const untilMs = yield* guarded(() => snoozeDeploy(factoryDir, nowMs));
-    return respond({ snoozed_until: formatTs(untilMs) });
+    const snoozed = yield* guarded(() => {
+      const commit = waitingBuild(factoryDir, nowMs);
+      return commit === null ? null : snoozeDeploy(factoryDir, nowMs, commit);
+    });
+    if (snoozed === null) return respond(NO_DEPLOY_PENDING, 409);
+    switch (snoozed.kind) {
+      case "snoozed":
+        return respond({ snoozed_until: formatTs(snoozed.untilMs) });
+      case "limit":
+        return respond(
+          {
+            code: "snooze_limit",
+            message: `this build has been snoozed ${DEPLOY_SNOOZE_LIMIT} times; it installs when its wait is up`,
+          },
+          409,
+        );
+      case "deploy_now":
+        return respond(
+          {
+            code: "deploy_now_requested",
+            message: "an update now is already asked for this build",
+          },
+          409,
+        );
+    }
   }),
 );
 
 /**
  * Asks autodeploy to install the waiting build over the runs in progress, and starts its tick at
- * once. Maintain scope, as for restart: the install restarts the server.
+ * once. The request names the build, so autodeploy drops it when main has moved on. Maintain
+ * scope, as for restart: the install restarts the server.
  */
 const deployNowRoute = factoryRoute(
   "POST",
@@ -358,16 +394,16 @@ const deployNowRoute = factoryRoute(
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
-    const wait = yield* guarded(() =>
-      deployWait(loadPendingDeploy(factoryDir), loadDeploySnooze(factoryDir), nowMs),
-    );
-    if (wait === null) {
-      return respond({ code: "no_deploy_pending", message: "no build is waiting to deploy" }, 409);
-    }
-    yield* guarded(() => requestDeployNow(factoryDir, nowMs));
+    const commit = yield* guarded(() => {
+      const build = waitingBuild(factoryDir, nowMs);
+      if (build !== null) requestDeployNow(factoryDir, nowMs, build);
+      return build;
+    });
+    if (commit === null) return respond(NO_DEPLOY_PENDING, 409);
     const kicked = yield* (yield* DeployKick).kick;
     return respond(
       {
+        commit,
         kicked,
         message: kicked
           ? "autodeploy is installing the waiting build now"
