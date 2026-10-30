@@ -85,28 +85,25 @@ describe("Pi project trust", () => {
     { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
     { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
     { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
-  ])(
-    "explains skipped resources once per session for $name",
-    async ({ trusted, argv, notices }) => {
-      const sent: string[] = [];
-      const ctx = {
-        cwd: "/repo",
-        isProjectTrusted: () => trusted,
-        ui: { notify: (message: string) => sent.push(message) },
-      };
-      // Pi reruns extension factories on session replacement without asking about trust again.
-      for (const _session of [1, 2]) {
-        const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
-          string,
-          (event: unknown, ctx: unknown) => unknown
-        >;
-        for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
-      }
-      assert.equal(sent.length, notices * 2);
-      for (const message of sent)
-        assert.include(message, "in /repo because the folder is not trusted");
-    },
-  );
+  ])("sends $notices trust notice per session for $name", async ({ trusted, argv, notices }) => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    // Pi reruns extension factories on session replacement without asking about trust again.
+    for (const _session of [1, 2]) {
+      const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+        string,
+        (event: unknown, ctx: unknown) => unknown
+      >;
+      for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+    }
+    assert.equal(sent.length, notices * 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
+  });
 });
 
 describe("Pi MCP tool results", () => {

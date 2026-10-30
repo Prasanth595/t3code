@@ -243,15 +243,14 @@ function createMcpClient(endpoint: string, token: string) {
 export default async function t3McpExtension(pi: ExtensionAPI) {
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
-  // so check each session's first turn. Pi's last approve flag wins; --no-approve is deliberate.
+  // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
   let projectTrustChecked = false;
   pi.on("before_agent_start", (_event, ctx) => {
     if (projectTrustChecked) return;
     projectTrustChecked = true;
-    const approval = process.argv.findLast((arg) => ["--approve", "-a", "--no-approve", "-na"].includes(arg));
-    if (ctx.isProjectTrusted() || approval === "--no-approve" || approval === "-na") return;
+    if (ctx.isProjectTrusted() || process.argv.some((arg) => arg === "--no-approve" || arg === "-na")) return;
     ctx.ui.notify(
-      \`Pi did not load the project settings, extensions, skills, prompts or MCP servers in \${ctx.cwd} because the folder is not trusted. To load them, run pi there, trust the folder or its parent with /trust, then start a new thread. To trust every project instead, add --approve to Pi's launch arguments in T3 Code settings.\`,
+      \`Pi did not load project settings, extensions, skills, prompts, MCP servers or system prompt files for \${ctx.cwd} because the folder is not trusted. To load them, run pi there, trust the folder or its parent with /trust, then start a new thread. To trust every project, add --approve to Pi's launch arguments in T3 Code settings; to keep them off without this notice, add --no-approve.\`,
       "warning",
     );
   });
