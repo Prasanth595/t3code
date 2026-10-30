@@ -265,6 +265,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       : {}),
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+  const changes = yield* PubSub.unbounded<ServerSettings>();
   const writeSemaphore = yield* Semaphore.make(1);
   const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -277,6 +278,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
         Effect.map(resolveTextGenerationProvider),
+        Effect.tap((nextSettings) => PubSub.publish(changes, nextSettings)),
       ),
     );
 
@@ -298,8 +300,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       ),
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
-    streamChanges: Stream.empty,
-    subscribeChanges: Effect.succeed(Stream.empty),
+    get streamChanges() {
+      return Stream.fromPubSub(changes);
+    },
+    get subscribeChanges() {
+      return PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription));
+    },
   } satisfies ServerSettingsService["Service"];
 });
 

@@ -14,12 +14,14 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -118,7 +120,13 @@ export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const { distinctId, installId } = yield* getTelemetryIdentity;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const settingsChanges = yield* settings.subscribeChanges;
+  const identityServices = yield* Effect.context<Effect.Services<typeof getTelemetryIdentity>>();
+  const identity = yield* getTelemetryIdentity.pipe(
+    Effect.provideContext(identityServices),
+    Effect.cached,
+  );
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const deliveryRef = yield* Ref.make<DeliveryState>({
@@ -136,6 +144,38 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
+  const isEnabled = telemetryConfig.enabled
+    ? settings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.telemetryEnabled),
+        Effect.orElseSucceed(() => false),
+      )
+    : Effect.succeed(false);
+
+  const discardBufferedEvents = Effect.gen(function* () {
+    yield* Ref.set(bufferRef, []);
+    yield* Ref.set(deliveryRef, {
+      failedBatch: [],
+      batchAttempts: 0,
+      firstFailedAt: 0,
+      failures: 0,
+      retryAt: 0,
+    });
+    yield* Ref.set(recordedOwnersRef, { server: new Set<string>(), client: new Set<string>() });
+  });
+
+  yield* settingsChanges.pipe(
+    Stream.runForEach((next) =>
+      next.telemetryEnabled ? Effect.void : flushLock.withPermit(discardBufferedEvents),
+    ),
+    Effect.forkScoped,
+  );
+
+  const withConsent = (operation: Effect.Effect<void>) =>
+    settings
+      .withSettingsSnapshot((snapshot) =>
+        telemetryConfig.enabled && snapshot.telemetryEnabled ? operation : discardBufferedEvents,
+      )
+      .pipe(Effect.catch(() => discardBufferedEvents));
 
   const enqueueBufferedEvent = (
     uuid: string,
@@ -172,6 +212,8 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
+    if (!(yield* isEnabled)) return yield* discardBufferedEvents;
+    const { distinctId, installId } = yield* identity;
     if (!telemetryConfig.enabled || !distinctId) return;
 
     const payload = {
@@ -215,6 +257,7 @@ export const make = Effect.gen(function* () {
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+    if (!(yield* isEnabled)) return yield* discardBufferedEvents;
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
@@ -283,7 +326,8 @@ export const make = Effect.gen(function* () {
   });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties) {
+    function* (event: string, properties?: Readonly<Record<string, unknown>>) {
+      const { distinctId } = yield* identity;
       if (!telemetryConfig.enabled || !distinctId) return;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
@@ -298,12 +342,14 @@ export const make = Effect.gen(function* () {
         });
       }
     },
+    withConsent,
   );
 
   const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
     "AnalyticsService.recordOwners",
-  )((owners, observedBy) =>
-    Effect.forEach(
+  )(function* (owners, observedBy) {
+    if (!(yield* isEnabled)) return;
+    yield* Effect.forEach(
       owners,
       ({ source, ownerId }) =>
         Ref.modify(recordedOwnersRef, (recorded) => {
@@ -320,8 +366,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
       { discard: true },
-    ),
-  );
+    );
+  });
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
     disableYield: true,
