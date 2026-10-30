@@ -103,6 +103,12 @@ export interface LaunchRequest {
   readonly pullRequestUrl?: string;
 }
 
+/** What a worktree has checked out (`worktreeCheckout`). */
+export interface Checkout {
+  readonly head: string;
+  readonly branch: string | null;
+}
+
 /** What `launch` returns. */
 export interface Launched {
   readonly threadId: string;
@@ -372,10 +378,11 @@ export class FactorySessions extends Context.Service<
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
-     * The commit the worktree at absolute `path` has checked out (`git rev-parse HEAD`). A read
-     * that fails, or prints anything but a full commit id, is `worktree-head`.
+     * What the worktree at absolute `path` has checked out: its HEAD commit, and the branch HEAD
+     * is on (null when detached). A read that fails, or a HEAD that is not a full commit id, is
+     * `worktree-head`.
      */
-    readonly worktreeHead: (path: string) => Effect.Effect<string, SessionsError>;
+    readonly worktreeCheckout: (path: string) => Effect.Effect<Checkout, SessionsError>;
     /**
      * The unarchived threads whose worktree is gone or has no `.git`: T3's
      * pull request lookup and settlement run git there and fail every sweep.
@@ -703,28 +710,37 @@ const make = Effect.gen(function* () {
       .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
   });
 
-  const worktreeHead: FactorySessions["Service"]["worktreeHead"] = Effect.fn(
-    "Sessions.worktreeHead",
+  const worktreeCheckout: FactorySessions["Service"]["worktreeCheckout"] = Effect.fn(
+    "Sessions.worktreeCheckout",
   )(function* (worktreePath) {
     const failed = (cause: unknown) => new SessionsError({ operation: "worktree-head", cause });
     if (!path.isAbsolute(worktreePath)) {
       return yield* failed(`the worktree path is not absolute: ${worktreePath}`);
     }
-    const result = yield* git
-      .execute({
-        operation: "factory.sessions.worktreeHead",
-        cwd: worktreePath,
-        args: ["rev-parse", "--verify", "HEAD"],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-        timeoutMs: WORKTREE_HEAD_TIMEOUT_MS,
-      })
-      .pipe(Effect.mapError(failed));
-    const head = result.stdout.trim();
-    if (result.exitCode !== 0 || !isCommitId(head)) {
-      return yield* failed(`git rev-parse HEAD in ${worktreePath}: ${result.stderr.trim()}`);
+    const run = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "factory.sessions.worktreeCheckout",
+          cwd: worktreePath,
+          args: [...args],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+          timeoutMs: WORKTREE_HEAD_TIMEOUT_MS,
+        })
+        .pipe(Effect.mapError(failed));
+    const rev = yield* run(["rev-parse", "--verify", "HEAD"]);
+    const head = rev.stdout.trim();
+    if (rev.exitCode !== 0 || !isCommitId(head)) {
+      return yield* failed(`git rev-parse HEAD in ${worktreePath}: ${rev.stderr.trim()}`);
     }
-    return head;
+    // `symbolic-ref --quiet` exits 1, printing nothing, when HEAD is detached.
+    const ref = yield* run(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if (ref.exitCode === 1 && ref.stdout.trim() === "") return { head, branch: null };
+    const branch = ref.stdout.trim();
+    if (ref.exitCode !== 0 || branch === "") {
+      return yield* failed(`git symbolic-ref HEAD in ${worktreePath}: ${ref.stderr.trim()}`);
+    }
+    return { head, branch };
   });
 
   // A path whose `.git` cannot be checked (a permission error) is not called broken.
@@ -808,7 +824,7 @@ const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
-    worktreeHead,
+    worktreeCheckout,
     brokenWorktrees,
     runningThreads,
     liveBranches,

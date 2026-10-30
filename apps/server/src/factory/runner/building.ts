@@ -136,7 +136,7 @@ export interface BuildingContext extends RunContext {
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
-    "status" | "thread" | "send" | "archive" | "removeWorktree" | "worktreeHead"
+    "status" | "thread" | "send" | "archive" | "removeWorktree" | "worktreeCheckout"
   >;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
@@ -601,39 +601,73 @@ export const withBoundBranches = (earlier: EarlierAttempts, seen: Seen): Earlier
     : { ...earlier, branches: [...earlier.branches, ...seen.boundBranches] };
 
 /**
- * Whether another issue's run of the repo names `pull` or its head branch, read from every ledger
- * that may have been written since `sinceMs`. A ledger that cannot be read names everything.
+ * Whether the live worktree of another run's thread holds `pull`: its thread or checkout is on the
+ * head branch, or its HEAD is the head commit. A thread T3 no longer has, or has archived, holds
+ * nothing; any other failed read holds everything.
  */
-const otherRunNames = (
+const threadHolds = (ctx: BuildingContext, threadId: string, pull: PullRequest) =>
+  ctx.sessions.thread(threadId).pipe(
+    Effect.flatMap((thread) => {
+      if (thread.archived) return Effect.succeed(false);
+      if (thread.branch === pull.headRef) return Effect.succeed(true);
+      if (thread.worktreePath === null) return Effect.succeed(false);
+      return ctx.sessions
+        .worktreeCheckout(thread.worktreePath)
+        .pipe(
+          Effect.map(
+            (checkout) => checkout.head === pull.headSha || checkout.branch === pull.headRef,
+          ),
+        );
+    }),
+    Effect.catchIf(isThreadNotFound, () => Effect.succeed(false)),
+    Effect.orElseSucceed(() => true),
+  );
+
+/**
+ * Whether another issue's run of the repo has `pull`: its ledger, read for every run written
+ * since `sinceMs`, names the pull request or its head branch, or an unfinished run's worktree
+ * holds it (`threadHolds`), which covers work not yet reported. A failed read has everything.
+ */
+const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
   ctx: BuildingContext,
   run: RunId,
   pull: PullRequest,
   sinceMs: number,
-): Effect.Effect<boolean> =>
-  ledger(() =>
-    readRuns(ctx.dataDir, { skipFinishedBefore: sinceMs }).some(({ summary, seen }) => {
-      const { id } = summary;
-      if (asciiLower(id.repo) !== asciiLower(run.repo) || id.issue === run.issue) return false;
-      if (seen === null) return true;
-      const prs = [...seen.opened, ...seen.left.map((left) => left.pr)];
-      const branches = [
-        seen.lastBranch,
-        seen.resumedFrom,
-        seen.launchResumedFrom,
-        seen.interruption?.branch,
-        seen.relaunch?.branch,
-        launchBranchOf(seen.worktree),
-        ...seen.boundBranches,
-      ];
-      return prs.includes(pull.number) || branches.includes(pull.headRef);
-    }),
-  ).pipe(Effect.orElseSucceed(() => true));
+): Effect.fn.Return<boolean> {
+  const others = yield* ledger(() =>
+    readRuns(ctx.dataDir, { skipFinishedBefore: sinceMs }).filter(
+      ({ summary: { id } }) =>
+        asciiLower(id.repo) === asciiLower(run.repo) && id.issue !== run.issue,
+    ),
+  ).pipe(Effect.orElseSucceed(() => null));
+  if (others === null) return true;
+  const live: Array<string> = [];
+  for (const { seen } of others) {
+    if (seen === null) return true;
+    const prs = [...seen.opened, ...seen.left.map((left) => left.pr)];
+    const branches = [
+      seen.lastBranch,
+      seen.resumedFrom,
+      seen.launchResumedFrom,
+      seen.interruption?.branch,
+      seen.relaunch?.branch,
+      launchBranchOf(seen.worktree),
+      ...seen.boundBranches,
+    ];
+    if (prs.includes(pull.number) || branches.includes(pull.headRef)) return true;
+    if (!seen.finished && seen.threadId !== null) live.push(seen.threadId);
+  }
+  for (const threadId of live) {
+    if (yield* threadHolds(ctx, threadId, pull)) return true;
+  }
+  return false;
+});
 
 /**
  * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
- * the claim, named by no other issue's run, and its head the worktree's HEAD. The session can
- * check out any commit, so the claim time and the other runs are the proof; the HEAD only ties
- * the pull request to this worktree. No worktree, or a failed read, is no proof.
+ * the claim, no other issue's run has it (`otherRunHas`), and the worktree has its head branch
+ * checked out at its head commit. Runs of another machine's factory, and a person's pull request
+ * opened during the run, are not seen. No worktree, or a failed read, is no proof.
  */
 const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ctx: BuildingContext,
@@ -655,11 +689,11 @@ const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ) {
     return false;
   }
-  if (yield* otherRunNames(ctx, run, pull, claimedMs)) return false;
-  return yield* ctx.sessions.worktreeHead(worktreePath).pipe(
-    Effect.map((head) => head === pull.headSha),
-    Effect.orElseSucceed(() => false),
-  );
+  const own = yield* ctx.sessions.worktreeCheckout(worktreePath).pipe(Effect.option);
+  if (own._tag === "None" || own.value.head !== pull.headSha || own.value.branch !== pull.headRef) {
+    return false;
+  }
+  return !(yield* otherRunHas(ctx, run, pull, claimedMs));
 });
 
 const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
