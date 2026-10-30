@@ -944,23 +944,32 @@ describe("a waiting update", () => {
     await expect.poll(() => banner(page)?.textContent).toContain("Update waiting.");
   });
 
-  it("asks before Update now when T3 cannot say whether threads are at work, or a run is unreadable", async () => {
+  it("asks before Update now when T3 cannot say whether threads are at work", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn();
+    __setFactoryApiForTests(api({ deployNow }));
+    const desktop = withUpdate([], { threads: { running: null } });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain(
+      "T3 could not say whether an agent is at work in a thread; any that is will be interrupted.",
+    );
+    expect(deployNow).not.toHaveBeenCalled();
+  });
+
+  it("asks before Update now interrupts an unreadable run, whatever state it last showed", async () => {
     using _state = await setup();
     const deployNow = vi.fn();
     __setFactoryApiForTests(api({ deployNow }));
     const desktop = withUpdate(
       [statusRun(7, { state: "pr-open", unreadable: true, title: "Torn ledger" })],
-      {
-        threads: { running: null },
-      },
+      { threads: { running: 0 } },
     );
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
     await page.click(page.button("Update now")!);
     await expect.poll(() => dialog()).not.toBeNull();
     expect(dialog()!.textContent).toContain("Torn ledger");
-    expect(dialog()!.textContent).toContain(
-      "T3 could not say whether an agent is at work in a thread; any that is will be interrupted.",
-    );
     expect(deployNow).not.toHaveBeenCalled();
   });
 
@@ -985,6 +994,23 @@ describe("a waiting update", () => {
     );
     await expect.poll(() => banner(page)?.textContent).toContain("Build fedcba9");
     expect(dialog()).toBeNull();
+  });
+
+  it("closes an open dialog when a different build replaces the one it asked about", async () => {
+    using _state = await setup();
+    const belt = props({ environments: [withUpdate([statusRun(2)])] });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    const next = waiting({ commit: "fedcba9876543210", since: iso(at(14, 50)) });
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...belt,
+        environments: [withUpdate([statusRun(2)], { deploy_pending: next })],
+      }),
+    );
+    await expect.poll(() => banner(page)?.textContent).toContain("Build fedcba9");
+    await expect.poll(() => dialog()).toBeNull();
   });
 
   it("disables both buttons while an Update now post is in flight", async () => {
