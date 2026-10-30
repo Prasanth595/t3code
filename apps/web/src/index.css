@@ -2176,8 +2176,7 @@ code {
   background: transparent !important;
 }
 
-/* Plain text has no syntax to color, so it keeps the color of the text around it.
-   !important outranks the highlighter's inline colors and the code surface color. */
+/* Plain-text fences override the highlighter's inline foreground colors. */
 :is(.chat-markdown, .composer-tiptap)
   .chat-markdown-codeblock:is(
     [data-language="text" i],
@@ -2185,8 +2184,7 @@ code {
     [data-language="plain" i],
     [data-language="plaintext" i]
   ) {
-  color: inherit !important;
-
+  &,
   & :is(pre, pre *) {
     color: inherit !important;
   }
