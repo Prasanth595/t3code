@@ -114,6 +114,23 @@ const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
     read: (access) => access.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
   });
 
+// start forks the watcher, which may not be listening yet when it returns. A test that edits
+// settings.json first rewrites the same contents until the watcher reloads them, or a busy
+// machine misses the edit. A listening watcher reloads within its 100 ms debounce, so a rewrite
+// that gets no reload within a second was made before it listened and leaves nothing behind.
+const awaitWatcher = (settingsPath: string, reads: Queue.Queue<void>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const contents = yield* fs.readFileString(settingsPath);
+    yield* Queue.clear(reads);
+    yield* fs
+      .writeFileString(settingsPath, contents)
+      .pipe(
+        Effect.andThen(Queue.take(reads).pipe(Effect.timeout("1 second"))),
+        Effect.retry({ times: 5 }),
+      );
+  });
+
 const usageScript = {
   id: "usage",
   name: "Usage",
@@ -364,31 +381,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect("publishes a default project script that another program adds to settings.json", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const service = yield* ServerSettingsModule.ServerSettingsService;
-        yield* fs.writeFileString(
-          config.settingsPath,
-          JSON.stringify({ defaultProjectScripts: [usageScript] }),
-        );
-        yield* service.start;
-        const changes = yield* service.subscribeChanges;
+    Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({ defaultProjectScripts: [usageScript] }),
+          );
+          yield* service.start;
+          yield* awaitWatcher(config.settingsPath, reads);
+          const changes = yield* service.subscribeChanges;
 
-        yield* fs.writeFileString(
-          config.settingsPath,
-          JSON.stringify({ defaultProjectScripts: [usageScript, perfLabScript] }),
-        );
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({ defaultProjectScripts: [usageScript, perfLabScript] }),
+          );
 
-        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
-        assert.deepEqual(
-          Option.getOrUndefined(change)?.defaultProjectScripts.map((script) => script.id),
-          ["usage", "perf-lab"],
-        );
-        assert.lengthOf((yield* service.getSettings).defaultProjectScripts, 2);
-      }),
-    ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
+          const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+          assert.deepEqual(
+            Option.getOrUndefined(change)?.defaultProjectScripts.map((script) => script.id),
+            ["usage", "perf-lab"],
+          );
+          assert.lengthOf((yield* service.getSettings).defaultProjectScripts, 2);
+        }),
+      ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("keeps the last good settings while settings.json is invalid and warns once", () => {
@@ -408,7 +429,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
           );
           yield* service.start;
-          yield* Queue.clear(reads);
+          yield* awaitWatcher(config.settingsPath, reads);
           const changes = yield* service.subscribeChanges;
           assert.isTrue((yield* service.getSettings).continueThreadsAfterServerUpdate);
 
@@ -469,7 +490,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const service = yield* ServerSettingsModule.ServerSettingsService;
           yield* fs.writeFileString(config.settingsPath, "{}");
           yield* service.start;
-          yield* Queue.clear(reads);
+          yield* awaitWatcher(config.settingsPath, reads);
           const changes = yield* service.subscribeChanges;
           const editPublished = yield* Deferred.make<void>();
           const published = yield* Effect.forkChild(
@@ -524,7 +545,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const service = yield* ServerSettingsModule.ServerSettingsService;
           yield* fs.writeFileString(config.settingsPath, `{ "responseStreamingMode": "turn" }`);
           yield* service.start;
-          yield* Queue.clear(started);
+          yield* awaitWatcher(config.settingsPath, started);
 
           yield* reloads.close;
           yield* fs.writeFileString(config.settingsPath, `{ "responseStreamingMode": `);
@@ -571,11 +592,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             config.settingsPath,
             withServer("http://127.0.0.1:4096", "first-password"),
           );
-          // Startup moves the password into the secret store and rewrites the file, which the
-          // watcher then reloads.
+          // Startup moves the password into the secret store and rewrites the file.
           yield* service.start;
-          yield* Queue.take(reads);
-          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* awaitWatcher(config.settingsPath, reads);
           yield* service.withSettingsSnapshot(() => Effect.void);
           yield* Queue.clear(replacing);
 
@@ -623,11 +642,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               providerInstances: { antigravity: { driver: "antigravity", config: { apiKey } } },
             });
           yield* fs.writeFileString(config.settingsPath, withApiKey("first-key"));
-          // Startup moves the key into the secret store and rewrites the file, which the
-          // watcher then reloads.
+          // Startup moves the key into the secret store and rewrites the file.
           yield* service.start;
-          yield* Queue.take(reads);
-          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* awaitWatcher(config.settingsPath, reads);
           yield* service.withSettingsSnapshot(() => Effect.void);
           const changes = yield* service.subscribeChanges;
 
