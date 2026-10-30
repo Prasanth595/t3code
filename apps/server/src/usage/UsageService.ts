@@ -564,20 +564,7 @@ export const make = Effect.gen(function* () {
   ) {
     const { provider, format, dir, volumeId, fileName } = source;
     if (preferCached) {
-      const files = [...fileCache].flatMap(([filePath, entry]) =>
-        entry.provider === provider &&
-        entry.mtimeMs >= windowStartMs &&
-        isWithinDirectory(filePath, dir)
-          ? [
-              {
-                path: filePath,
-                records: [...entry.records, ...entry.tailRecords],
-                malformedRecords: entry.malformedRecords,
-              },
-            ]
-          : [],
-      );
-      return { provider, dir, volumeId, files, refreshing: true } satisfies ScannedDir;
+      return { provider, dir, volumeId, files: [], refreshing: true } satisfies ScannedDir;
     }
     const exists = yield* fileSystem
       .exists(dir)

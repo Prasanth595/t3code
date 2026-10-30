@@ -103,34 +103,21 @@ export async function refreshUsage({
       const unsubscribe = registry.subscribe(presentation, abortWhenDisconnected);
       abortWhenDisconnected();
       try {
-        registry.refresh(query);
-        const [usageResult, ratesResult] = await Promise.all([
-          executeAtomQuery(registry, query, {
-            reportFailure: false,
-            signal: controller.signal,
-          }),
-          runAtomCommand(
-            registry,
-            server.refreshUsageRates,
-            { environmentId, input: {} },
-            { reportFailure: false },
-          ),
-        ]);
+        const ratesResult = await runAtomCommand(
+          registry,
+          server.refreshUsageRates,
+          { environmentId, input: {} },
+          { reportFailure: false },
+        );
         const sessionUnavailable =
           ratesResult._tag === "Failure" &&
           isEnvironmentRpcUnavailable(squashAtomCommandFailure(ratesResult));
+        registry.refresh(query);
         if (sessionUnavailable || controller.signal.aborted) return;
-        if (
-          usageResult._tag === "Success" &&
-          ratesResult._tag === "Success" &&
-          usageResult.value.pricing.fetchedAt !== ratesResult.value.fetchedAt
-        ) {
-          registry.refresh(query);
-          await executeAtomQuery(registry, query, {
-            reportFailure: false,
-            signal: controller.signal,
-          });
-        }
+        await executeAtomQuery(registry, query, {
+          reportFailure: false,
+          signal: controller.signal,
+        });
       } finally {
         unsubscribe();
       }
