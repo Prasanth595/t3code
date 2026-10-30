@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
   dropBusy: false,
   failedAction: null as string | null,
+  failureMessage: "Server rejected action",
+  forgotten: [] as { environmentId: string; threadId: string }[],
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
@@ -27,6 +29,7 @@ const state = vi.hoisted(() => ({
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
+    message: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
@@ -38,8 +41,8 @@ vi.mock("react", () => ({
 }));
 vi.mock("react-native", () => ({
   Alert: {
-    alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-      state.alerts.push({ title, buttons }),
+    alert: (title: string, message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+      state.alerts.push({ title, message, buttons }),
   },
 }));
 vi.mock("expo-haptics", () => ({
@@ -47,8 +50,8 @@ vi.mock("expo-haptics", () => ({
   ImpactFeedbackStyle: { Light: "light" },
 }));
 vi.mock("../../components/ui/Dialog", () => ({
-  alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-    state.alerts.push({ title, buttons }),
+  alert: (title: string, message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+    state.alerts.push({ title, message, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
@@ -59,6 +62,10 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+}));
+vi.mock("../../state/forgotten-threads", () => ({
+  forgetThread: (environmentId: string, threadId: string) =>
+    state.forgotten.push({ environmentId, threadId }),
 }));
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
@@ -142,7 +149,7 @@ vi.mock("../../state/threads", () => ({
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
         if (action === state.failedAction)
-          return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
+          return AsyncResult.failure(Cause.fail(new Error(state.failureMessage)));
         state.afterRequest?.();
         return AsyncResult.success(undefined);
       },
@@ -180,6 +187,8 @@ const mutationCases = [
 
 beforeEach(() => {
   state.failedAction = null;
+  state.failureMessage = "Server rejected action";
+  state.forgotten = [];
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
@@ -460,6 +469,106 @@ describe("thread action undo", () => {
     await useThreadListActions().archiveThread(makeThread());
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+  });
+});
+
+describe("thread action failure dialog", () => {
+  const pressButton = (text: string) =>
+    state.alerts
+      .at(-1)
+      ?.buttons?.find((button) => button.text === text)
+      ?.onPress?.();
+
+  it("explains a thread its server no longer has and removes it from the list", async () => {
+    state.failedAction = "settle";
+    state.failureMessage = "No orchestration projection exists for thread mcp:gone.";
+
+    expect(await useThreadListActions().settleThread(makeThread())).toBe(false);
+
+    const alert = state.alerts.at(-1)!;
+    expect(alert.title).toBe("Thread no longer exists");
+    expect(alert.message).not.toContain("orchestration projection");
+    expect(alert.buttons?.map(({ text }) => text)).toEqual(["Keep", "Remove from list"]);
+    expect(state.forgotten).toEqual([]);
+    pressButton("Remove from list");
+    expect(state.forgotten).toEqual([{ environmentId: primaryEnvironmentId, threadId: "thread" }]);
+  });
+
+  it("reloads the archive when removing a missing archived thread", async () => {
+    state.failedAction = "settle";
+    state.failureMessage = "Thread thread is deleted.";
+
+    await useThreadListActions().settleThread(
+      makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" }),
+    );
+    pressButton("Remove from list");
+
+    expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+  });
+
+  it("keeps Undo when a retried settle succeeds", async () => {
+    const thread = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });
+    state.failedAction = "settle";
+
+    await useThreadListActions().settleThread(thread);
+    state.failedAction = null;
+    pressButton("Try again");
+    await vi.waitFor(() => expect(readThreadUndoNotice()).not.toBeNull());
+    await readThreadUndoNotice()!.undo();
+
+    expect(state.requests.map(({ action }) => action)).toEqual([
+      "settle",
+      "settle",
+      "unsettle",
+      "pin",
+    ]);
+  });
+
+  it("offers no partial retry when an Undo step fails", async () => {
+    await useThreadListActions().settleThread(makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" }));
+    state.failedAction = "unsettle";
+    await readThreadUndoNotice()!.undo();
+
+    expect(state.alerts.at(-1)?.title).toBe("Could not un-settle thread");
+    expect(state.alerts.at(-1)?.buttons?.map(({ text }) => text)).toEqual(["OK"]);
+  });
+
+  it("treats a deleted thread as missing", async () => {
+    state.failedAction = "settle";
+    state.failureMessage = "Thread thread is deleted.";
+
+    await useThreadListActions().settleThread(makeThread());
+
+    expect(state.alerts.at(-1)?.title).toBe("Thread no longer exists");
+  });
+
+  it("offers to unarchive an archived thread", async () => {
+    state.failedAction = "settle";
+    state.failureMessage = "Thread thread is archived.";
+
+    await useThreadListActions().settleThread(makeThread());
+
+    expect(state.alerts.at(-1)?.title).toBe("Thread is archived");
+    state.failedAction = null;
+    pressButton("Unarchive");
+    await vi.waitFor(() =>
+      expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unarchive"]),
+    );
+  });
+
+  it("keeps the server's reason for other failures and can try again", async () => {
+    state.failedAction = "settle";
+
+    await useThreadListActions().settleThread(makeThread());
+
+    const alert = state.alerts.at(-1)!;
+    expect(alert.title).toBe("Could not settle thread");
+    expect(alert.message).toBe("Server rejected action");
+    state.failedAction = null;
+    pressButton("Try again");
+    await vi.waitFor(() =>
+      expect(state.requests.map(({ action }) => action)).toEqual(["settle", "settle"]),
+    );
   });
 });
 
