@@ -913,8 +913,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       navigationHeaderHeight -
       controlInsets.bottom -
       liveKeyboardHeight -
-      COMPOSER_COLLAPSED_CHROME -
-      composerBottomInset -
+      composerOverlapHeight -
       USAGE_LIMITS_PANEL_GAP * 2,
   );
   // A toggle animates the card; a new request starts expanded at once.
