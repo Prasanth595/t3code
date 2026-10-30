@@ -219,6 +219,7 @@ describe("merge request reads", () => {
     const provider = yield* make.pipe(
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          listMergeRequestStats: () => Effect.succeed([]),
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
