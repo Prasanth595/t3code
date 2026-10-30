@@ -20,7 +20,7 @@ export function providerFailurePresentation(
 } {
   if (
     failure.class === "usage_limit" &&
-    failure.code === "provider.rate-limit" &&
+    (failure.code === "provider.rate-limit" || failure.code === "APIError") &&
     failure.message.includes("[ttft_admission_refused]")
   ) {
     return { kind: "provider_capacity", title: "Provider at capacity" };
