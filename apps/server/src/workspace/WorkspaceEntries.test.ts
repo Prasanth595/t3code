@@ -56,6 +56,16 @@ function writeTextFile(
   });
 }
 
+// Git hooks export repository-location variables; unset them so fixtures only touch temp repos.
+const isolatedGitEnv: NodeJS.ProcessEnv = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_COMMON_DIR: undefined,
+};
+
 const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
     const process = yield* VcsProcess.VcsProcess;
@@ -64,7 +74,7 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
       command: "git",
       cwd,
       args,
-      ...(env ? { env } : {}),
+      env: { ...env, ...isolatedGitEnv },
       timeoutMs: 10_000,
     });
     return result.stdout.trim();
@@ -349,6 +359,84 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("indexes initialized submodule files without their gitlink metadata", () =>
+      Effect.gen(function* () {
+        const identity = {
+          GIT_AUTHOR_NAME: "T3 Test",
+          GIT_AUTHOR_EMAIL: "t3@example.com",
+          GIT_COMMITTER_NAME: "T3 Test",
+          GIT_COMMITTER_EMAIL: "t3@example.com",
+        };
+        const submoduleSource = yield* makeTempDir({ prefix: "t3code-submodule-src-", git: true });
+        yield* writeTextFile(submoduleSource, ".gitignore", "generated.ts\n");
+        yield* writeTextFile(submoduleSource, "lib/inner.ts", "export {};");
+        yield* git(submoduleSource, ["add", "."]);
+        yield* git(submoduleSource, ["commit", "-m", "init"], identity);
+        yield* writeTextFile(submoduleSource, "generated.ts", "export {};");
+
+        const cwd = yield* makeTempDir({ prefix: "t3code-submodule-root-", git: true });
+        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
+        yield* git(cwd, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          submoduleSource,
+          "vendor/sub",
+        ]);
+        yield* writeTextFile(cwd, "vendor/sub/generated.ts", "export {};");
+        yield* writeTextFile(cwd, "vendor/sub/scratch.ts", "export {};");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/keep.ts");
+        expect(paths).toContain("vendor/sub");
+        expect(paths).toContain("vendor/sub/lib/inner.ts");
+        expect(paths).toContain("vendor/sub/scratch.ts");
+        expect(paths).not.toContain("vendor/sub/.git");
+        expect(paths).not.toContain("vendor/sub/generated.ts");
+      }),
+    );
+
+    it.effect("excludes directories hidden by .git/info/exclude from every query", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-info-exclude-", git: true });
+        yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n/build/\n");
+        yield* writeTextFile(cwd, ".worktrees/feature/src/needle.ts", "export const needle = 1;");
+        yield* writeTextFile(cwd, "build/needle.js", "export const needle = 2;");
+        yield* writeTextFile(cwd, "src/build/needle.ts", "export const needle = 3;");
+        yield* writeTextFile(cwd, "src/needle.ts", "export const needle = 4;");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "needle", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+        const contents = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        const expected = ["src/build/needle.ts", "src/needle.ts"];
+        expect(
+          searched.entries.map((entry) => entry.path).filter((path) => path.endsWith(".ts")),
+        ).toEqual(expect.arrayContaining(expected));
+        expect(
+          listed.entries.map((entry) => entry.path).filter((path) => /needle\.[jt]s$/.test(path)),
+        ).toEqual(expected);
+        expect(contents.matches.map((match) => match.path).toSorted()).toEqual(expected);
+        for (const paths of [searched.entries, listed.entries].map((result) =>
+          result.map((entry) => entry.path),
+        )) {
+          expect(paths.some((path) => path.startsWith(".worktrees"))).toBe(false);
+          expect(paths.some((path) => path.startsWith("build"))).toBe(false);
+        }
+      }),
+    );
+
     it.effect("excludes tracked paths that match ignore rules", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({
@@ -419,6 +507,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result.matches).toHaveLength(1);
         expect(result.matches[0]).toMatchObject({ path: "src/keep.ts", lineNumber: 2 });
+      }),
+    );
+
+    it.effect("keeps a lone constraint-like query as text when exclusions apply", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-token-", git: true });
+        yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n");
+        const line = "see src/ and *.ts and !important\n";
+        yield* writeTextFile(cwd, "lib/notes.txt", line);
+        yield* writeTextFile(cwd, ".worktrees/copy/lib/notes.txt", line);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const { query, useRegex } of [
+          { query: "src/", useRegex: false },
+          { query: "*.ts", useRegex: false },
+          { query: "!important", useRegex: false },
+          { query: "src/", useRegex: true },
+          { query: "!important", useRegex: true },
+        ]) {
+          const result = yield* workspaceEntries.searchContents({
+            cwd,
+            query,
+            limit: 10,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex,
+          });
+          expect(
+            result.matches.map((match) => match.path),
+            `${query} (regex: ${useRegex})`,
+          ).toEqual(["lib/notes.txt"]);
+        }
       }),
     );
 
