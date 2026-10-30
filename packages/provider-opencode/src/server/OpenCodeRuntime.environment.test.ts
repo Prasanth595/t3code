@@ -1,6 +1,8 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -82,6 +84,13 @@ describe("verifyOpenCodeProxyRouting", () => {
         environment,
       ).pipe(Effect.flip);
       expect(widened.detail).toContain("enables providers the proxy does not route");
+
+      const stalled = yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(
+        { config: { get: () => new Promise(() => {}) } } as unknown as OpencodeClient,
+        environment,
+      ).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* Fiber.join(stalled)).detail).toContain("Timed out");
     }),
   );
 });

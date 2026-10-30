@@ -316,9 +316,16 @@ export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting"
 ) {
   if (!isOpenCodeProxied(environment)) return;
   const requested = Option.getOrElse(decodeRequestedOpenCodeConfig(environment), () => ({}));
-  const effective = yield* runOpenCodeSdk("config.get", (signal) =>
+  const effectiveOption = yield* runOpenCodeSdk("config.get", (signal) =>
     client.config.get(undefined, { signal }),
-  );
+  ).pipe(Effect.timeoutOption(OPENCODE_HEALTH_TIMEOUT));
+  if (Option.isNone(effectiveOption)) {
+    return yield* new OpenCodeRuntimeError({
+      operation: "config.get",
+      detail: "Timed out while checking that OpenCode routes through the proxy.",
+    });
+  }
+  const effective = effectiveOption.value;
   const enabled = asRecord(effective.data).enabled_providers;
   const routedOnly =
     Array.isArray(enabled) &&
