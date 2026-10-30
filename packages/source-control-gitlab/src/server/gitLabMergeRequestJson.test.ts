@@ -678,6 +678,12 @@ describe("decodeReviewDecisionsJson", () => {
 
   it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
     expect([...decisionsOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
+    expect([
+      ...decisionsOf(true, [
+        { iid: "7", approved: null, approvedBy: approvedBy("julius") },
+        { iid: "8", approved: true, approvedBy: null },
+      ]),
+    ]).toEqual([]);
     expect(
       expectSuccess(decodeReviewDecisionsJson(JSON.stringify({ data: { project: null } }))),
     ).toEqual(new Map());

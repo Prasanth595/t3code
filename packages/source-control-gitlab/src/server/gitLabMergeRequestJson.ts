@@ -1008,8 +1008,14 @@ export function decodeReviewDecisionsJson(
   const decisions = new Map<number, PullRequestReviewDecision | null>();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const number = Number(node?.iid);
-    if (node === null || !Number.isSafeInteger(number)) continue;
-    const approvals = node.approvedBy?.nodes?.length ?? 0;
+    if (
+      node === null ||
+      !Number.isSafeInteger(number) ||
+      node.approved == null ||
+      node.approvedBy?.nodes == null
+    )
+      continue;
+    const approvals = node.approvedBy.nodes.length;
     decisions.set(
       number,
       node.approved === false && (enterprise || approvals > 0)
