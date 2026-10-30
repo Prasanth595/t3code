@@ -3645,6 +3645,15 @@ describe("advance: done on a branch the session made itself", () => {
             launched("t3code/relaunched", "/t3/wt3"),
           ],
         ],
+        [
+          "the branch it launched on, two relaunches ago",
+          OWN,
+          [
+            launched(OWN),
+            launched("t3code/second", "/t3/wt3"),
+            launched("t3code/third", "/t3/wt4"),
+          ],
+        ],
         // T3's launch branch of the other worktree, which the ledger names only by its folder.
         [
           "its worktree's launch branch",
