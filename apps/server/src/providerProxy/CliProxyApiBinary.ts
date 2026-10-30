@@ -115,6 +115,10 @@ export function parseCliProxyApiVersionOutput(output: string): string | null {
   return /\bCLIProxyAPI Version: v?(\d+\.\d+\.\d+)\b/u.exec(output)?.[1] ?? null;
 }
 
+/** T3 writes v8's config layout; v7 and older read top-level host, port, and auth fields. */
+export const isCompatibleCliProxyApiVersion = (version: string): boolean =>
+  version.split(".")[0] === CLIPROXYAPI_VERSION.split(".")[0];
+
 export class CliProxyApiBinary extends Context.Service<
   CliProxyApiBinary,
   {
@@ -170,7 +174,7 @@ const make = Effect.gen(function* () {
     const overridePath = yield* override;
     if (overridePath !== null) {
       const version = yield* probeVersion(overridePath);
-      if (version !== null) {
+      if (version !== null && isCompatibleCliProxyApiVersion(version)) {
         return {
           status: "available",
           executablePath: overridePath,
@@ -178,7 +182,11 @@ const make = Effect.gen(function* () {
           version,
         } satisfies CliProxyApiBinaryStatus;
       }
-      yield* Effect.logWarning(`${CLIPROXYAPI_PATH_ENV_NAME} does not point to CLIProxyAPI`);
+      yield* Effect.logWarning(
+        version === null
+          ? `${CLIPROXYAPI_PATH_ENV_NAME} does not point to CLIProxyAPI`
+          : `${CLIPROXYAPI_PATH_ENV_NAME} points to CLIProxyAPI ${version}; T3 Code needs ${CLIPROXYAPI_VERSION.split(".")[0]}.x`,
+      );
       return { status: "missing" } satisfies CliProxyApiBinaryStatus;
     }
     if ((yield* probeVersion(managedPath)) === CLIPROXYAPI_VERSION) {

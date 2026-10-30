@@ -203,8 +203,8 @@ proxy runs:
 
 - **This environment.** T3 Code downloads a pinned CLIProxyAPI release from GitHub, runs it on
   this machine for local connections only, and restarts it if it stops. Add accounts under
-  **Accounts** with **Add Claude** or **Add Codex**: open the sign-in page and sign in. If the
-  browser then lands on a `localhost` address that does not load, copy that address and paste it
+  **Accounts** with **Add Claude** or **Add Codex**: open the sign-in page and sign in. The
+  browser then lands on a `localhost` address that does not load; copy that address and paste it
   into T3 Code. Accounts can be disabled, enabled again, or removed there.
 - **External URL.** Enter the URL of a CLIProxyAPI server you run, and one of its API keys if it
   requires one. Add its management key to manage its accounts in the same place and see them under

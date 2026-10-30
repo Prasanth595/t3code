@@ -236,14 +236,8 @@ const make = Effect.gen(function* () {
   ) {
     const management = yield* requireManagement;
     const path = LOGIN_PATHS[provider];
-    // `is_webui` makes the proxy catch the browser's localhost redirect itself, which finishes
-    // the sign-in without a paste when the browser runs on the proxy's machine. It needs the
-    // provider's fixed callback port, so fall back to paste-back when that port is taken.
-    const body = yield* request(management, HttpClientRequest.get, `${path}?is_webui=true`).pipe(
-      Effect.catchTags({
-        ProviderProxyError: () => request(management, HttpClientRequest.get, path),
-      }),
-    );
+    // Not `is_webui`: its callback forwarder binds 0.0.0.0, so sign-in completes by paste-back.
+    const body = yield* request(management, HttpClientRequest.get, path);
     return yield* decodeLogin(body).pipe(Effect.mapError(malformed));
   });
 

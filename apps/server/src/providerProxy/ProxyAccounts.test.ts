@@ -198,23 +198,17 @@ describe("ProxyAccounts", () => {
         });
 
         expect(recorded.map(({ method, url }) => `${method} ${url}`)).toEqual([
-          // The callback port was taken, so the proxy refused to catch the redirect.
-          "GET http://proxy.test:8317/v0/management/anthropic-auth-url?is_webui=true",
           "GET http://proxy.test:8317/v0/management/anthropic-auth-url",
           "GET http://proxy.test:8317/v0/management/get-auth-status?state=abc123",
           "POST http://proxy.test:8317/v0/management/oauth-callback",
         ]);
-        expect(JSON.parse(recorded[3]!.body)).toEqual({
+        expect(JSON.parse(recorded[2]!.body)).toEqual({
           redirect_url: "http://localhost:54545/callback?code=c&state=abc123",
         });
       }).pipe(
         withProxy(
           managementApi(
             {
-              "GET anthropic-auth-url?is_webui=true": {
-                status: 500,
-                body: { error: "failed to start callback server" },
-              },
               "GET anthropic-auth-url": {
                 body: {
                   status: "ok",

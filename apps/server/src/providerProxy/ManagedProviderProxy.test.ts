@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { parse as parseYaml } from "yaml";
 
-import { parseCliProxyApiVersionOutput } from "./CliProxyApiBinary.ts";
+import {
+  isCompatibleCliProxyApiVersion,
+  parseCliProxyApiVersionOutput,
+} from "./CliProxyApiBinary.ts";
 import { renderCliProxyApiConfig } from "./ManagedProviderProxy.ts";
 
 describe("renderCliProxyApiConfig", () => {
@@ -38,5 +41,11 @@ describe("parseCliProxyApiVersionOutput", () => {
       ),
     ).toBe("8.0.47");
     expect(parseCliProxyApiVersionOutput("Usage of cli-proxy-api\n  -config string\n")).toBeNull();
+    // A v7 override would ignore the v8 listener and management settings T3 writes.
+    expect(["8.0.47", "8.1.0", "7.2.81"].map(isCompatibleCliProxyApiVersion)).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 });
