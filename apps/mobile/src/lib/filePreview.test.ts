@@ -1452,7 +1452,6 @@ it("does not read a newly created feed's guest details until creation completes"
     dispatchingMessageId: null,
     onEditPendingMessage: null,
     contentPresentation: { kind: "ready" },
-    agentLabel: "agent",
     latestRun: null,
     activeWorkStartedAt: null,
     listRef: { current: null },
