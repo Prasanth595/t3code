@@ -273,6 +273,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "import-projects",
     title: "Import from Claude Code and Codex",
     to: "/settings/projects",
+    scope: "environment-defaults",
     searchTerms: ["import projects threads conversations history sessions transcripts"],
   },
   {

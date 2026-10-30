@@ -205,6 +205,11 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(updates.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(updates.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(updates.scope, "project")).toBe(false);
+    // The import row only renders while no project is selected.
+    const importProjects = getSettingsSearchTargetScope("import-projects")!;
+    expect(isSettingsSearchScopeAvailable(importProjects.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(importProjects.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(importProjects.scope, "project")).toBe(false);
     const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
