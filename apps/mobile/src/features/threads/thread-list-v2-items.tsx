@@ -27,7 +27,7 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, INDEFINITE_SNOOZE_UNTIL } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
@@ -775,6 +775,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
+      { id: "snooze:indefinite", title: "Indefinitely" },
       { id: "snooze:custom", title: "Custom…" },
     ],
     [snoozePresets],
@@ -957,6 +958,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
+        return;
+      }
+      if (nativeEvent.event === "snooze:indefinite") {
+        handleSnooze(INDEFINITE_SNOOZE_UNTIL);
         return;
       }
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({

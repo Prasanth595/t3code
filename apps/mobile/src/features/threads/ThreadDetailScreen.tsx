@@ -754,12 +754,15 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
     if (contentPresentationKind === "ready" && (snoozed || settled || woke)) {
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
-      const label =
-        snoozed && snoozedUntil !== null
-          ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
-          : settled
-            ? "Settled"
-            : "Woke from snooze";
+      const snoozeWake =
+        snoozedUntil === null ? null : snoozeWakeLabel(snoozedUntil, { now: lifecycleNow });
+      const label = snoozed
+        ? snoozeWake === null
+          ? "Snoozed"
+          : `Snoozed, wakes in ${snoozeWake}`
+        : settled
+          ? "Settled"
+          : "Woke from snooze";
       const actionLabel = snoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
       return {
         kind: "lifecycle",

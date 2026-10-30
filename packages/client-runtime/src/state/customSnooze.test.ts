@@ -1,6 +1,11 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar and elapsed-time snooze input.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { resolveCustomSnooze } from "./threadSettled.ts";
+import {
+  effectiveSnoozed,
+  INDEFINITE_SNOOZE_UNTIL,
+  resolveCustomSnooze,
+  snoozeWakeLabel,
+} from "./threadSettled.ts";
 
 const now = new Date(2026, 8, 14, 14, 30);
 
@@ -38,6 +43,23 @@ describe("custom snooze", () => {
         new Date("2027-03-01T00:00:00Z"),
       ),
     ).toBeNull();
+  });
+
+  it("keeps an indefinite snooze snoozed without a wake label", () => {
+    const shell = {
+      snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
+      snoozedAt: now.toISOString(),
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+    };
+    const farFuture = new Date(Date.UTC(9000, 0, 1)).toISOString();
+    expect(effectiveSnoozed(shell, { now: farFuture })).toBe(true);
+    expect(snoozeWakeLabel(INDEFINITE_SNOOZE_UNTIL, { now: now.toISOString() })).toBeNull();
+    expect(
+      snoozeWakeLabel(new Date(now.getTime() + 90 * 60_000).toISOString(), {
+        now: now.toISOString(),
+      }),
+    ).toBe("2h");
   });
 
   it("treats duration days as 24 hours across DST", () => {

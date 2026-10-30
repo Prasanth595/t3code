@@ -323,7 +323,22 @@ export function pickSnoozePreset(input: {
   return (setting && resolveSnoozePreset(setting, input.now, input.formatTime)) ?? ahead;
 }
 
-export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
+/**
+ * A wake time no thread reaches, so servers and older clients treat it as an ordinary snooze.
+ * Only a hand-raise or "Wake thread" ends it.
+ */
+export const INDEFINITE_SNOOZE_UNTIL = "9999-12-31T00:00:00.000Z";
+
+function isIndefiniteSnooze(snoozedUntil: string): boolean {
+  return Date.parse(snoozedUntil) === Date.parse(INDEFINITE_SNOOZE_UNTIL);
+}
+
+/** Time left until the wake, or null for an indefinite snooze. */
+export function snoozeWakeLabel(
+  snoozedUntil: string,
+  options: { readonly now: string },
+): string | null {
+  if (isIndefiniteSnooze(snoozedUntil)) return null;
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
