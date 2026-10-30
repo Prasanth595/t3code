@@ -174,14 +174,17 @@ export const make = Effect.gen(function* () {
     );
 
   // REST omits line counts; the CLI recovers optional stats failures per batch.
-  const mergeRequestWithStats = (input: {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly number: number;
-  }) =>
+  const mergeRequestWithStats = (
+    input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+    },
+    detail = cli.getMergeRequestDetail(input),
+  ) =>
     Effect.all(
       [
-        mergeRequestDetail(input),
+        detail,
         cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] }),
       ],
       { concurrency: 2 },
@@ -243,7 +246,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.all(
         [
-          mergeRequestWithStats(input),
+          mergeRequestWithStats(input, mergeRequestDetail(input)),
           Cache.get(projectMergeCapabilities, JSON.stringify([input.cwd, input.repository])),
         ],
         { concurrency: 2 },

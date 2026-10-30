@@ -262,6 +262,11 @@ describe("merge request reads", () => {
       yield* checks(reference);
 
       expect(calls.detail).toBe(1);
+
+      const summary = provider.getChangeRequestSummary;
+      assert.isDefined(summary);
+      yield* summary(reference);
+      expect(calls.detail).toBe(2);
     }),
   );
 
