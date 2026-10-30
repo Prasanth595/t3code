@@ -572,6 +572,15 @@ describe("readMachineConfigReport", () => {
       const own = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
       const { report: ownReport } = yield* report(COMMENTED, of([defaulted]), own);
       assert.isFalse(ownReport.repos[0]?.default_config);
+      // An error says which config it came from; one that cannot tell keeps the listing's mark.
+      const label = (reading: RepoConfigReading) =>
+        report(COMMENTED, of([defaulted]), new Map([["a/b", reading]])).pipe(
+          Effect.map(({ report: r }) => r.repos[0]?.default_config),
+        );
+      const errors = [{ file: ".dw/config.yml", message: "bad" }];
+      assert.isFalse(yield* label({ kind: "errors", errors, onDefault: false }));
+      assert.isTrue(yield* label({ kind: "errors", errors, onDefault: true }));
+      assert.isTrue(yield* label({ kind: "errors", errors }));
     }),
   );
 });

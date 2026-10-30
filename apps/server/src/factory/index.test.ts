@@ -1476,8 +1476,27 @@ describe("liveWorld", () => {
         if (reading?.kind === "errors") {
           assert.strictEqual(reading.errors.length, 1);
           assert.include(reading.errors[0]?.message, part);
+          assert.strictEqual(reading.onDefault, true);
         }
       });
+
+    it.effect("a broken factory block on GitHub is the repo's own error, not the default's", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "develop" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.isTrue(Result.isFailure(result));
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") assert.strictEqual(reading.onDefault, false);
+      }),
+    );
 
     it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
       failsWith(
