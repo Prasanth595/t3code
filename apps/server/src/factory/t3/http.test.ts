@@ -61,6 +61,10 @@ import { WatchedReposError } from "./watchedRepos.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
 
+const decodeClientSessions = Schema.decodeUnknownSync(
+  Schema.toCodecJson(Schema.Array(AuthClientSession)),
+);
+
 /** A route that needs a scope a standard client lacks, to prove the scope check. */
 const testOnlyRoute = route(
   "GET",
@@ -582,9 +586,7 @@ describe("GET /api/factory/auth/clients", () => {
     serving({}, async (call, { tokens }) => {
       const response = await call("GET", CLIENTS_PATH, tokens.accessRead);
       assert.strictEqual(response.status, 200);
-      const sessions = Schema.decodeUnknownSync(
-        Schema.toCodecJson(Schema.Array(AuthClientSession)),
-      )(await response.json());
+      const sessions = decodeClientSessions(await response.json());
       assert.strictEqual(sessions.length, Object.keys(tokens).length);
       const current = sessions.filter((session) => session.current);
       assert.strictEqual(current.length, 1);

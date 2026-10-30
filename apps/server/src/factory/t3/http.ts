@@ -1,9 +1,7 @@
 /**
- * The factory's HTTP routes, each behind T3's own authentication (`route`). Reads need
- * `orchestration:read`, config writes `settings:write`, control `orchestration:operate`, and `POST
- * /api/factory/restart` needs `environment:maintain`, so an operate-only MCP client cannot end the
- * server. `GET /api/factory/auth/clients` needs `access:read`, as T3's own session list does. A run
- * id is parsed before anything is read, so none reaches the file system as a path.
+ * The factory's HTTP routes, each behind T3's own authentication (`route`), with the scope named at
+ * each route. Restart needs `environment:maintain`, so an operate-only MCP client cannot end the
+ * server. A run id is parsed before anything is read, so none reaches the file system as a path.
  */
 import {
   AuthAccessReadScope,
