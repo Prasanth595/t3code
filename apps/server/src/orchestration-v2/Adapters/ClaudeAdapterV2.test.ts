@@ -9044,7 +9044,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("closes an approval card when Claude withdraws its permission request", () =>
+  it.effect.each([
+    { card: "an approval", toolName: "Bash", toolInput: { command: "echo probe" } },
+    {
+      card: "a question",
+      toolName: "AskUserQuestion",
+      toolInput: {
+        questions: [
+          {
+            header: "Target",
+            question: "Where should this deploy?",
+            options: [
+              { label: "Production", description: "Deploy to production." },
+              { label: "Staging", description: "Deploy to staging." },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    },
+  ])("closes $card card when Claude withdraws its request", ({ toolName, toolInput }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -9067,15 +9086,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, withdraws the request.
         const withdrawal = new AbortController();
         const permission = yield* Effect.promise(() =>
-          harness.getOpenedOptions()!.canUseTool!(
-            "Bash",
-            { command: "echo probe" },
-            {
-              signal: withdrawal.signal,
-              toolUseID: "toolu_01WithdrawnApproval",
-              requestId: "request-withdrawn-approval",
-            },
-          ),
+          harness.getOpenedOptions()!.canUseTool!(toolName, toolInput, {
+            signal: withdrawal.signal,
+            toolUseID: "toolu_01WithdrawnApproval",
+            requestId: "request-withdrawn-approval",
+          }),
         ).pipe(Effect.forkScoped);
         const pending = (yield* Queue.take(harness.runtimeRequestReceipts)).runtimeRequest;
         assert.equal(pending.status, "pending");
