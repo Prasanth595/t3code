@@ -18,7 +18,7 @@ import {
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search" | "menus"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
@@ -48,6 +48,8 @@ export function SettingsScreen(
         actions={props.actions}
         search={props.search}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
+        // iOS screens put their filter menus in native header items themselves.
+        menus={Platform.OS === "android" ? props.menus : undefined}
         sidebar={false}
         onBack={workspaceRoot ? undefined : () => navigation.goBack()}
         hideBottomBorder={!props.formSheet}
