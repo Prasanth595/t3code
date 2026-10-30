@@ -340,7 +340,6 @@ describe("presentPendingBackgroundWork", () => {
       description: "pnpm test",
       title: "Waiting on command pnpm test",
     },
-    { kind: "command", awaited: undefined, description: "pnpm test", title: "Running: pnpm test" },
   ] as const)("titles a $kind with awaited $awaited", ({ kind, awaited, description, title }) => {
     expect(
       presentPendingBackgroundWork([

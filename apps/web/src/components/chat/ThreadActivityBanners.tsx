@@ -180,21 +180,20 @@ export function backgroundWorkNowItem(input: {
   const newest = rows
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
-  const isShellWork = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
+  const kinds = rows.map((row) => row.task.kind);
   // Monitors describe themselves in prose; commands are code.
-  const isMonitor = (row: (typeof rows)[number]) => row.task.kind === "monitor";
-  const isCode = (row: (typeof rows)[number]) => isShellWork(row) && !isMonitor(row);
+  const isCode = (kind: (typeof kinds)[number]) => kind !== "subagent" && kind !== "monitor";
   const verb = presentation.waiting ? "Waiting on" : "Running";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    icon: rows.every(isMonitor) ? (
+    icon: kinds.every((kind) => kind === "monitor") ? (
       <EyeIcon />
-    ) : rows.every(isShellWork) ? (
-      <TerminalIcon />
-    ) : (
+    ) : kinds.includes("subagent") ? (
       <CircleDashedIcon />
+    ) : (
+      <TerminalIcon />
     ),
     title: only ? (
       // The presenter titles a task that reads as its own sentence with just its label.
@@ -203,7 +202,7 @@ export function backgroundWorkNowItem(input: {
       ) : (
         <>
           {verb}{" "}
-          <span className={cn("text-foreground", isCode(only) && "font-mono text-2xs")}>
+          <span className={cn("text-foreground", isCode(only.task.kind) && "font-mono text-2xs")}>
             {only.task.label}
           </span>
         </>
@@ -215,7 +214,7 @@ export function backgroundWorkNowItem(input: {
       only.activity
     ) : newest ? (
       `${newest.task.label}: ${newest.activity}`
-    ) : rows.every(isCode) ? (
+    ) : kinds.every(isCode) ? (
       <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
     ) : (
       rows.map((row) => row.task.label).join(", ")
