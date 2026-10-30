@@ -87,12 +87,9 @@ export class ServerBrowserContexts {
 
   private async launchOptions() {
     const executable = await this.options.executable();
-    const launcher = await this.options.launcher?.(executable);
     const env = this.options.env ?? process.env;
     return {
       executable,
-      release: launcher?.release,
-      executablePath: launcher?.path ?? executable,
       env,
       args: [
         "--disable-gpu",
@@ -106,24 +103,26 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(
-    launched: { readonly executable: string; readonly release: (() => Promise<void>) | undefined },
-    start: () => Promise<A>,
-  ) {
+  private async launch<A>(executable: string, start: (executablePath: string) => Promise<A>) {
+    let release: (() => Promise<void>) | undefined;
     try {
-      return await start();
+      const launcher = await this.options.launcher?.(executable);
+      release = launcher?.release;
+      return await start(launcher?.path ?? executable);
     } catch (cause) {
-      throw (await this.options.diagnose?.(launched.executable, cause)) ?? cause;
+      throw (await this.options.diagnose?.(executable, cause)) ?? cause;
     } finally {
-      await launched.release?.().catch(constVoid);
+      await release?.().catch(constVoid);
     }
   }
 
   private sharedBrowser() {
     if (!this.browser) {
-      const launched = this.launchOptions().then(async ({ executable, release, ...options }) => {
+      const launched = this.launchOptions().then(async ({ executable, ...options }) => {
         const { chromium } = loadPlaywright();
-        const browser = await this.launch({ executable, release }, () => chromium.launch(options));
+        const browser = await this.launch(executable, (executablePath) =>
+          chromium.launch({ ...options, executablePath }),
+        );
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -172,10 +171,14 @@ export class ServerBrowserContexts {
     }
     const directory = this.profileDirectory(profileId);
     await NodeFSP.mkdir(directory, { recursive: true });
-    const { executable, release, ...options } = await this.launchOptions();
+    const { executable, ...options } = await this.launchOptions();
     const { chromium } = loadPlaywright();
-    return this.launch({ executable, release }, () =>
-      chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
+    return this.launch(executable, (executablePath) =>
+      chromium.launchPersistentContext(directory, {
+        ...options,
+        ...contextOptions,
+        executablePath,
+      }),
     );
   }
 

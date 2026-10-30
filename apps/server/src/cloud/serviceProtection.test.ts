@@ -187,7 +187,8 @@ it.effect("lowers no score before the manager default is in place, and undoes in
     };
     const refused = yield* withSudo(ServiceProtection.applyProtection(plan), 1);
     expect(refused.exit._tag).toBe("Failure");
-    expect(present().user).toBe(0);
+    expect(refused.atSudo).toEqual({ managerDefaults: true, user: 0 });
+    expect(present()).toEqual({ managerDefaults: false, user: 0 });
 
     const applied = yield* withSudo(ServiceProtection.applyProtection(plan), 0);
     expect(applied.atSudo).toEqual({ managerDefaults: true, user: 0 });

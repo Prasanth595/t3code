@@ -77,7 +77,11 @@ describe("ServerBrowserContexts", () => {
   it("lazily shares one browser across concurrent isolated sessions and reuses each context", async () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();
-    launches.launch.mockReturnValue(launch.promise);
+    const started = Promise.withResolvers<void>();
+    launches.launch.mockImplementation(() => {
+      started.resolve();
+      return launch.promise;
+    });
     const { configuration, release } = withLauncher();
     const pool = new ServerBrowserContexts(configuration);
     expect(configuration.executable).not.toHaveBeenCalled();
@@ -85,7 +89,7 @@ describe("ServerBrowserContexts", () => {
     const again = pool.contextFor("default", "agent-a");
     const second = pool.contextFor("default", "agent-b");
     const incognito = pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID);
-    await vi.waitFor(() => expect(launches.launch).toHaveBeenCalled());
+    await started.promise;
     // Playwright may retry the same path until the launch settles.
     expect(release).not.toHaveBeenCalled();
     launch.resolve(browser as unknown as Browser);
@@ -124,6 +128,21 @@ describe("ServerBrowserContexts", () => {
     expect(launches.mkdir).toHaveBeenCalledWith("/test/profiles/work%2Fteam", { recursive: true });
     await pool.close();
     expect(human.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("diagnoses a launcher failure against the real executable", async () => {
+    const diagnosed = new Error("diagnosed");
+    const diagnose = vi.fn(async () => diagnosed);
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      diagnose,
+      launcher: vi.fn(async () => {
+        throw new Error("EACCES");
+      }),
+    });
+    await expect(pool.contextFor("default", "agent")).rejects.toBe(diagnosed);
+    expect(diagnose).toHaveBeenCalledExactlyOnceWith("/test/chromium", expect.any(Error));
+    expect(launches.launch).not.toHaveBeenCalled();
   });
 
   it("creates no launcher for a profile whose storage cannot be created", async () => {

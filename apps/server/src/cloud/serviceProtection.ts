@@ -255,8 +255,16 @@ const runPrivileged = Effect.fn("ServiceProtection.runPrivileged")(function* (sc
 export const applyProtection = Effect.fn("ServiceProtection.apply")(function* (
   plan: ProtectionPlan,
 ) {
+  const fs = yield* FileSystem.FileSystem;
+  const hadManagerDefaults = yield* fs
+    .exists(plan.managerDefaults.path)
+    .pipe(Effect.orElseSucceed(() => false));
   yield* writeDropIns([plan.managerDefaults]);
-  yield* runPrivileged(renderPrivilegedScript(plan, "apply"));
+  yield* runPrivileged(renderPrivilegedScript(plan, "apply")).pipe(
+    Effect.tapError(() =>
+      hadManagerDefaults ? Effect.void : removeDropIns([plan.managerDefaults]).pipe(Effect.ignore),
+    ),
+  );
   yield* writeDropIns(plan.user);
   yield* reloadUserManager;
 });
