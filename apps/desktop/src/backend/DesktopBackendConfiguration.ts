@@ -20,6 +20,7 @@ import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopCliShim from "../app/DesktopCliShim.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+import * as DesktopOwnerIdentity from "./DesktopOwnerIdentity.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -486,6 +487,13 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
+      /**
+       * Identifies this desktop installation to the server it starts. The
+       * server persists it in its runtime record, so a later desktop launch
+       * can tell its own leftover apart from a server the user started by
+       * hand.
+       */
+      readonly desktopOwnerId: string;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -504,6 +512,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       desktopBootstrapSecret: input.bootstrapSecret,
+      desktopOwnerId: input.desktopOwnerId,
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
@@ -548,6 +557,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    /**
+     * Identifies this desktop installation to the server it starts. The WSL
+     * server keeps its own home directory, but the record it writes still
+     * says which desktop started it.
+     */
+    readonly desktopOwnerId: string;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -572,6 +587,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
+    desktopOwnerId: input.desktopOwnerId,
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
@@ -722,6 +738,7 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  const ownerIdentity = yield* DesktopOwnerIdentity.DesktopOwnerIdentity;
   const crypto = yield* Crypto.Crypto;
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
@@ -764,6 +781,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      desktopOwnerId: yield* ownerIdentity.ownerId,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -788,6 +806,7 @@ export const make = Effect.gen(function* () {
       resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
+      desktopOwnerId: yield* ownerIdentity.ownerId,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
@@ -833,7 +852,11 @@ export const make = Effect.gen(function* () {
     resolveWsl: Effect.fnUntraced(
       function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        return yield* resolveWslStartConfig({
+          ...shared,
+          ...input,
+          desktopOwnerId: yield* ownerIdentity.ownerId,
+        }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
