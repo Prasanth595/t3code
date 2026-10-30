@@ -141,6 +141,7 @@ it("bounds pasted registry searches before debounce and submission", async () =>
     });
   });
   await userEvent.keyboard("{Enter}");
+  expect(state.refresh).toHaveBeenCalledTimes(1);
 
   await expect.element(searchbox).toHaveValue("agent".repeat(24));
   await expect.element(screen.getByText("No compatible agents found")).toBeVisible();
