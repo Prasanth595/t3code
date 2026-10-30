@@ -207,6 +207,7 @@ const fixture = Effect.fn("fixture")(function* (
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.get(settings),
+        telemetryOptOutGeneration: Effect.succeed(0),
         updateSettings: (patch) =>
           Ref.updateAndGet(settings, (current) => ({
             ...current,

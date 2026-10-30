@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
+import { ProductAnalyticsControl } from "./ProductAnalyticsControl";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -1985,6 +1986,7 @@ export function MaintenanceSettingsPanel() {
 }
 
 export function AboutSettingsPanel() {
+  const { connectedEnvironments } = useSettingsScope();
   return (
     <SettingsPageContainer>
       <SettingsSection id="about" title="App">
@@ -2002,10 +2004,31 @@ export function AboutSettingsPanel() {
         <MobileAppSettingsRow />
       </SettingsSection>
 
+      <SettingsSection id="product-analytics" title="Privacy">
+        {connectedEnvironments.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Connect an environment to change its product analytics preference.
+          </p>
+        ) : (
+          connectedEnvironments.map((environment) => (
+            <ProductAnalyticsControl
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+            />
+          ))
+        )}
+        <p className="text-xs text-muted-foreground">
+          This controls product analytics only. Relay diagnostics, mobile crash reports, and your
+          own OpenTelemetry exports are separate. T3CODE_TELEMETRY_ENABLED=false always disables
+          product analytics, even when this switch is on.
+        </p>
+      </SettingsSection>
+
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
           {...searchableSetting("privacy-policy")}
-          description="How we handle your data, including the anonymous usage data T3 Code collects."
+          description="How we handle your data, including product usage events and linked identifiers."
           control={
             <Button
               render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
