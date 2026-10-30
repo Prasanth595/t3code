@@ -113,7 +113,7 @@ export function measureGhosttyCell(
 ): GhosttyCellMetrics {
   context.font = `normal 400 ${fontSize}px ${fontFamily}`;
   const widthMeasurement = context.measureText("M");
-  const verticalMeasurement = context.measureText("Mg");
+  const verticalMeasurement = context.measureText("Mg|(Å");
   const inkAscent = nonnegativeMetric(verticalMeasurement.actualBoundingBoxAscent, fontSize);
   const inkDescent = nonnegativeMetric(verticalMeasurement.actualBoundingBoxDescent, 0);
   const glyphHeight = inkAscent + inkDescent;
@@ -124,11 +124,11 @@ export function measureGhosttyCell(
   const natural = Math.max(1, Math.round(fontAscent + fontDescent));
   const percent = resolveTerminalCellHeightAdjust(cellHeightAdjust);
   const adjusted = Math.max(1, Math.round((natural * (100 + percent)) / 100));
-  const height = Math.max(adjusted, Math.ceil(glyphHeight));
+  const height = Math.max(adjusted, Math.ceil(glyphHeight), Math.ceil(fontAscent + fontDescent));
   const fontBox = fontAscent + fontDescent;
-  let baseline = Math.round(fontAscent + (height - fontBox) / 2);
+  let baseline = fontAscent + (height - fontBox) / 2;
   if (baseline - inkAscent < 0 || baseline + inkDescent > height) {
-    baseline = Math.round((height - glyphHeight) / 2 + inkAscent);
+    baseline = (height - glyphHeight) / 2 + inkAscent;
   }
   return {
     width: Math.max(1, widthMeasurement.width),

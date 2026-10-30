@@ -43,12 +43,16 @@ describe("measureGhosttyCell", () => {
     expect(18).toBe(Math.round(fontSize * 1.35));
   });
 
-  it("never shrinks a row below the measured glyph", () => {
-    const clamped = measureGhosttyCell(dejavu, fontSize, "DejaVu Sans Mono", -50);
-    expect(Math.round(15 * 0.5)).toBeLessThan(12);
-    expect(clamped.height).toBe(12);
-    expect(clamped.baseline - 9).toBeGreaterThanOrEqual(0);
-    expect(clamped.baseline + 3).toBeLessThanOrEqual(clamped.height);
+  it.each([
+    { fontAscent: 12, fontDescent: 3, inkAscent: 9, inkDescent: 3 },
+    { fontAscent: 9.6, fontDescent: 2.4, inkAscent: 9.6, inkDescent: 2.4 },
+    { fontAscent: 10, fontDescent: 2, inkAscent: 12.1, inkDescent: 3 },
+  ])("keeps font and glyph bounds inside a reduced row: %j", (metrics) => {
+    const clamped = measureGhosttyCell(measuringContext(metrics), fontSize, "monospace", -50);
+    expect(clamped.height).toBeGreaterThanOrEqual(metrics.fontAscent + metrics.fontDescent);
+    expect(clamped.height).toBeGreaterThanOrEqual(metrics.inkAscent + metrics.inkDescent);
+    expect(clamped.baseline - metrics.inkAscent).toBeGreaterThanOrEqual(0);
+    expect(clamped.baseline + metrics.inkDescent).toBeLessThanOrEqual(clamped.height);
   });
 
   it("clamps out-of-range percentages before measuring", () => {

@@ -118,6 +118,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     const canvas = new TerminalTestElement();
     const mount = new TerminalTestElement();
     const context = {
+      font: "",
       canvas,
       beginPath() {},
       clip() {},
@@ -264,18 +265,44 @@ describe("GhosttyTerminalSurface visibility", () => {
 
   it("reflows row height with the cell height adjustment and never undercuts the glyph", async () => {
     const harness = createHarness();
-    const surface = await harness.create({ font: { size: 12 } });
+    const onResize = vi.fn();
+    const surface = await harness.create({ font: { size: 12 }, onResize });
+    expect(surface.rows).toBe(6);
     const initial = surface.heightForRows(1);
     await surface.setFont({ size: 12, cellHeightAdjust: 0 });
     expect(surface.heightForRows(1)).toBe(initial);
     await surface.setFont({ size: 12, cellHeightAdjust: 20 });
     expect(surface.heightForRows(1)).toBeGreaterThan(initial);
+    expect(surface.rows).toBe(5);
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenLastCalledWith(surface.cols, 5);
     await surface.setFont({ size: 12, cellHeightAdjust: -50 });
     const clamped = surface.heightForRows(1);
-    expect(clamped).toBeLessThan(initial);
+    expect(clamped).toBe(initial);
     await surface.setFont({ size: 12, cellHeightAdjust: -100 });
     expect(surface.heightForRows(1)).toBe(clamped);
   });
+
+  it.each([0, 20])(
+    "cancels a pending font load when returning to the committed font at %i percent",
+    async (cellHeightAdjust) => {
+      const harness = createHarness();
+      const surface = await harness.create({ font: { size: 12 } });
+      const initial = surface.heightForRows(1);
+      let finishLoading!: (fonts: FontFace[]) => void;
+      const loading = new Promise<FontFace[]>((resolve) => {
+        finishLoading = resolve;
+      });
+      vi.spyOn(document.fonts, "load").mockReturnValue(loading);
+      const pending = surface.setFont({ size: 18, cellHeightAdjust: 20 });
+      await surface.setFont({ size: 12, cellHeightAdjust });
+      expect(surface.heightForRows(1)).toBe(cellHeightAdjust === 0 ? initial : 27);
+      finishLoading([]);
+      await pending;
+      expect(harness.canvas.getContext().font).toContain("12px");
+      expect(surface.heightForRows(1)).toBe(cellHeightAdjust === 0 ? initial : 27);
+    },
+  );
 
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });

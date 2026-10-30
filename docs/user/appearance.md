@@ -54,8 +54,8 @@ On web and desktop, **Settings → Appearance** includes **Terminal cell height 
 0% uses the font's natural line height, the same spacing Ghostty uses for that font and size.
 The terminal used to force rows to 1.35 times the font size, which is looser than that natural
 height. For DejaVu Sans Mono at 13px, about +20% restores the old spacing. The slider runs from
-−50% to +100%. A row never gets shorter than its glyphs, so box drawing and QR codes stay
-intact. Mobile keeps its own terminal text settings.
+−50% to +100%, with reductions limited by the font’s full height and the measured glyphs
+to protect accents and descenders. Negative values can therefore have no visible effect.
 
 ## Custom themes
 

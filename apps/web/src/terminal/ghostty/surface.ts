@@ -787,10 +787,14 @@ export class GhosttyTerminalSurface {
     const fontSize = terminalFontSize(font.size);
     const cellHeightAdjust = resolveTerminalCellHeightAdjust(font.cellHeightAdjust);
     if (font.family === this.requestedFontFamily && fontSize === this.fontSize) {
-      if (cellHeightAdjust === this.cellHeightAdjust) return;
+      const supersededLoad = this.pendingFontEpoch !== null;
+      if (supersededLoad) {
+        this.fontEpoch++;
+        this.pendingFontEpoch = null;
+      }
+      if (cellHeightAdjust === this.cellHeightAdjust && !supersededLoad) return;
       this.cellHeightAdjust = cellHeightAdjust;
-      // A size or family load still in flight applies this pitch when it commits.
-      if (this.pendingFontEpoch === null) this.applyFontMetrics();
+      this.applyFontMetrics();
       return;
     }
     this.cellHeightAdjust = cellHeightAdjust;
