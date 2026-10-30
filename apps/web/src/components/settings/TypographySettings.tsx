@@ -119,7 +119,6 @@ function ChatFontRow() {
         value: settings.fontSizeChat,
         defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeChat,
         onChange: (fontSizeChat) => updateSettings({ fontSizeChat }),
-        onClear: () => updateSettings({ fontSizeChat: null }),
       }}
       preview={<ChatFontPreview />}
     />
@@ -415,11 +414,9 @@ function FontFamilySettingsRow({
     label: string;
     min: number;
     max: number;
-    value: number | null;
-    defaultValue: number | null;
+    value: number;
+    defaultValue: number;
     onChange: (v: number) => void;
-    /** Adds a "Default" option that stores null. */
-    onClear?: () => void;
   };
 }) {
   const trimmed = value.trim();
@@ -538,13 +535,9 @@ function FontFamilySettingsRow({
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
       <Select
-        value={size.value === null ? "default" : String(size.value)}
+        value={String(size.value)}
         onValueChange={(next) => {
           if (typeof next !== "string") return;
-          if (next === "default") {
-            size.onClear?.();
-            return;
-          }
           const parsed = Number(next);
           if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
             size.onChange(parsed);
@@ -552,14 +545,9 @@ function FontFamilySettingsRow({
         }}
       >
         <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
-          <SelectValue>{size.value === null ? "Default" : `${size.value} px`}</SelectValue>
+          <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
-          {size.onClear !== undefined ? (
-            <SelectItem hideIndicator value="default">
-              Default
-            </SelectItem>
-          ) : null}
           {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
             (px) => (
               <SelectItem hideIndicator key={px} value={String(px)}>
