@@ -1,5 +1,4 @@
 import {
-  DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_PROMPT_FONT_SIZE,
@@ -68,7 +67,7 @@ export interface AppearanceFontPreferences {
   readonly chat: string;
   readonly sizeInterface: number;
   readonly sizePrompt: number;
-  readonly sizeChat: number;
+  readonly sizeChat: number | null;
   readonly sizeCode: number;
   readonly smoothing: boolean;
 }
@@ -96,8 +95,7 @@ export function applyAppearanceFontVariables(
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const chat = clampChatFontSize(preferences.sizeChat);
-  // The default leaves messages on their rem size, so they keep following the interface size.
-  if (chat === DEFAULT_CHAT_FONT_SIZE) {
+  if (chat === null) {
     root.style.removeProperty("--font-size-chat");
   } else {
     root.style.setProperty("--font-size-chat", `${chat}px`);
@@ -131,8 +129,9 @@ function clampPromptFontSize(value: number): number {
   return clampFontSize(value, MIN_PROMPT_FONT_SIZE, MAX_PROMPT_FONT_SIZE, DEFAULT_PROMPT_FONT_SIZE);
 }
 
-function clampChatFontSize(value: number): number {
-  return clampFontSize(value, MIN_CHAT_FONT_SIZE, MAX_CHAT_FONT_SIZE, DEFAULT_CHAT_FONT_SIZE);
+function clampChatFontSize(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.min(MAX_CHAT_FONT_SIZE, Math.max(MIN_CHAT_FONT_SIZE, Math.round(value)));
 }
 
 function clampCodeFontSize(value: number): number {
