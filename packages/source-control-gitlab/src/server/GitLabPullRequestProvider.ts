@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
+  PullRequestReviewDecision,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
@@ -173,6 +174,16 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The rows were already read, so even a rate limit only leaves their decision unknown.
+  const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
+    cli
+      .getReviewDecisions(input)
+      .pipe(
+        Effect.orElseSucceed(
+          (): ReadonlyMap<number, PullRequestReviewDecision | null> => new Map(),
+        ),
+      );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
@@ -195,8 +206,20 @@ export const make = Effect.gen(function* () {
           filters: input.filters,
         })
         .pipe(
+          Effect.flatMap((batch) =>
+            reviewDecisions({
+              cwd: input.cwd,
+              repository: input.repository,
+              numbers: batch.items.map((item) => item.number),
+            }).pipe(
+              Effect.map((decisions) => ({
+                ...batch,
+                items: batch.items.map((item) => withReviewDecision(item, decisions)),
+                continues: true,
+              })),
+            ),
+          ),
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
     getChangeRequestChecks: (input) =>
@@ -210,7 +233,20 @@ export const make = Effect.gen(function* () {
       cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestSummary: (input) =>
-      cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      Effect.all(
+        [
+          cli.getMergeRequestDetail(input),
+          reviewDecisions({
+            cwd: input.cwd,
+            repository: input.repository,
+            numbers: [input.number],
+          }),
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(([mergeRequest, decisions]) => withReviewDecision(mergeRequest, decisions)),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      ),
 
     getChangeRequest: (input) =>
       Effect.all(
@@ -423,3 +459,11 @@ export const make = Effect.gen(function* () {
 
   return provider;
 });
+
+function withReviewDecision<Item extends { readonly number: number }>(
+  item: Item,
+  decisions: ReadonlyMap<number, PullRequestReviewDecision | null>,
+): Item & { readonly reviewDecision?: PullRequestReviewDecision | null } {
+  const reviewDecision = decisions.get(item.number);
+  return reviewDecision === undefined ? item : { ...item, reviewDecision };
+}
