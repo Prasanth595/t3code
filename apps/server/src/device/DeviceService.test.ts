@@ -56,7 +56,6 @@ const fixture = Effect.fn("fixture")(function* (
     readonly endsDevices?: boolean;
     readonly routesStreams?: boolean;
     readonly onShutdown?: Effect.Effect<void>;
-    readonly onAttach?: Effect.Effect<void>;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -98,7 +97,6 @@ const fixture = Effect.fn("fixture")(function* (
         );
       }
       if (request.url.endsWith("/grid/api/start")) {
-        yield* options.onAttach ?? Effect.void;
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
       }
       return HttpClientResponse.fromWeb(
@@ -676,17 +674,38 @@ it.effect("a device no thread has open is not turned off under an open racing it
     expect(opening._tag).toBe("Failure");
     expect(String(opening)).toContain("turned off while it was opening");
     expect((yield* service.state).sessions).toEqual([]);
+
+    const bootStarted = yield* Deferred.make<void>();
+    const finishBoot = yield* Deferred.make<void>();
+    const preparing = yield* fixture(
+      Deferred.succeed(bootStarted, undefined).pipe(Effect.andThen(Deferred.await(finishBoot))),
+    );
+    yield* preparing.service.configure({ enabled: true });
+    const booting = yield* preparing.service
+      .open({
+        threadId: other,
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(bootStarted);
+    expect(
+      yield* preparing.service.shutdownUnlessOpen({
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      }),
+    ).toBe(false);
+    yield* Deferred.succeed(finishBoot, undefined);
+    expect((yield* Fiber.join(booting)).deviceId).toBe("emulator-5554");
   }).pipe(Effect.scoped),
 );
 
-it.effect("an open started during shutdown cannot register after shutdown completes", () =>
+it.effect("an open started during shutdown cannot boot the device or register a session", () =>
   Effect.gen(function* () {
     const shutdownStarted = yield* Deferred.make<void>();
     const finishShutdown = yield* Deferred.make<void>();
-    const openStarted = yield* Deferred.make<void>();
-    const finishOpen = yield* Deferred.make<void>();
-    let pause = false;
-    const { service, devices } = yield* fixture(
+
+    const { service, devices, requests } = yield* fixture(
       Effect.void,
       undefined,
       false,
@@ -696,13 +715,6 @@ it.effect("an open started during shutdown cannot register after shutdown comple
       {
         onShutdown: Deferred.succeed(shutdownStarted, undefined).pipe(
           Effect.andThen(Deferred.await(finishShutdown)),
-        ),
-        onAttach: Effect.suspend(() =>
-          pause
-            ? Deferred.succeed(openStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(finishOpen)),
-              )
-            : Effect.void,
         ),
       },
     );
@@ -726,17 +738,15 @@ it.effect("an open started during shutdown cannot register after shutdown comple
       .shutdownUnlessOpen({ deviceId, platform })
       .pipe(Effect.forkChild);
     yield* Deferred.await(shutdownStarted);
-    pause = true;
-    const opening = yield* service.open({ threadId, deviceId, platform }).pipe(Effect.forkChild);
-    yield* Deferred.await(openStarted);
+    devices[0] = { ...devices[0]!, booted: false };
+    const result = yield* Effect.exit(service.open({ threadId, deviceId, platform }));
+    expect(requests.some((request) => request.endsWith("/boot"))).toBe(false);
     yield* Deferred.succeed(finishShutdown, undefined);
     expect(yield* Fiber.join(shuttingDown)).toBe(true);
-    yield* Deferred.succeed(finishOpen, undefined);
-    const result = yield* Effect.exit(Fiber.join(opening));
     expect(result._tag).toBe("Failure");
     expect(String(result)).toContain("turned off while it was opening");
     expect((yield* service.state).sessions).toEqual([]);
-    pause = false;
+    devices[0] = { ...devices[0]!, booted: true };
     expect((yield* service.open({ threadId, deviceId, platform })).deviceId).toBe(deviceId);
   }).pipe(Effect.scoped),
 );

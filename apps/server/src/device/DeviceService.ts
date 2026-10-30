@@ -282,6 +282,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   let shutdownEpoch = 0;
   const shutdownClaims = new Map<string, number>();
   const shutdownsInFlight = new Map<string, number>();
+  const opensInFlight = new Map<string, number>();
   const deviceKey = (hostId: DeviceHostId, deviceId: DeviceId) => `${hostId}\u0000${deviceId}`;
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -757,81 +758,111 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           });
         }
       }
-      if (!device.booted && input.boot !== false) {
-        const booting = { ...device, threadId: input.threadId };
-        yield* publish((current) => ({
-          ...current,
-          bootingDevices: [
-            ...(current.bootingDevices ?? []).filter(
-              (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-            ),
-            booting,
-          ],
-        }));
-        const bootedId = yield* ready.devices.boot(device, context).pipe(
-          Effect.ensuring(
-            publish((current) => ({
-              ...current,
-              bootingDevices: (current.bootingDevices ?? []).filter(
-                (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-              ),
-            })),
-          ),
-        );
-        state = yield* refresh(ready);
-        device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
-        if (!device) {
-          return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
-        }
-      } else if (device.booted) {
-        yield* ready.devices.attach(device);
-      }
-      if (hosts.get(host.id) !== host)
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason: "Host configuration changed. Retry the operation.",
-        });
-      const openedAt = DateTime.formatIso(yield* DateTime.now);
-      const session: DeviceSession = {
-        threadId: input.threadId,
-        hostId: host.id,
-        deviceId: device.id,
-        platform: device.platform,
-        openedAt,
-      };
-      yield* lifecycleLock.withPermit(
-        Effect.gen(function* () {
-          if (!(yield* readDeviceSettings).enabled)
-            return yield* new DeviceHostUnavailableError({
-              hostId: host.id,
-              hostLabel: host.label,
-              reason: "Device support was turned off while the device was opening.",
-            });
-          const key = deviceKey(host.id, device.id);
-          if (shutdownsInFlight.has(key) || (shutdownClaims.get(key) ?? 0) > openedEpoch)
-            return yield* new DeviceHostUnavailableError({
-              hostId: host.id,
-              hostLabel: host.label,
-              reason: "The device was turned off while it was opening. Retry the operation.",
-            });
-          yield* publish((current) => ({
-            ...current,
-            sessions: [
-              ...current.sessions.filter(
-                (existing) =>
-                  !(
-                    existing.threadId === session.threadId &&
-                    existing.hostId === session.hostId &&
-                    existing.deviceId === session.deviceId
+      const openingDevice = device;
+      const openingKey = deviceKey(host.id, device.id);
+      return yield* Effect.acquireUseRelease(
+        lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            if (
+              shutdownsInFlight.has(openingKey) ||
+              (shutdownClaims.get(openingKey) ?? 0) > openedEpoch
+            )
+              return yield* new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: "The device was turned off while it was opening. Retry the operation.",
+              });
+            opensInFlight.set(openingKey, (opensInFlight.get(openingKey) ?? 0) + 1);
+          }),
+        ),
+        () =>
+          Effect.gen(function* () {
+            let device = openingDevice;
+            if (!device.booted && input.boot !== false) {
+              const booting = { ...device, threadId: input.threadId };
+              yield* publish((current) => ({
+                ...current,
+                bootingDevices: [
+                  ...(current.bootingDevices ?? []).filter(
+                    (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
                   ),
-              ),
-              session,
-            ],
-          }));
-        }),
+                  booting,
+                ],
+              }));
+              const bootedId = yield* ready.devices.boot(device, context).pipe(
+                Effect.ensuring(
+                  publish((current) => ({
+                    ...current,
+                    bootingDevices: (current.bootingDevices ?? []).filter(
+                      (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+                    ),
+                  })),
+                ),
+              );
+              state = yield* refresh(ready);
+              const bootedDevice =
+                findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
+              if (!bootedDevice) {
+                return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
+              }
+              device = bootedDevice;
+            } else if (device.booted) {
+              yield* ready.devices.attach(device);
+            }
+            if (hosts.get(host.id) !== host)
+              return yield* new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: "Host configuration changed. Retry the operation.",
+              });
+            const openedAt = DateTime.formatIso(yield* DateTime.now);
+            const session: DeviceSession = {
+              threadId: input.threadId,
+              hostId: host.id,
+              deviceId: device.id,
+              platform: device.platform,
+              openedAt,
+            };
+            yield* lifecycleLock.withPermit(
+              Effect.gen(function* () {
+                if (!(yield* readDeviceSettings).enabled)
+                  return yield* new DeviceHostUnavailableError({
+                    hostId: host.id,
+                    hostLabel: host.label,
+                    reason: "Device support was turned off while the device was opening.",
+                  });
+                const key = deviceKey(host.id, device.id);
+                if (shutdownsInFlight.has(key) || (shutdownClaims.get(key) ?? 0) > openedEpoch)
+                  return yield* new DeviceHostUnavailableError({
+                    hostId: host.id,
+                    hostLabel: host.label,
+                    reason: "The device was turned off while it was opening. Retry the operation.",
+                  });
+                yield* publish((current) => ({
+                  ...current,
+                  sessions: [
+                    ...current.sessions.filter(
+                      (existing) =>
+                        !(
+                          existing.threadId === session.threadId &&
+                          existing.hostId === session.hostId &&
+                          existing.deviceId === session.deviceId
+                        ),
+                    ),
+                    session,
+                  ],
+                }));
+              }),
+            );
+            return session;
+          }),
+        () =>
+          Effect.sync(() => {
+            const remaining = (opensInFlight.get(openingKey) ?? 1) - 1;
+            if (remaining === 0) opensInFlight.delete(openingKey);
+            else opensInFlight.set(openingKey, remaining);
+          }),
       );
-      return session;
     },
   );
 
@@ -917,6 +948,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         Effect.gen(function* () {
           const { state } = yield* SynchronizedRef.get(stateRef);
           if (
+            opensInFlight.has(key) ||
             state.sessions.some(
               (session) => session.hostId === host.id && session.deviceId === input.deviceId,
             )
