@@ -496,7 +496,7 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a desktop page that loaded before the server attached reports its loaded title", () =>
+it.effect("a desktop page that loaded before the server attached reports its loaded title", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker } = yield* ready;
