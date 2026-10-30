@@ -557,6 +557,7 @@ export class Launcher {
   async #deferForDiskSpace(retry: () => Promise<void>): Promise<boolean> {
     if (this.#stopping || this.#stopRequested) return true;
     const reason = await this.#serviceStartDiskSpaceBlocker();
+    if (this.#stopping || this.#stopRequested) return true;
     if (reason === undefined) return false;
     this.#clearTimer();
     process.stderr.write(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);

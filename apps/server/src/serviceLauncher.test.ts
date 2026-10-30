@@ -225,6 +225,8 @@ setInterval(() => {}, 1_000);
       let recovered = false;
       const blocked = Promise.withResolvers<void>();
       const ready = Promise.withResolvers<void>();
+      const probing = Promise.withResolvers<void>();
+      const capacityResult = Promise.withResolvers<void>();
       const actualStatfs = NodeFSP.statfs;
       const stats = yield* Effect.promise(() => actualStatfs(root));
       yield* Effect.acquireRelease(
@@ -233,6 +235,10 @@ setInterval(() => {}, 1_000);
             toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
           });
           const capacity = vi.spyOn(NodeFSP, "statfs").mockImplementation(async (directory) => {
+            if (scenario === "stop" && directory === root) {
+              probing.resolve();
+              await capacityResult.promise;
+            }
             if (
               (scenario === "home probe error" && directory === root) ||
               (scenario === "database probe error" && directory === path.dirname(databasePath))
@@ -278,6 +284,16 @@ setInterval(() => {}, 1_000);
           await running;
         }),
       );
+      if (scenario === "stop") {
+        yield* Effect.promise(() => probing.promise);
+        const stopping = launcher.stop("SIGTERM");
+        capacityResult.resolve();
+        yield* Effect.promise(() => stopping);
+        yield* Effect.promise(() => running);
+        assert.equal(spawnedChildren.length, beforeSpawns);
+        assert.equal(vi.getTimerCount(), 0);
+        return;
+      }
       yield* Effect.promise(() => Promise.race([blocked.promise, ready.promise, running]));
       assert.equal(
         spawnedChildren.length - beforeSpawns,
@@ -295,12 +311,6 @@ setInterval(() => {}, 1_000);
         assert.equal(yield* fs.readFileString(databasePath), "migrated");
       if (scenario === "failed trial start") {
         yield* fs.remove(path.join(root, "runtime", "versions", "1.1.0"), { recursive: true });
-      }
-      if (scenario === "stop") {
-        yield* Effect.promise(() => launcher.stop("SIGTERM"));
-        yield* Effect.promise(() => running);
-        assert.equal(vi.getTimerCount(), 0);
-        return;
       }
       low = false;
       recovered = true;
