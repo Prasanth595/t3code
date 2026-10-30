@@ -150,6 +150,9 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
     planModeEnabled,
   });
+  // The expanded footer shows the Plan toggle beside the attach button; only the collapsed row,
+  // which has no such slot, keeps it here.
+  const barHoldsInteractionModeToggle = planModeUiEnabled && composerControlsCollapsed;
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const permissionsChipHidden = accessMatchesDefault || props.permissionsShownInStrip;
   const providerTraitsPickerInput = {
@@ -201,7 +204,7 @@ export function ComposerControlsBar(props: {
   } = resolveComposerControlsOwnership({
     matchesDefault: permissionsChipHidden,
     hasTraits: providerTraitsPicker !== null,
-    planModeUiEnabled,
+    planModeUiEnabled: barHoldsInteractionModeToggle,
     collapsed: composerControlsCollapsed,
     measuredHiddenBlockCount,
   });
@@ -227,7 +230,7 @@ export function ComposerControlsBar(props: {
             id: "mode",
             content: (
               <ComposerFooterModeControls
-                showInteractionModeToggle={planModeUiEnabled}
+                showInteractionModeToggle={barHoldsInteractionModeToggle}
                 interactionMode={interactionMode}
                 runtimeMode={compatibleRuntimeMode}
                 runtimeModeOptions={compatibleRuntimeModeOptions}
@@ -347,7 +350,9 @@ export function ComposerControlsBar(props: {
             runtimeModeOptions={compatibleRuntimeModeOptions}
             size={composerControlsCollapsed ? "xs" : "sm"}
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
+            showInteractionModeToggle={
+              barHoldsInteractionModeToggle && hiddenRestingBlockIds.includes("mode")
+            }
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
             }

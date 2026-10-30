@@ -5,7 +5,6 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { BotIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
@@ -13,6 +12,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
+import { ComposerInteractionModeToggle } from "./ComposerInteractionModeToggle";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
@@ -49,48 +49,12 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     supervisedRuntimeModeOption;
   const RuntimeModeIcon = runtimeModeOption.icon;
-  const interactionModeTooltip =
-    props.interactionMode === "plan"
-      ? "Plan mode. Click to return to normal build mode"
-      : "Default mode. Click to enter plan mode";
-
   const interactionModeToggle = props.showInteractionModeToggle ? (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ComposerControl
-            size={size}
-            className="shrink-0 whitespace-nowrap"
-            aria-pressed={props.interactionMode === "plan"}
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            aria-label={interactionModeTooltip}
-          />
-        }
-      >
-        {props.interactionMode === "plan" ? (
-          <ComposerControlIcon
-            icon={PencilRulerIcon}
-            size={size}
-            className="text-current opacity-100"
-          />
-        ) : (
-          <ComposerControlIcon
-            icon={BotIcon}
-            size={size}
-            opticalSize={size === "xs" ? "default" : "large"}
-          />
-        )}
-        {/* The compacted row (xs) keeps this icon-only, like the other controls there. */}
-        <span
-          data-composer-control-label
-          className={size === "xs" ? "sr-only" : "sr-only sm:not-sr-only"}
-        >
-          {props.interactionMode === "plan" ? "Plan" : "Build"}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
-    </Tooltip>
+    <ComposerInteractionModeToggle
+      interactionMode={props.interactionMode}
+      size={size}
+      onToggle={props.onToggleInteractionMode}
+    />
   ) : null;
 
   // The chip opens the same Permissions toggle used in the effort menu.
