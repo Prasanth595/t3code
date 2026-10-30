@@ -341,6 +341,13 @@ describe("presentPendingBackgroundWork", () => {
       title: "Waiting on command pnpm test",
       verb: "Waiting on",
     },
+    {
+      kind: "command",
+      awaited: undefined,
+      description: "pnpm test",
+      title: "Running: pnpm test",
+      verb: "Running",
+    },
   ] as const)(
     "titles a $kind with awaited $awaited",
     ({ kind, awaited, description, title, verb }) => {
@@ -348,7 +355,7 @@ describe("presentPendingBackgroundWork", () => {
         { taskId: "bg-1", description, kind, ...(awaited ? { awaited } : {}) },
       ]);
       expect(presentation?.title).toBe(title);
-      expect(presentation?.subject?.verb).toBe(verb);
+      expect(presentation?.subject).toMatchObject({ verb, item: { kind, label: description } });
     },
   );
 
