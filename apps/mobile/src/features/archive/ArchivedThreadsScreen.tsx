@@ -269,7 +269,11 @@ function ArchivedThreadRow(props: {
       simultaneousWith={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
-      {() => rowContent}
+      {(_close, swipeAccessibility) => (
+        <View accessible {...swipeAccessibility}>
+          {rowContent}
+        </View>
+      )}
     </ThreadSwipeable>
   );
 }

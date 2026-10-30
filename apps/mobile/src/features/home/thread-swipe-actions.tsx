@@ -15,6 +15,8 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  AccessibilityActionEvent,
+  AccessibilityActionInfo,
   ColorValue,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -65,10 +67,23 @@ interface ThreadSwipeAction {
   readonly destructive?: boolean;
   readonly menu?: {
     readonly actions: MenuAction[];
+    /** Run by screen readers in place of the menu, which a custom action cannot open. */
+    readonly accessibilityActions: ReadonlyArray<ThreadSwipeMenuAccessibilityAction>;
     readonly onPressAction: NonNullable<ComponentProps<typeof Menu>["onPressAction"]>;
     readonly title?: string;
   };
   readonly onPress: () => void;
+}
+
+interface ThreadSwipeMenuAccessibilityAction {
+  readonly label: string;
+  readonly onPress: () => void;
+}
+
+/** The row's swipe actions as screen reader actions; rows merge these with their own. */
+export interface ThreadSwipeAccessibility {
+  readonly accessibilityActions: ReadonlyArray<AccessibilityActionInfo>;
+  readonly onAccessibilityAction: (event: AccessibilityActionEvent) => void;
 }
 
 interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
@@ -107,6 +122,13 @@ function resolveSecondaryAction(input: {
         ? undefined
         : {
             ...action.menu,
+            accessibilityActions: action.menu.accessibilityActions.map((menuAction) => ({
+              label: menuAction.label,
+              onPress: () => {
+                input.close();
+                menuAction.onPress();
+              },
+            })),
             onPressAction: (event) => {
               input.close();
               action.menu?.onPressAction(event);
@@ -215,7 +237,7 @@ export function useSwipeableScrollGate(options?: {
 
 interface ThreadSwipeableProps {
   readonly backgroundColor: ColorValue;
-  readonly children: (close: () => void) => ReactNode;
+  readonly children: (close: () => void, accessibility: ThreadSwipeAccessibility) => ReactNode;
   readonly compactActions?: boolean;
   readonly containerStyle?: StyleProp<ViewStyle>;
   readonly enabled?: boolean;
@@ -421,6 +443,36 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [onSwipeableClose]);
   const compactActions = props.compactActions === true;
   const { secondaryAction, threadTitle } = props;
+  /* oxlint-disable react/refs -- close and commitPrimaryAction read refs only when an action runs. */
+  const accessibility = useMemo<ThreadSwipeAccessibility>(() => {
+    const secondary = resolveSecondaryAction({ close, onDelete, secondaryAction, threadTitle });
+    const actions = (
+      isDismissing
+        ? []
+        : [
+            { label: primaryAction.label, onPress: commitPrimaryAction },
+            ...(secondary === null ? [] : (secondary.menu?.accessibilityActions ?? [secondary])),
+          ]
+    ).map((action, index) => ({
+      name: `swipe:${index}`,
+      label: action.label,
+      run: action.onPress,
+    }));
+    return {
+      accessibilityActions: actions.map(({ name, label }) => ({ name, label })),
+      onAccessibilityAction: ({ nativeEvent }) =>
+        actions.find((action) => action.name === nativeEvent.actionName)?.run(),
+    };
+  }, [
+    close,
+    commitPrimaryAction,
+    isDismissing,
+    onDelete,
+    primaryAction.label,
+    secondaryAction,
+    threadTitle,
+  ]);
+  /* oxlint-enable react/refs */
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
   const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
@@ -454,6 +506,9 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         ref={() => {
           activeTranslationRef.current = translation;
         }}
+        // RNGH keeps these mounted behind the closed row; the row carries them as accessibility actions.
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
         style={actionStyle}
       >
         <ThreadSwipeActions
@@ -513,7 +568,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         >
           {
             /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */
-            props.children(close)
+            props.children(close, accessibility)
             /* oxlint-enable react/refs */
           }
         </ReanimatedSwipeable>
