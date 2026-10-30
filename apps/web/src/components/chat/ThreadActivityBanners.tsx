@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import {
   CircleDashedIcon,
   CircleStopIcon,
+  EyeIcon,
   GitBranchIcon,
   MessageCircleIcon,
   ShieldQuestionIcon,
@@ -179,17 +180,34 @@ export function backgroundWorkNowItem(input: {
   const newest = rows
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
-  const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
+  const isShellWork = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
+  // Monitors describe themselves in prose; commands are code.
+  const isMonitor = (row: (typeof rows)[number]) => row.task.kind === "monitor";
+  const isCode = (row: (typeof rows)[number]) => isShellWork(row) && !isMonitor(row);
   const verb = presentation.waiting ? "Waiting on" : "Running";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
+    icon: rows.every(isMonitor) ? (
+      <EyeIcon />
+    ) : rows.every(isShellWork) ? (
+      <TerminalIcon />
+    ) : (
+      <CircleDashedIcon />
+    ),
     title: only ? (
-      <>
-        {verb} <span className={cn(isCommand(only) && "font-mono")}>{only.task.label}</span>
-      </>
+      // The presenter titles a task that reads as its own sentence with just its label.
+      presentation.title === only.task.label ? (
+        <span className="text-foreground">{only.task.label}</span>
+      ) : (
+        <>
+          {verb}{" "}
+          <span className={cn("text-foreground", isCode(only) && "font-mono text-2xs")}>
+            {only.task.label}
+          </span>
+        </>
+      )
     ) : (
       presentation.title
     ),
@@ -197,7 +215,7 @@ export function backgroundWorkNowItem(input: {
       only.activity
     ) : newest ? (
       `${newest.task.label}: ${newest.activity}`
-    ) : rows.every(isCommand) ? (
+    ) : rows.every(isCode) ? (
       <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
     ) : (
       rows.map((row) => row.task.label).join(", ")
@@ -218,7 +236,11 @@ export function backgroundWorkNowItem(input: {
             Open
           </InlineButton>
         )}
-        <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
+        <InlineButton
+          tone="muted"
+          disabled={input.stopDisabled}
+          onClick={() => void input.onStop()}
+        >
           {input.stopping ? "Stopping..." : "Stop"}
         </InlineButton>
       </>
