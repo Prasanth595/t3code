@@ -59,7 +59,8 @@ const writeClaudeSession = Effect.fnUntraced(function* (configDir: string) {
         role: "assistant",
         content: [{ type: "text", text: "hi" }],
       }),
-      // A /compact that kept recent messages points at them by UUID.
+      // A /compact that kept recent messages points at them by UUID. The chain is the
+      // SDK's rebuilt view; the CLI writes attachments between these entries.
       {
         ...entry("aaaaaaaa-0000-4000-8000-000000000003", null, undefined),
         type: "system",
@@ -72,6 +73,14 @@ const writeClaudeSession = Effect.fnUntraced(function* (configDir: string) {
             headUuid: "aaaaaaaa-0000-4000-8000-000000000001",
             anchorUuid: "aaaaaaaa-0000-4000-8000-000000000004",
             tailUuid: "aaaaaaaa-0000-4000-8000-000000000002",
+          },
+          preservedMessages: {
+            anchorUuid: "aaaaaaaa-0000-4000-8000-000000000004",
+            uuids: ["aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002"],
+            allUuids: [
+              "aaaaaaaa-0000-4000-8000-000000000001",
+              "aaaaaaaa-0000-4000-8000-000000000002",
+            ],
           },
         },
       },
@@ -139,11 +148,21 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      const uuids = new Set(entries.map((line) => line.uuid));
-      const preserved = entries.find((line) => line.subtype === "compact_boundary")?.compactMetadata
-        ?.preservedSegment;
-      assert.isObject(preserved);
-      for (const uuid of Object.values(preserved)) assert.isTrue(uuids.has(uuid));
+      const head = entries.find((line) => line.message?.content === "hello")?.uuid;
+      const anchor = entries.find((line) => line.isCompactSummary === true)?.uuid;
+      const tail = entries.find((line) => line.message?.content?.[0]?.text === "hi")?.uuid;
+      assert.notEqual(head, "aaaaaaaa-0000-4000-8000-000000000001");
+      const metadata = entries.find((line) => line.subtype === "compact_boundary")?.compactMetadata;
+      assert.deepEqual(metadata?.preservedSegment, {
+        headUuid: head,
+        anchorUuid: anchor,
+        tailUuid: tail,
+      });
+      assert.deepEqual(metadata?.preservedMessages, {
+        anchorUuid: anchor,
+        uuids: [head, tail],
+        allUuids: [head, tail],
+      });
       assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
