@@ -2702,13 +2702,20 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   // A focused desktop browser page forwards these chords as menu actions.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle the right panel
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle or close the right panel
   useEffect(() => {
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
+      else if (action === "rightPanel.close" && activeRightPanelSurface)
+        closeRightPanelSurface(activeRightPanelSurface);
     });
-  }, [toggleRightPanelStable, toggleRightPanelMaximizedStable]);
+  }, [
+    activeRightPanelSurface,
+    closeRightPanelSurface,
+    toggleRightPanelMaximizedStable,
+    toggleRightPanelStable,
+  ]);
 
   usePasteToFocusComposer(activeThreadId, composerRef);
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =

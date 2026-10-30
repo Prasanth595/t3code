@@ -49,6 +49,8 @@ const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  // Cmd/Ctrl+W reaches the page only while the guest does not have the keys.
+  "rightPanel.close",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>

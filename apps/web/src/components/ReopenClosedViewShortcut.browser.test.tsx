@@ -1,4 +1,8 @@
-import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  PreviewForwardedShortcut,
+  ResolvedKeybindingsConfig,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -12,7 +16,7 @@ const state = vi.hoisted(() => ({
   workspaceAvailable: true,
   navigate: vi.fn(),
   openPreview: vi.fn(),
-  setShortcuts: vi.fn(async () => undefined),
+  setShortcuts: vi.fn(async (_shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => undefined),
   toast: vi.fn(),
 }));
 
@@ -148,6 +152,15 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it("forwards close-tab while a browser page has focus", async () => {
+    setup();
+    await using _view = await renderShortcut();
+    const forwarded = state.setShortcuts.mock.calls.flatMap((call) => call[0] ?? []);
+    expect(forwarded).toEqual(
+      expect.arrayContaining([expect.objectContaining({ command: "rightPanel.close" })]),
+    );
+  });
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
