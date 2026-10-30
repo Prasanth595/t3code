@@ -286,6 +286,7 @@ interface ActiveOpenCodeTurn {
   admissionAccepted: boolean;
   admissionMessageObserved: boolean;
   idleDuringAdmission: boolean;
+  admissionStatusSequence: number;
   admissionSettled: Deferred.Deferred<void>;
   admissionAbortController: AbortController | null;
 }
@@ -2131,6 +2132,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           generation: number,
         ) {
           while (promptAdmissionIsCurrent(state, turn, generation)) {
+            const statusSequence = turn.admissionStatusSequence;
             const status = yield* reconcileOpenCodePromptAdmissionStatus(
               turn,
               generation,
@@ -2157,6 +2159,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               turn.admissionGeneration !== generation
             ) {
               return;
+            }
+            if (turn.admissionStatusSequence !== statusSequence) {
+              turn.admissionPending = true;
+              continue;
             }
             if (status === "idle") {
               yield* finalizeTurn(state, turn, "completed");
@@ -2247,6 +2253,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             admissionAccepted: true,
             admissionMessageObserved: true,
             idleDuringAdmission: false,
+            admissionStatusSequence: 0,
             admissionSettled: Deferred.makeUnsafe<void>(),
             admissionAbortController: null,
           };
@@ -2605,6 +2612,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               const state = threads.get(sessionId);
               if (state === undefined) return;
+              if (state.activeTurn?.admissionPending) {
+                state.activeTurn.admissionStatusSequence++;
+              }
               if (event.properties.status.type === "busy") {
                 yield* updateProviderThread(state, { status: "active" });
                 return;
@@ -2627,6 +2637,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 if (state.activeTurn.admissionPending) {
+                  state.activeTurn.admissionStatusSequence++;
                   advanceOpenCodePromptAdmission(state.activeTurn, "idle");
                   return;
                 }
@@ -3212,6 +3223,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 admissionAccepted: isCompaction,
                 admissionMessageObserved: false,
                 idleDuringAdmission: false,
+                admissionStatusSequence: 0,
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 // @effect-diagnostics-next-line abortControllerInEffect:off - Turn interruption owns prompt admission cancellation.
                 admissionAbortController: new AbortController(),
@@ -3386,6 +3398,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 turn.usage.promptMessageIds.add(turn.admissionMessageId);
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
+              const generation = turn.admissionGeneration;
               yield* submitPrompt(
                 state,
                 turn,
@@ -3397,6 +3410,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 },
                 admissionAbortController!,
               ).pipe(
+                Effect.tapError(() =>
+                  promptAdmissionIsCurrent(state, turn, generation)
+                    ? reconcilePromptAdmission(state, turn)
+                    : Effect.void,
+                ),
                 Effect.ensuring(
                   Effect.all([
                     Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
