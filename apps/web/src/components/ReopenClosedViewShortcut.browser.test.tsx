@@ -148,6 +148,15 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it("forwards close-tab while a browser page has focus", async () => {
+    setup();
+    await using _view = await renderShortcut();
+    const forwarded = state.setShortcuts.mock.calls.flatMap((call) => call[0] ?? []);
+    expect(forwarded).toEqual(
+      expect.arrayContaining([expect.objectContaining({ command: "rightPanel.close" })]),
+    );
+  });
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
