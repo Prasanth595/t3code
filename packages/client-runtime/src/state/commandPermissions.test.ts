@@ -15,6 +15,7 @@ import {
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
+  TurnItemId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
@@ -448,16 +449,23 @@ it.effect(
     ),
 );
 
-it.effect("requires access management to answer a link request", () =>
+it.effect("requires access management to link, and either it or operate to decline", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
+      const decline = {
+        threadId: ThreadId.make("thread"),
+        turnItemId: TurnItemId.make("item"),
+        answer: { type: "decline" },
+      };
       registry.set(sessions(env), AsyncResult.success(grant(true)));
       const answer = createCommandPermissions(runtime, WS_METHODS.peerLinksAnswerRequest);
       expect(registry.get(answer.permissionAtom(env))).toBe(false);
       expect((yield* answer.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
         AuthAccessWriteScope,
       );
+      expect(registry.get(answer.permissionAtom(env, decline))).toBe(true);
+      yield* answer.authorize(registry, env, decline);
       registry.set(
         sessions(env),
         AsyncResult.success({
@@ -467,7 +475,14 @@ it.effect("requires access management to answer a link request", () =>
         }),
       );
       expect(registry.get(answer.permissionAtom(env))).toBe(true);
+      expect(registry.get(answer.permissionAtom(env, decline))).toBe(true);
       yield* answer.authorize(registry, env);
+      yield* answer.authorize(registry, env, decline);
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(registry.get(answer.permissionAtom(env, decline))).toBe(false);
+      expect(
+        (yield* answer.authorize(registry, env, decline).pipe(Effect.flip)).requiredPermission,
+      ).toBe(AuthAccessWriteScope);
     }),
   ),
 );
