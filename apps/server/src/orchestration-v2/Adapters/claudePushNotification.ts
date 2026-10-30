@@ -34,7 +34,7 @@ export function claudePushNotificationOutput(input: {
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
         updatedToolOutput: {
-          message: "Not sent. No T3 client is connected, and phone push is off.",
+          message: "Not sent. No T3 client or phone accepted the notification.",
           pushSent: false,
           localSent: false,
           disabledReason: "no_transport",
