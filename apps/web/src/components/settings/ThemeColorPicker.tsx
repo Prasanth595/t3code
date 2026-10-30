@@ -252,8 +252,8 @@ function ThemeColorPicker({
   onInteract?: () => void;
 }) {
   const [committer] = useState(createFrameCommitter);
-  // Escape reverts the edit, so drop the pending frame and any drag still firing through the exit
-  // animation instead of committing them over the restored colors.
+  // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
+  // still firing through the exit animation) are dropped instead of landing on the restored colors.
   const cancelledRef = useRef(false);
   // Unmounting with the popover open (the editor closes mid-drag) never fires onOpenChange.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the frame committer on unmount, since an open popover never fires onOpenChange
@@ -262,9 +262,12 @@ function ThemeColorPicker({
     <Popover
       onOpenChange={(open, eventDetails) => {
         cancelledRef.current = !open && eventDetails.reason === "escape-key";
-        if (open) onEditStart?.();
-        else if (cancelledRef.current) onEditCancel?.();
-        else committer.flush();
+        if (open) {
+          onEditStart?.();
+          return;
+        }
+        committer.flush();
+        if (cancelledRef.current) onEditCancel?.();
       }}
     >
       <Tooltip>
