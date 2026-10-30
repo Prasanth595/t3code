@@ -32,14 +32,14 @@ it("excludes structured context chips without joining text across them", () => {
   ).toEqual(["before", "after"]);
 });
 
-it("excludes the hidden prompt of an attachment-only message", () => {
+it("finds the expandable instruction of an attachment-only message", () => {
   expect(
     searchableMessageSegments({
       role: "user",
       streaming: false,
       text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     }),
-  ).toEqual([]);
+  ).toEqual([ATTACHMENT_ONLY_BOOTSTRAP_PROMPT]);
 });
 
 it("does not upgrade literal legacy tags in messages with structured context", () => {

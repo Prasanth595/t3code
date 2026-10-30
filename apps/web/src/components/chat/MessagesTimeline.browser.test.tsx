@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   MessageId,
   RunAttemptId,
+  ChatAttachmentId,
   RunId,
   RuntimeRequestId,
   TurnItemId,
@@ -27,6 +28,7 @@ import {
 } from "../../session-logic";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -580,6 +582,137 @@ describe("MessagesTimeline automation prompts", () => {
     expect(screen.buttons("Edit from here")).toHaveLength(0);
     await click(screen.button(/^Automation/));
     expect(screen.buttons("Edit from here")).toHaveLength(1);
+  });
+});
+
+describe("MessagesTimeline attachment-only messages", () => {
+  const photo = {
+    type: "image" as const,
+    id: ChatAttachmentId.make("attachment-1"),
+    name: "photo.png",
+    mimeType: "image/png",
+    sizeBytes: 1024,
+    previewUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='180'><rect width='240' height='180' fill='%23888'/></svg>",
+  };
+
+  it.each([1, 2])("reveals the bootstrap prompt without moving %i images", async (count) => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: Array.from({ length: count }, (_, index) => ({
+          ...photo,
+          id: ChatAttachmentId.make(`image-${index}`),
+        })),
+      }),
+    ]);
+    expect(screen.text()).not.toContain("without additional text");
+    expect(screen.container.querySelector("[data-user-message-body]")).toBeNull();
+    expect(screen.buttons(/^Copy message$/i)).toHaveLength(0);
+    expect(screen.buttons(/^Copy prompt link$/)).toHaveLength(0);
+
+    const caption = screen.button("Image only");
+    expect(caption.getAttribute("aria-expanded")).toBe("false");
+    const photoRight = () => screen.container.querySelector("img")?.getBoundingClientRect().right;
+    const rightBefore = photoRight();
+    expect(rightBefore).toBeDefined();
+    await click(caption);
+    // The bubble grows with the text, but the photo stays where it was.
+    expect(photoRight()).toBe(rightBefore);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+    await click(screen.button("Hide"));
+    expect(screen.text()).not.toContain("without additional text");
+    expect(screen.buttons("Image only")).toHaveLength(1);
+  });
+
+  it("reveals the instruction when thread find selects it", async () => {
+    setup();
+    await using screen = await renderTimeline(
+      [message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { attachments: [photo] })],
+      {
+        findExpanded: true,
+        findQuery: "without additional text",
+        activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(screen.button("Hide").getAttribute("aria-expanded")).toBe("true"),
+    );
+    const matches = collectThreadFindRanges(screen.container, "without additional text");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.range.getBoundingClientRect().height).toBeGreaterThan(0);
+  });
+
+  it("labels a message without any image as attachment only", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [
+          {
+            type: "file" as const,
+            id: ChatAttachmentId.make("attachment-video"),
+            name: "clip.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 1024,
+          },
+        ],
+      }),
+    ]);
+    expect(screen.buttons("Attachment only")).toHaveLength(1);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+  });
+
+  it("keeps literal bootstrap text visible without attachments", async () => {
+    setup();
+    await using screen = await renderTimeline([message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)]);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+    expect(screen.buttons(/^Copy message$/i)).toHaveLength(1);
+  });
+
+  it("labels audio-only messages as attachment only", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [
+          {
+            type: "file",
+            id: ChatAttachmentId.make("attachment-audio"),
+            name: "voice.wav",
+            mimeType: "audio/wav",
+            sizeBytes: 1024,
+          },
+        ],
+      }),
+    ]);
+    expect(screen.buttons("Attachment only")).toHaveLength(1);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+  });
+
+  it("leaves a photo-only message from another agent as a folded message", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [photo],
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread-sender"),
+      }),
+    ]);
+    expect(screen.button(/^Agent/).textContent).toContain("without additional text");
+    await click(screen.button(/^Agent/));
+    expect(screen.buttons("Image only")).toHaveLength(0);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+  });
+
+  it("keeps a message that adds text to the bootstrap prompt as a full bubble", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(`${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} Also check the colors.`, {
+        attachments: [photo],
+      }),
+    ]);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+    expect(screen.text()).toContain("Also check the colors.");
   });
 });
 

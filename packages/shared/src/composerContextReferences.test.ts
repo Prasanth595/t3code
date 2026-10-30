@@ -9,6 +9,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectComposerContextReferences,
   formatComposerContextHref,
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  isAttachmentOnlyBootstrapText,
   isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
@@ -81,6 +83,21 @@ describe("labels and reference links", () => {
     expect(isImageReferencesOnly(file)).toBe(false);
     expect(isImageReferencesOnly(`${image} ${file}`)).toBe(false);
     expect(isImageReferencesOnly("  ")).toBe(false);
+  });
+
+  it("recognizes the stored bootstrap prompt for an attachment-only message", () => {
+    expect(isAttachmentOnlyBootstrapText(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe(true);
+    expect(isAttachmentOnlyBootstrapText(`  ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}\n`)).toBe(true);
+    expect(isAttachmentOnlyBootstrapText(`${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} look at this`)).toBe(
+      false,
+    );
+    expect(isAttachmentOnlyBootstrapText(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`)).toBe(
+      true,
+    );
+    expect(
+      isAttachmentOnlyBootstrapText(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} explain it`),
+    ).toBe(false);
+    expect(isAttachmentOnlyBootstrapText("")).toBe(false);
   });
 });
 

@@ -137,6 +137,10 @@ export function isAttachmentOnlyBootstrapPrompt(text: string): boolean {
   return text.replace(/^Ultrathink:\s*/i, "") === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
 }
 
+export function isAttachmentOnlyBootstrapText(text: string): boolean {
+  return isAttachmentOnlyBootstrapPrompt(text.trim());
+}
+
 export function isImageReferencesOnly(text: string): boolean {
   const references = collectComposerContextReferences(text);
   return (

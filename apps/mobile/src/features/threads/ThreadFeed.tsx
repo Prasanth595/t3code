@@ -62,6 +62,7 @@ import {
   parseComposerContextHref,
   collectComposerContextReferences,
   replaceComposerContextReferences,
+  isAttachmentOnlyBootstrapText,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
@@ -1508,7 +1509,11 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const presentation = resolveUserMessagePresentation(message);
+    const resolvedPresentation = resolveUserMessagePresentation(message);
+    const presentation =
+      resolvedPresentation.attribution !== "guest" && isAttachmentOnlyBootstrapText(message.text)
+        ? { ...resolvedPresentation, text: message.text }
+        : resolvedPresentation;
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
@@ -1583,6 +1588,11 @@ function renderFeedEntry(
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
+      const pendingAttachments = entry.pendingMessage?.attachments ?? [];
+      const attachmentOnly =
+        presentation.attribution !== "agent" &&
+        attachments.length + pendingAttachments.length > 0 &&
+        isAttachmentOnlyBootstrapText(presentation.text);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
@@ -1628,7 +1638,10 @@ function renderFeedEntry(
                 ? null
                 : hasReviewCommentContext
                   ? { width: props.reviewCommentBubbleWidth }
-                  : hasWideBlock || foldExpanded || (mediaOnly && visibleAttachments.length > 0)
+                  : hasWideBlock ||
+                      foldExpanded ||
+                      attachmentOnly ||
+                      (mediaOnly && visibleAttachments.length > 0)
                     ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
                     : null),
             }}
@@ -1730,7 +1743,18 @@ function renderFeedEntry(
                     })}
                   </View>
                 ) : null}
-                {presentation.text.trim().length > 0 ? (
+                {attachmentOnly ? (
+                  <AttachmentOnlyCaption
+                    label={
+                      attachments.every(isImageAttachment) &&
+                      pendingAttachments.every((attachment) => attachment.type === "image")
+                        ? "Image only"
+                        : "Attachment only"
+                    }
+                    instruction={presentation.text}
+                  />
+                ) : null}
+                {presentation.text.trim().length > 0 && !attachmentOnly ? (
                   <MarkdownImageAvailableWidthContext
                     value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                   >
@@ -1801,7 +1825,7 @@ function renderFeedEntry(
                   <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                 </Pressable>
               ) : null}
-              {presentation.text.trim().length > 0 ? (
+              {presentation.text.trim().length > 0 && !attachmentOnly ? (
                 <UserMessageCopyButton
                   text={presentation.text}
                   onCopy={
@@ -1949,6 +1973,30 @@ type UserMessageContentProps = {
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly renderImage: MarkdownImageRenderer;
 };
+
+function AttachmentOnlyCaption(props: { readonly label: string; readonly instruction: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View className="gap-1">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? "Hide agent instruction" : props.label}
+        accessibilityState={{ expanded }}
+        hitSlop={8}
+        onPress={() => setExpanded((value) => !value)}
+      >
+        <Text className="text-xs italic text-user-bubble-foreground-muted">
+          {expanded ? "Hide" : props.label}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <Text className="text-xs leading-relaxed text-user-bubble-foreground-muted">
+          {props.instruction}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);

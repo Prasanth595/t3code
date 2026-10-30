@@ -61,7 +61,10 @@ import {
   resolveUserMessageContext,
   selectedMessageContextFragment,
 } from "~/lib/composerContextRecords";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  isAttachmentOnlyBootstrapText,
+} from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -331,7 +334,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
-  const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
+  const resolvedContext = resolveUserMessageContext({
+    ...row.message,
+    text:
+      userMessage.attribution !== "guest" && isAttachmentOnlyBootstrapText(row.message.text)
+        ? row.message.text
+        : userMessage.text,
+  });
+  const attachmentOnly =
+    !folded &&
+    (row.message.attachments?.length ?? 0) > 0 &&
+    isAttachmentOnlyBootstrapText(resolvedContext.text);
+  const bodyText = attachmentOnly ? "" : resolvedContext.text;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -370,7 +384,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     resolvedContext.text,
     (reference) => reference.label,
   );
-  const promptLink = promptLinkFor(plainText);
+  const promptLink = attachmentOnly ? null : promptLinkFor(plainText);
   const foldSummary =
     plainText
       .split(/\r?\n/)
@@ -531,7 +545,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 className={cn(
                   "grid",
                   !mediaOnly
-                    ? "mb-2 max-w-[210px] grid-cols-2 gap-2"
+                    ? attachmentOnly
+                      ? regularImages.length + userVideos.length === 1
+                        ? "mb-2 ms-auto w-[240px] max-w-full grid-cols-1 gap-2"
+                        : "mb-2 ms-auto w-[210px] max-w-full grid-cols-2 gap-2"
+                      : "mb-2 max-w-[210px] grid-cols-2 gap-2"
                     : loneImage
                       ? "max-w-full"
                       : collage
@@ -698,9 +716,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ))}
               </div>
             ) : null}
+            {attachmentOnly ? (
+              <AttachmentOnlyCaption
+                label={
+                  row.message.attachments?.every(isImageAttachment)
+                    ? "Image only"
+                    : "Attachment only"
+                }
+                instruction={resolvedContext.text}
+              />
+            ) : null}
             <div onCopyCapture={onBodyCopyCapture}>
               <CollapsibleUserMessageBody
-                text={resolvedContext.text}
+                text={bodyText}
                 renderContextReference={renderContextReference}
                 skills={ctx.skills}
                 markdownCwd={ctx.markdownCwd}
@@ -731,7 +759,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
-              {resolvedContext.text && (
+              {bodyText && (
                 <MessageCopyButton
                   text={contextClipboardFragment ? resolvedContext.text : plainText}
                   {...(contextClipboardFragment
@@ -755,6 +783,41 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </div>
           </div>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AttachmentOnlyCaption({
+  label,
+  instruction,
+}: {
+  readonly label: string;
+  readonly instruction: string;
+}) {
+  const { findActive } = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const revealRef = findRevealRef(() => setExpanded(true));
+  return (
+    <div className="text-xs text-muted-foreground">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        data-scroll-anchor-ignore
+        onClick={() => setExpanded((value) => !value)}
+        className="cursor-pointer rounded-sm italic hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        {expanded ? "Hide" : label}
+      </button>
+      {expanded || findActive ? (
+        <p
+          ref={revealRef}
+          hidden={!expanded}
+          data-thread-find-text="true"
+          className="mt-1 leading-relaxed"
+        >
+          {instruction}
+        </p>
       ) : null}
     </div>
   );
