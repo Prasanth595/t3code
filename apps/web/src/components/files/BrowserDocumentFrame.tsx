@@ -16,9 +16,6 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
-  readHtmlRenderPointerHeld,
-  readHtmlRenderPointerRelease,
-  HTML_RENDER_POINTER_RELEASE_METHOD,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -40,6 +37,7 @@ import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
+import { useHtmlRenderPointerHold } from "~/hooks/useHtmlRenderPointerHold";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -234,7 +232,7 @@ export function HtmlRenderDocument(props: {
     }
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
-  const [pointerHeld, setPointerHeld] = useState(false);
+  const pointerHeld = useHtmlRenderPointerHold(frameRef);
   const holding = expandedImage !== null || pointerHeld;
   const { onFullscreenChange } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the timeline during a page gesture or image viewer, and clears it on unmount
@@ -243,56 +241,10 @@ export function HtmlRenderDocument(props: {
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
   }, [holding, onFullscreenChange]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forwards releases outside the sandboxed frame so its height reporting resumes
-  useEffect(() => {
-    if (!pointerHeld) return;
-    const release = (event: Event) => {
-      if (event.type === "pointermove" && event instanceof PointerEvent && event.buttons !== 0)
-        return;
-      frameRef.current?.contentWindow?.postMessage(
-        {
-          jsonrpc: "2.0",
-          method: HTML_RENDER_POINTER_RELEASE_METHOD,
-          ...(event instanceof PointerEvent || event instanceof CustomEvent
-            ? {
-                params: {
-                  pointerId: event instanceof PointerEvent ? event.pointerId : event.detail,
-                },
-              }
-            : {}),
-        },
-        "*",
-      );
-    };
-    window.addEventListener("pointerup", release, true);
-    window.addEventListener("pointercancel", release, true);
-    window.addEventListener("pointermove", release, true);
-    window.addEventListener("blur", release);
-    window.addEventListener(HTML_RENDER_POINTER_RELEASE_METHOD, release);
-    return () => {
-      window.removeEventListener("pointerup", release, true);
-      window.removeEventListener("pointercancel", release, true);
-      window.removeEventListener("pointermove", release, true);
-      window.removeEventListener("blur", release);
-      window.removeEventListener(HTML_RENDER_POINTER_RELEASE_METHOD, release);
-    };
-  }, [pointerHeld]);
   // Links, keys and images require frame focus and recent reader activity: a page can take
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.
   const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
-    const released = readHtmlRenderPointerRelease(event.data);
-    if (released !== undefined) {
-      window.dispatchEvent(
-        new CustomEvent(HTML_RENDER_POINTER_RELEASE_METHOD, { detail: released }),
-      );
-      return;
-    }
-    const held = readHtmlRenderPointerHeld(event.data);
-    if (held !== undefined) {
-      setPointerHeld(held);
-      return;
-    }
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);

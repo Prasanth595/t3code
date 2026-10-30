@@ -19,6 +19,7 @@ vi.mock(import("~/assets/assetUrls"), async (importOriginal) => ({
   useAssetUrlRefresh: () => async () => "about:blank",
 }));
 
+import { GuestHtmlRender } from "../guest/GuestHtmlRender";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
 describe("HtmlRenderFrame", () => {
@@ -42,10 +43,11 @@ describe("HtmlRenderFrame", () => {
   });
 });
 
-it.each(["inside", "outside", "touch", "sibling"])(
+it.each(["inside", "outside", "touch", "sibling", "guest"])(
   "holds sizing until release: %s",
   async (kind) => {
-    const outside = kind === "outside" || kind === "sibling";
+    const outside = kind === "outside" || kind === "sibling" || kind === "guest";
+    const border = kind === "guest" ? 2 : 0;
     const url = URL.createObjectURL(
       new Blob(
         [
@@ -64,12 +66,20 @@ it.each(["inside", "outside", "touch", "sibling"])(
     const pin = vi.fn();
     await using screen = await render(
       <>
-        <HtmlRenderFrame
-          environmentId={EnvironmentId.make("environment")}
-          htmlRender={{ attachmentId: "attachment", title: "Drag", height: 200 }}
-          threadRef={undefined}
-          onFullscreenChange={pin}
-        />
+        {kind === "guest" ? (
+          <GuestHtmlRender
+            itemId="drag"
+            shareId="share"
+            reference={{ attachmentId: "attachment", title: "Drag", height: 200 }}
+          />
+        ) : (
+          <HtmlRenderFrame
+            environmentId={EnvironmentId.make("environment")}
+            htmlRender={{ attachmentId: "attachment", title: "Drag", height: 200 }}
+            threadRef={undefined}
+            onFullscreenChange={pin}
+          />
+        )}
         {kind === "sibling" && (
           <HtmlRenderFrame
             environmentId={EnvironmentId.make("environment")}
@@ -90,13 +100,15 @@ it.each(["inside", "outside", "touch", "sibling"])(
       if (sibling && event.source === sibling.contentWindow && event.data === "ready")
         siblingReady = true;
       if (event.source !== frame.contentWindow) return;
+      if (kind === "guest" && event.data?.method === "t3/notifications/pointer-held")
+        pin(event.data.params.held);
       if (event.data === "cancelled") cancelled = true;
       if (event.data === "ready") ready = true;
     };
     window.addEventListener("message", receive);
     using _listener = { [Symbol.dispose]: () => window.removeEventListener("message", receive) };
     await vi.waitFor(() => expect(ready && siblingReady).toBe(true));
-    await vi.waitFor(() => expect(frame.clientHeight).toBe(216));
+    await vi.waitFor(() => expect(frame.clientHeight).toBe(216 - border));
     const outer = window.frameElement!.getBoundingClientRect();
     const box = frame.getBoundingClientRect();
     const x = outer.left + box.left + 30,
@@ -111,7 +123,7 @@ it.each(["inside", "outside", "touch", "sibling"])(
       });
       await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [first] });
       expect(pin).toHaveBeenLastCalledWith(true);
-      expect(frame.clientHeight).toBe(216);
+      expect(frame.clientHeight).toBe(216 - border);
       await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     } else {
       await cdp().send("Input.dispatchMouseEvent", {
@@ -123,7 +135,7 @@ it.each(["inside", "outside", "touch", "sibling"])(
         clickCount: 1,
       });
       await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(true));
-      expect(frame.clientHeight).toBe(216);
+      expect(frame.clientHeight).toBe(216 - border);
       await cdp().send("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x,
@@ -140,7 +152,7 @@ it.each(["inside", "outside", "touch", "sibling"])(
       });
     }
     await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(false));
-    await vi.waitFor(() => expect(frame.clientHeight).toBe(316));
+    await vi.waitFor(() => expect(frame.clientHeight).toBe(316 - border));
     if (!outside) expect(cancelled).toBe(false);
   },
 );
