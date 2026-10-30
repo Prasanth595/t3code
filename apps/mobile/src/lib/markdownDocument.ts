@@ -394,9 +394,19 @@ const BLOCK_MARKER =
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
   const edits: MarkdownEdit[] = [];
-  const visit = (node: MarkdownNode) => {
+  const visit = (node: MarkdownNode, listIndentations: readonly number[] = [], quoteDepth = 0) => {
     if (!("children" in node)) return;
-    if (node.type !== "paragraph") return node.children.forEach(visit);
+    if (node.type !== "paragraph") {
+      const indentations = [...listIndentations];
+      if (node.type === "listItem") {
+        const indentation =
+          (node.children[0]?.position?.start.column ?? 1) - (node.position?.start.column ?? 1);
+        indentations[quoteDepth] = (indentations[quoteDepth] ?? 0) + indentation;
+      }
+      return node.children.forEach((child) =>
+        visit(child, indentations, quoteDepth + (node.type === "blockquote" ? 1 : 0)),
+      );
+    }
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
@@ -420,8 +430,8 @@ export function markdownWithBlockImages(markdown: string): string {
     const quotePrefix = prefix
       .split(">")
       .slice(0, -1)
-      .reduceRight((suffix, part) => {
-        const indentation = /(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(part) ? part.length : 0;
+      .reduceRight((suffix, _part, index) => {
+        const indentation = (listIndentations[index] ?? 0) + (index > 0 ? 1 : 0);
         return `(?: {0,${indentation + 3}}>${suffix})?`;
       }, "");
     const separator = `[ \\t]*(?:\\\\?\\r?\\n${quotePrefix}[ \\t]*)?`;

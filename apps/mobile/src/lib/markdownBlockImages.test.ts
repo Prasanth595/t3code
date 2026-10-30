@@ -45,6 +45,9 @@ describe("images inside running text", () => {
     expect(markdownWithBlockImages("10. > See ![a](a.png)\n    > keep")).toBe(
       "10. > See\n    >\n    > ![a](a.png)\n    >\n    > keep",
     );
+    expect(markdownWithBlockImages("10. intro\n\n    > See ![a](a.png)\n    > keep")).toBe(
+      "10. intro\n\n    > See\n    >\n    > ![a](a.png)\n    >\n    > keep",
+    );
   });
 
   it("keeps text after an image from opening a block", () => {
