@@ -133,12 +133,15 @@ const DEFAULT: DefaultProject = {
   limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
 };
 
+/** What the checkout's origin/HEAD names, with its files. */
+const on = (branch: string, found: RepoFiles) => ({ branch, files: found });
+
 describe("resolveDefault", () => {
   it("resolves the default block on the repo's default branch", () => {
     const resolved = resolveDefault(
       DEFAULT,
       "trunk",
-      files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
+      on("trunk", files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] })),
     );
     expect(Result.isSuccess(resolved) && resolved.success).toEqual({
       instructors: ["tomkaczocha", "rawphp"],
@@ -155,12 +158,12 @@ describe("resolveDefault", () => {
     const before = resolveDefault(
       DEFAULT,
       "main",
-      files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] }),
+      on("main", files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] })),
     );
     const after = resolveDefault(
       DEFAULT,
       "main",
-      files({ packageJson: pkg("test", "lint"), lockfiles: ["package-lock.json"] }),
+      on("main", files({ packageJson: pkg("test", "lint"), lockfiles: ["package-lock.json"] })),
     );
     expect(Result.isSuccess(before) && before.success.gate).toEqual(["npm run test"]);
     expect(Result.isSuccess(after) && after.success.gate).toEqual(["npm run lint", "npm run test"]);
@@ -177,8 +180,23 @@ describe("resolveDefault", () => {
     ]);
   });
 
+  it("an origin/HEAD that names another branch than GitHub's default is one error", () => {
+    const resolved = resolveDefault(
+      DEFAULT,
+      "main",
+      on("master", files({ packageJson: pkg("test"), lockfiles: ["package-lock.json"] })),
+    );
+    expect(Result.isFailure(resolved) && resolved.failure).toEqual([
+      {
+        file: ".dw/config.yml",
+        message:
+          "the checkout's origin/HEAD is master, but the default branch on GitHub is main: run `git remote set-head origin --auto` in it",
+      },
+    ]);
+  });
+
   it("no inferred gate is one error saying a factory block is needed", () => {
-    const resolved = resolveDefault(DEFAULT, "main", files({}));
+    const resolved = resolveDefault(DEFAULT, "main", on("main", files({})));
     expect(Result.isFailure(resolved)).toBe(true);
     if (Result.isFailure(resolved)) {
       expect(resolved.failure).toHaveLength(1);

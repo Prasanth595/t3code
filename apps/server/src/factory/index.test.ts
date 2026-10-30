@@ -1250,7 +1250,7 @@ describe("liveWorld", () => {
    * fails the branch's tip call with a 404 instead.
    */
   const baseConfigGh = (
-    file: { readonly base: string } | { readonly stderr: string },
+    file: { readonly base: string } | { readonly stderr: string } | { readonly text: string },
     ref: "ok" | "missing" = "ok",
   ) => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
@@ -1265,7 +1265,7 @@ describe("liveWorld", () => {
       }
       if (args[0] === "api" && path.startsWith(`repos/${REPO}/contents/`)) {
         if ("stderr" in file) return { stderr: file.stderr };
-        const text = configText(file.base);
+        const text = "text" in file ? file.text : configText(file.base);
         return JSON.stringify({
           name: "config.yml",
           path: ".dw/config.yml",
@@ -1382,10 +1382,13 @@ describe("liveWorld", () => {
     );
 
     const npmTest: Defaulted = {
-      files: {
-        packageJson: '{"scripts":{"test":"vitest"}}',
-        composerJson: null,
-        lockfiles: ["package-lock.json"],
+      head: {
+        branch: "main",
+        files: {
+          packageJson: '{"scripts":{"test":"vitest"}}',
+          composerJson: null,
+          lockfiles: ["package-lock.json"],
+        },
       },
     };
 
@@ -1410,19 +1413,44 @@ describe("liveWorld", () => {
           autonomy: "pr" as const,
         };
         assert.deepStrictEqual(Result.isSuccess(result) && result.success, expected);
-        assert.deepStrictEqual(readings, [{ kind: "ok", project: expected }]);
+        assert.deepStrictEqual(readings, [{ kind: "ok", project: expected, onDefault: true }]);
+      }),
+    );
+
+    it.effect("a .dw/config.yml on GitHub with no factory key leaves the repo on the default", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ text: "tracker:\n  backend: github\n" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.deepStrictEqual(Result.isSuccess(result) && result.success.gate, ["npm run test"]);
+        assert.strictEqual(readings[0]?.kind === "ok" && readings[0].onDefault, true);
       }),
     );
 
     it.effect("a factory block on GitHub wins over a checkout that shows none", () =>
       Effect.gen(function* () {
         const { process } = baseConfigGh({ base: "main" });
-        const { result } = yield* readProject(process, "/p", false, REPO, withDefault, npmTest);
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
         assert.isTrue(Result.isSuccess(result));
         if (Result.isSuccess(result)) {
           assert.deepStrictEqual(result.success.instructors, ["tomkaczocha"]);
           assert.deepStrictEqual(result.success.gate, ["make"]);
         }
+        assert.deepStrictEqual(readings.length, 1);
+        assert.notProperty(readings[0], "onDefault");
       }),
     );
 
@@ -1454,13 +1482,15 @@ describe("liveWorld", () => {
     it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
       failsWith(
         withDefault,
-        { files: { packageJson: null, composerJson: null, lockfiles: [] } },
+        {
+          head: { branch: "main", files: { packageJson: null, composerJson: null, lockfiles: [] } },
+        },
         "no gate could be inferred",
       ),
     );
 
     it.effect("a repo on the default whose checkout has no origin/HEAD says how to set it", () =>
-      failsWith(withDefault, { files: null }, "git remote set-head origin --auto"),
+      failsWith(withDefault, { head: null }, "git remote set-head origin --auto"),
     );
 
     it.effect("a repo listed on the default after the machine dropped it is a config error", () =>

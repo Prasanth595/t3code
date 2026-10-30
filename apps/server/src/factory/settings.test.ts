@@ -540,10 +540,15 @@ describe("readMachineConfigReport", () => {
         path: "/b",
         title: "Bee",
         defaulted: {
-          files: { packageJson: "{}", composerJson: null, lockfiles: ["package-lock.json"] },
+          head: {
+            branch: "main",
+            files: { packageJson: "{}", composerJson: null, lockfiles: ["package-lock.json"] },
+          },
         },
       };
-      const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
+      const readings = new Map<string, RepoConfigReading>([
+        ["a/b", { kind: "ok", project, onDefault: true }],
+      ]);
       const { report: r } = yield* report(COMMENTED, of([defaulted]), readings);
       assert.deepStrictEqual(r.repos, [
         {
@@ -563,6 +568,10 @@ describe("readMachineConfigReport", () => {
           errors: null,
         },
       ]);
+      // A checkout that showed no block, on a repo whose block on GitHub the pass ran on.
+      const own = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
+      const { report: ownReport } = yield* report(COMMENTED, of([defaulted]), own);
+      assert.isFalse(ownReport.repos[0]?.default_config);
     }),
   );
 });

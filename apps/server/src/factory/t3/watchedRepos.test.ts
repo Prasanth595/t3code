@@ -842,7 +842,14 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
             path: clone,
             title: "Title of p-no-file",
             defaulted: {
-              files: { packageJson: PACKAGE, composerJson: null, lockfiles: ["package-lock.json"] },
+              head: {
+                branch: "main",
+                files: {
+                  packageJson: PACKAGE,
+                  composerJson: null,
+                  lockfiles: ["package-lock.json"],
+                },
+              },
             },
           },
         ],
@@ -867,10 +874,13 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
         list.repos.map((entry) => entry.defaulted),
         [
           {
-            files: {
-              packageJson: null,
-              composerJson: '{"scripts":{"test":"pest"}}',
-              lockfiles: [],
+            head: {
+              branch: "main",
+              files: {
+                packageJson: null,
+                composerJson: '{"scripts":{"test":"pest"}}',
+                lockfiles: [],
+              },
             },
           },
         ],
@@ -918,7 +928,7 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
             repo: "acme/widgets",
             path: clone,
             title: "Title of p-no-head",
-            defaulted: { files: null },
+            defaulted: { head: null },
           },
         ],
         departed: [],
@@ -939,20 +949,44 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
     }),
   );
 
-  it.effect("reports a defaulted checkout whose git timed out as unresolved", () =>
-    Effect.gen(function* () {
-      const root = checkout("timed-out", null);
-      NodeFS.mkdirSync(NodePath.join(root, ".git"));
-      const spawned: Array<string> = [];
-      const list = yield* listed({
-        projects: [["p-timed-out", root]],
-        identities: new Map([[root, WIDGETS]]),
-        withDefault: true,
-        runner: runnerAnswering(spawned, true),
-      });
-      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
-    }),
-  );
+  /** A git with no `.dw/config.yml` on origin, whose read of the files on origin/HEAD times out at `slow`. */
+  const slowAt = (slow: string) =>
+    Layer.mock(ProcessRunner.ProcessRunner)({
+      run: (input) =>
+        Effect.sync((): ProcessRunner.ProcessRunOutput => {
+          const args = input.args.join(" ");
+          const timedOut = args.includes(slow);
+          const tree = args.includes("ls-tree") ? "package.json\npackage-lock.json\n" : "";
+          const branch = args.includes("rev-parse") ? "origin/main\n" : "";
+          const ok = args.includes("ls-tree") || args.includes("rev-parse");
+          return {
+            stdout: timedOut ? "" : `${tree}${branch}`,
+            stderr: "",
+            code: timedOut ? null : ok ? 0 : 128,
+            timedOut,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+
+  for (const slow of ["ls-tree", "origin/HEAD:package.json"]) {
+    it.effect(`reports a defaulted checkout as unresolved when git times out at ${slow}`, () =>
+      Effect.gen(function* () {
+        const root = checkout(`timed-out-${slow.length}`, null);
+        NodeFS.mkdirSync(NodePath.join(root, ".git"));
+        const list = yield* listed({
+          projects: [["p-timed-out", root]],
+          identities: new Map([[root, WIDGETS]]),
+          withDefault: true,
+          runner: slowAt(slow),
+        });
+        assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
+      }),
+    );
+  }
 
   it.effect("drops a defaulted checkout of a repo another project opts in: no ambiguity", () =>
     Effect.gen(function* () {
@@ -1002,12 +1036,12 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
         const lint = JSON.stringify({ scripts: { test: "vitest", lint: "eslint" } });
         commitOnOrigin({ "package.json": lint, "yarn.lock": "" });
         const again = yield* listed(fixture);
-        assert.deepStrictEqual(before.repos[0]?.defaulted?.files, {
+        assert.deepStrictEqual(before.repos[0]?.defaulted?.head?.files, {
           packageJson: PACKAGE,
           composerJson: null,
           lockfiles: [],
         });
-        assert.deepStrictEqual(again.repos[0]?.defaulted?.files, {
+        assert.deepStrictEqual(again.repos[0]?.defaulted?.head?.files, {
           packageJson: lint,
           composerJson: null,
           lockfiles: ["yarn.lock"],
