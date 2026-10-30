@@ -155,7 +155,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         );
         assert.deepEqual(saved.favorites, patch.favorites);
         assert.isTrue(saved.telemetryEnabled);
+        const generation = yield* service.telemetryOptOutGeneration;
         yield* service.updateSettings({ telemetryEnabled: false });
+        assert.isAbove(yield* service.telemetryOptOutGeneration, generation);
         const optedOut = yield* decodeServerSettingsJson(
           yield* fs.readFileString(config.settingsPath),
         );

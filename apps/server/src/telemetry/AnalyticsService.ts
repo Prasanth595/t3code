@@ -1,6 +1,6 @@
 // T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { ClientOs } from "@t3tools/contracts";
+import type { ClientOs, ServerSettings as ServerSettingsSnapshot } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -14,7 +14,6 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -121,7 +120,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const settingsChanges = yield* settings.subscribeChanges;
+  const observedOptOutGeneration = yield* Ref.make(-1);
   const identityServices = yield* Effect.context<Effect.Services<typeof getTelemetryIdentity>>();
   const identity = yield* getTelemetryIdentity.pipe(
     Effect.provideContext(identityServices),
@@ -144,13 +143,6 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
-  const isEnabled = telemetryConfig.enabled
-    ? settings.getSettings.pipe(
-        Effect.map((snapshot) => snapshot.telemetryEnabled),
-        Effect.orElseSucceed(() => false),
-      )
-    : Effect.succeed(false);
-
   const discardBufferedEvents = Effect.gen(function* () {
     yield* Ref.set(bufferRef, []);
     yield* Ref.set(deliveryRef, {
@@ -163,15 +155,28 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(recordedOwnersRef, { server: new Set<string>(), client: new Set<string>() });
   });
 
-  yield* settingsChanges.pipe(
-    Stream.runForEach((next) => (next.telemetryEnabled ? Effect.void : discardBufferedEvents)),
-    Effect.forkScoped,
-  );
+  const refreshConsent = Effect.fn("AnalyticsService.refreshConsent")(function* (
+    snapshot: ServerSettingsSnapshot,
+  ) {
+    const generation = yield* settings.telemetryOptOutGeneration;
+    const enabled = telemetryConfig.enabled && snapshot.telemetryEnabled;
+    if (!enabled || generation !== (yield* Ref.get(observedOptOutGeneration))) {
+      yield* discardBufferedEvents;
+      yield* Ref.set(observedOptOutGeneration, generation);
+    }
+    return enabled;
+  });
+
+  const isEnabled = settings
+    .withSettingsSnapshot(refreshConsent)
+    .pipe(Effect.orElseSucceed(() => false));
 
   const withConsent = (operation: Effect.Effect<void>) =>
     settings
       .withSettingsSnapshot((snapshot) =>
-        telemetryConfig.enabled && snapshot.telemetryEnabled ? operation : discardBufferedEvents,
+        refreshConsent(snapshot).pipe(
+          Effect.flatMap((enabled) => (enabled ? operation : Effect.void)),
+        ),
       )
       .pipe(Effect.catch(() => discardBufferedEvents));
 
@@ -266,6 +271,7 @@ export const make = Effect.gen(function* () {
       }
 
       const sent = yield* Effect.result(sendBatch(batch, delivery));
+      if (!(yield* isEnabled)) return yield* discardBufferedEvents;
       // Opt-out replaces delivery state; an in-flight request must not restore its batch.
       if ((yield* Ref.get(deliveryRef)) !== delivery) return;
       if (Result.isSuccess(sent)) {

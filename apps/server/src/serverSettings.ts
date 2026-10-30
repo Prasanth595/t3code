@@ -227,6 +227,9 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Revocations advance before publication so delayed subscribers cannot miss an off/on cycle. */
+    readonly telemetryOptOutGeneration: Effect.Effect<number>;
+
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -266,6 +269,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
   const changes = yield* PubSub.unbounded<ServerSettings>();
+  const telemetryOptOutGeneration = yield* Ref.make(0);
   const writeSemaphore = yield* Semaphore.make(1);
   const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -278,6 +282,11 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
         Effect.map(resolveTextGenerationProvider),
+        Effect.tap((nextSettings) =>
+          nextSettings.telemetryEnabled
+            ? Effect.void
+            : Ref.update(telemetryOptOutGeneration, (generation) => generation + 1),
+        ),
         Effect.tap((nextSettings) => PubSub.publish(changes, nextSettings)),
       ),
     );
@@ -286,6 +295,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
+    telemetryOptOutGeneration: Ref.get(telemetryOptOutGeneration),
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -619,13 +629,17 @@ const make = Effect.gen(function* () {
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  const telemetryOptOutGeneration = yield* Ref.make(0);
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
   const emitChange = (settings: ServerSettings) =>
-    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+    (settings.telemetryEnabled
+      ? Effect.void
+      : Ref.update(telemetryOptOutGeneration, (generation) => generation + 1)
+    ).pipe(Effect.andThen(PubSub.publish(changesPubSub, settings)), Effect.asVoid);
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -1227,6 +1241,7 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
+    telemetryOptOutGeneration: Ref.get(telemetryOptOutGeneration),
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

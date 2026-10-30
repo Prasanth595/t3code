@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -126,6 +127,7 @@ const sendFor = <E = never>(
     | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   telemetryEnabled = true,
+  settingsLayer = ServerSettings.layerTest({ telemetryEnabled }),
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -141,7 +143,7 @@ const sendFor = <E = never>(
       }),
     );
     const runtimeLayer = AnalyticsService.layer.pipe(
-      Layer.provideMerge(ServerSettings.layerTest({ telemetryEnabled })),
+      Layer.provideMerge(settingsLayer),
       Layer.provideMerge(
         ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
       ),
@@ -202,35 +204,47 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
-  it.effect("disabling analytics drops queued events and failed batches before re-enabling", () =>
-    Effect.gen(function* () {
-      let attempts = 0;
-      const batches = yield* sendFor(
-        0,
-        (request) => respondWithStatus(++attempts === 1 ? 503 : 204)(request),
-        Effect.gen(function* () {
-          const analytics = yield* AnalyticsService.AnalyticsService;
-          const settings = yield* ServerSettings.ServerSettingsService;
-          yield* analytics.record("failed-before-opt-out");
-          yield* analytics.flush;
-          yield* analytics.record("queued-before-opt-out");
-          yield* settings.updateSettings({ telemetryEnabled: false });
-          yield* analytics.record("while-disabled");
-          yield* analytics.flush;
-          assert.equal(attempts, 1);
-          yield* settings.updateSettings({ telemetryEnabled: true });
-          yield* analytics.record("queued-before-second-opt-out");
-          yield* settings.updateSettings({ telemetryEnabled: false });
-          yield* settings.updateSettings({ telemetryEnabled: true });
-          yield* analytics.record("after-opt-in");
-          yield* analytics.flush;
-        }),
-      );
-      assert.deepEqual(
-        batches.flatMap((batch) => batch.map((event) => event.event)),
-        ["failed-before-opt-out", "after-opt-in"],
-      );
-    }),
+  it.effect.each([false, true])(
+    "disabling analytics drops old events and retains new ones with delayed notifications: %s",
+    (delayNotifications) =>
+      Effect.gen(function* () {
+        let attempts = 0;
+        const batches = yield* sendFor(
+          0,
+          (request) => respondWithStatus(++attempts === 1 ? 503 : 204)(request),
+          Effect.gen(function* () {
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            const settings = yield* ServerSettings.ServerSettingsService;
+            yield* analytics.record("failed-before-opt-out");
+            yield* analytics.flush;
+            yield* analytics.record("queued-before-opt-out");
+            yield* settings.updateSettings({ telemetryEnabled: false });
+            yield* analytics.record("while-disabled");
+            yield* analytics.flush;
+            assert.equal(attempts, 1);
+            yield* settings.updateSettings({ telemetryEnabled: true });
+            yield* analytics.record("queued-before-second-opt-out");
+            yield* settings.updateSettings({ telemetryEnabled: false });
+            yield* settings.updateSettings({ telemetryEnabled: true });
+            yield* analytics.record("after-opt-in");
+            yield* analytics.flush;
+          }),
+          true,
+          delayNotifications
+            ? Layer.effect(
+                ServerSettings.ServerSettingsService,
+                Effect.map(ServerSettings.ServerSettingsService, (settings) => ({
+                  ...settings,
+                  subscribeChanges: Effect.succeed(Stream.never),
+                })),
+              ).pipe(Layer.provide(ServerSettings.layerTest()))
+            : ServerSettings.layerTest(),
+        );
+        assert.deepEqual(
+          batches.flatMap((batch) => batch.map((event) => event.event)),
+          ["failed-before-opt-out", "after-opt-in"],
+        );
+      }),
   );
   it.effect.each([{ status: 204 }, { status: 503 }])(
     "discards old batches after off/on during an in-flight $status response",
