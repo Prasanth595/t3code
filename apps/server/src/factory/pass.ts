@@ -8,7 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
-import { PENDING_STALE_MS, type HandPause, type PendingDeploy } from "./claims.ts";
+import { deployWait, PENDING_STALE_MS, type HandPause, type PendingDeploy } from "./claims.ts";
 import {
   ambiguousMessage,
   ambiguousRepos,
@@ -932,15 +932,17 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     return false;
   }
   const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
-  const snoozeEnd = world.deploySnooze();
-  if (snoozeEnd !== null && snoozeEnd > world.nowMs()) {
+  // Not null: the marker is there and fresh.
+  const wait = deployWait(pending, world.deploySnooze(), world.nowMs());
+  const snoozedUntil = wait === null ? null : wait.snoozedUntilMs;
+  if (snoozedUntil !== null) {
     pass.line(
-      `deploy snoozed until ${formatTs(snoozeEnd)}: ${build} is waiting; claiming as normal`,
+      `deploy snoozed until ${formatTs(snoozedUntil)}: ${build} is waiting; claiming as normal`,
     );
     yield* clear;
     return false;
   }
-  const waited = Math.max(0, world.nowMs() - Math.max(pending.sinceMs, snoozeEnd ?? 0));
+  const waited = Math.max(0, world.nowMs() - (wait?.clockFromMs ?? pending.sinceMs));
   pass.line(
     `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
   );

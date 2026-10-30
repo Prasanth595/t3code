@@ -17,7 +17,7 @@ const AUTODEPLOY_JOB = "io.github.rawphp.t3fac.autodeploy";
 export class DeployKick extends Context.Service<
   DeployKick,
   { readonly kick: Effect.Effect<boolean> }
->()("t3/factory/t3/deployKick/DeployKick") {}
+>()("t3/factory/t3/deployKick") {}
 
 /**
  * `launchctl kickstart` without `-k`, so a tick that is already running is not killed. The server

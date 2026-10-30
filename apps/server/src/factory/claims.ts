@@ -214,12 +214,14 @@ const removeMarker = (path: string) => {
 };
 
 /**
- * Snoozes the waiting build for {@link DEPLOY_SNOOZE_MS} from `nowMs`, replacing any snooze, and
- * returns the end in milliseconds. The file holds whole seconds, so the end is too.
+ * Snoozes the waiting build for {@link DEPLOY_SNOOZE_MS} from `nowMs`, replacing any snooze and
+ * withdrawing an update now, and returns the end in milliseconds. The file holds whole seconds,
+ * so the end is too.
  */
 export const snoozeDeploy = (dataDir: string, nowMs: number): number => {
   const endSecs = Math.floor((nowMs + DEPLOY_SNOOZE_MS) / 1000);
   writeMarker(NodePath.join(dataDir, DEPLOY_SNOOZED_FILE), `${endSecs}\n`);
+  removeMarker(NodePath.join(dataDir, DEPLOY_NOW_FILE));
   return endSecs * 1000;
 };
 

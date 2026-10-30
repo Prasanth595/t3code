@@ -68,7 +68,7 @@ build_limit=${T3FAC_BUILD_LIMIT:-3600}
 # Seconds between touches of the pending marker while a build runs. T3FAC_PENDING_REFRESH exists
 # only so tests can shorten it.
 pending_refresh=${T3FAC_PENDING_REFRESH:-300}
-# The server's PENDING_STALE_MS in pass.ts is the same span; change both together.
+# The server's PENDING_STALE_MS in claims.ts is the same span; change both together.
 pending_stale_minutes=30
 
 say() {
@@ -102,7 +102,7 @@ snooze_end() {
   if [[ $end =~ ^[0-9]{1,12}$ ]]; then echo "$end"; fi
 }
 
-# Epoch seconds as ledger/time.ts formatTs writes a whole second: 2026-10-30T04:25:15Z.
+# Epoch seconds as RFC 3339 UTC to the second: 2026-10-30T04:25:15Z.
 fmt_time() {
   date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2> /dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
 }
