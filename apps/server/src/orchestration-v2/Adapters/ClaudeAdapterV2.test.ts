@@ -13203,7 +13203,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           phaseTitle: "Alpha",
           model: input.model ?? "claude-opus-5[1m]",
           promptPreview: input.prompt ?? "Reply with exactly: A1",
-          ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
+          // Claude reports a scheduled member as `start` and only sets startedAt once it runs.
+          ...(input.startedAt === undefined && input.state !== "start"
+            ? {}
+            : { startedAt: input.startedAt ?? 0 }),
           ...(input.lastProgressAt === undefined ? {} : { lastProgressAt: input.lastProgressAt }),
           ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
           ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
@@ -13220,6 +13223,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           phaseIndex: 1,
           phaseTitle: "Alpha",
           promptPreview: "Reply with exactly: A2",
+          ...((input.secondState ?? input.state) === "start" ? { startedAt: 0 } : {}),
           ...(input.state === "done" ? { resultPreview: "A2 excerpt" } : {}),
         },
       ],
@@ -13698,6 +13702,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "00000000-0000-4000-8000-000000001005",
             state: "start",
             secondState: "queued",
+            startedAt: DateTime.toEpochMillis(memberStartedAt),
           }),
         );
         yield* harness.until(() => coordinatorTurnItems().length > turnItemsBeforeRepeat);
@@ -13721,6 +13726,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "00000000-0000-4000-8000-000000001017",
             state: "start",
             secondState: "queued",
+            startedAt: DateTime.toEpochMillis(memberStartedAt),
             label: "alpha:review",
             prompt: "Review the change",
             model: "claude-sonnet-4-6",
