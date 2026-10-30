@@ -905,8 +905,17 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         USAGE_LIMITS_PANEL_GAP * 2,
     ),
   );
-  // A long command scrolls inside the card, so its buttons stay above the composer.
-  const approvalMaxHeight = Math.round(screenAreaHeight * 0.4);
+  // A long command scrolls inside the card, so its buttons stay above the composer. The card
+  // stacks over the composer and an open keyboard, so it keeps clear of them.
+  const approvalMaxHeight = Math.min(
+    Math.round(screenAreaHeight * 0.4),
+    screenAreaHeight -
+      navigationHeaderHeight -
+      liveKeyboardHeight -
+      COMPOSER_COLLAPSED_CHROME -
+      composerBottomInset -
+      USAGE_LIMITS_PANEL_GAP * 2,
+  );
   // A toggle animates the card; a new request starts expanded at once.
   const userInputMotion = !userInputToggled
     ? "fresh"

@@ -9,7 +9,7 @@ import {
   fullAccessOverrideExplanation,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -31,6 +31,11 @@ const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "decline", label: "Decline" },
 ];
 
+// Card padding, border and the gap between the body and the footer.
+const CARD_CHROME_HEIGHT = 44;
+// Keeps the request readable when its pinned buttons need most of the card.
+const MIN_BODY_HEIGHT = 96;
+
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const options: ReadonlyArray<ProviderApprovalOption> =
     props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
@@ -38,19 +43,21 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
+  const [footerHeight, setFooterHeight] = useState(0);
+  const handleFooterLayout = (event: LayoutChangeEvent) => {
+    setFooterHeight(event.nativeEvent.layout.height);
+  };
   return (
-    <View
-      className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
-      style={{ maxHeight: props.maxHeight }}
-    >
+    <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <ScrollView
         bounces={false}
-        className="min-h-0"
         contentContainerClassName="gap-2.5"
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
         showsVerticalScrollIndicator
-        style={{ flexShrink: 1 }}
+        style={{
+          maxHeight: Math.max(MIN_BODY_HEIGHT, props.maxHeight - footerHeight - CARD_CHROME_HEIGHT),
+        }}
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           Approval needed
@@ -90,34 +97,36 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             run to continue.
           </Text>
         ) : null}
+      </ScrollView>
+      <View className="gap-2.5" onLayout={handleFooterLayout}>
         {warning ? (
           <Text className="font-sans text-xs leading-normal text-warning-foreground">
             {warning}
           </Text>
         ) : null}
-      </ScrollView>
-      <View className="flex-row flex-wrap gap-2.5">
-        {options.map((option) => (
-          <Button
-            key={option.decision}
-            label={option.label}
-            tone={
-              option.decision === "accept"
-                ? "primary"
-                : option.decision === "decline"
-                  ? "danger"
-                  : "secondary"
-            }
-            disabled={disabled || !props.canOperateThread}
-            onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
-          />
-        ))}
+        <View className="flex-row flex-wrap gap-2.5">
+          {options.map((option) => (
+            <Button
+              key={option.decision}
+              label={option.label}
+              tone={
+                option.decision === "accept"
+                  ? "primary"
+                  : option.decision === "decline"
+                    ? "danger"
+                    : "secondary"
+              }
+              disabled={disabled || !props.canOperateThread}
+              onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
+            />
+          ))}
+        </View>
+        {!props.canOperateThread ? (
+          <Text className="font-sans text-xs text-foreground-muted">
+            This connection cannot respond to approvals.
+          </Text>
+        ) : null}
       </View>
-      {!props.canOperateThread ? (
-        <Text className="font-sans text-xs text-foreground-muted">
-          This connection cannot respond to approvals.
-        </Text>
-      ) : null}
     </View>
   );
 }
