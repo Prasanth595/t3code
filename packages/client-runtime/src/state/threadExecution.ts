@@ -12,6 +12,8 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type RunId,
+  type ServerConfig,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
@@ -341,6 +343,37 @@ export function presentRunStop(
     requestedAt: DateTime.formatIso(request.startedAt ?? request.updatedAt),
     background: active === null,
   };
+}
+
+// The set refreshes every 30 s, so a follow-up can start before it drops a finished run.
+const activeQuietRun = (
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  threadId: ThreadId,
+  activeRunId: RunId | null | undefined,
+) =>
+  activeRunId == null
+    ? undefined
+    : config?.quietRuns?.find(
+        (candidate) => candidate.threadId === threadId && candidate.runId === activeRunId,
+      );
+
+/** The quiet run itself, so Stop and Force stop cannot reach a newer one. */
+export function quietRunId(
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  threadId: ThreadId,
+  activeRunId: RunId | null | undefined,
+): RunId | null {
+  return activeQuietRun(config, threadId, activeRunId)?.runId ?? null;
+}
+
+/** When the active run last heard from its provider, once that is long enough ago to flag. */
+export function quietRunSince(
+  config: Pick<ServerConfig, "quietRuns"> | null | undefined,
+  threadId: ThreadId,
+  activeRunId: RunId | null | undefined,
+): string | null {
+  const run = activeQuietRun(config, threadId, activeRunId);
+  return run === undefined ? null : DateTime.formatIso(run.quietSince);
 }
 
 export interface PendingBackgroundWorkItem {

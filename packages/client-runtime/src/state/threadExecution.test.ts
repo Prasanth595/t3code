@@ -24,6 +24,8 @@ import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  quietRunId,
+  quietRunSince,
   deriveThreadRuntime,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
@@ -460,5 +462,23 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("quiet run selectors", () => {
+  const threadId = ThreadId.make("thread-quiet");
+  const quietRun = RunId.make("run-quiet");
+  const config = {
+    quietRuns: [{ threadId, runId: quietRun, quietSince: DateTime.makeUnsafe(0) }],
+  };
+
+  it("flag the quiet run only while it is still the active run", () => {
+    expect(quietRunId(config, threadId, quietRun)).toBe(quietRun);
+    expect(quietRunSince(config, threadId, quietRun)).toBe("1970-01-01T00:00:00.000Z");
+    // A follow-up started before the next quiet-runs update.
+    const followUp = RunId.make("run-follow-up");
+    expect(quietRunId(config, threadId, followUp)).toBeNull();
+    expect(quietRunSince(config, threadId, followUp)).toBeNull();
+    expect(quietRunSince(config, threadId, null)).toBeNull();
   });
 });
