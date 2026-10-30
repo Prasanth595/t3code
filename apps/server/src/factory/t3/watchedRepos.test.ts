@@ -12,6 +12,7 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -962,7 +963,7 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
           return {
             stdout: timedOut ? "" : `${tree}${branch}`,
             stderr: "",
-            code: timedOut ? null : ok ? 0 : 128,
+            code: timedOut ? null : ChildProcessSpawner.ExitCode(ok ? 0 : 128),
             timedOut,
             stdoutTruncated: false,
             stderrTruncated: false,
