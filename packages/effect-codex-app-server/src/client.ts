@@ -104,12 +104,29 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   const requestHandlers = new Map<string, ServerRequestHandler>();
   const termination = yield* Deferred.make<never, CodexError.CodexAppServerError>();
   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
+  const warnedDecodeFailures = new Set<string>();
   let unknownRequestHandler:
     | ((method: string, params: unknown) => Effect.Effect<unknown, CodexError.CodexAppServerError>)
     | undefined;
   let unknownNotificationHandler:
     | ((method: string, params: unknown) => Effect.Effect<void, CodexError.CodexAppServerError>)
     | undefined;
+
+  // Drop undecodable notifications without ending the session; a newer app server may
+  // send shapes this client's schemas predate. Warn once per distinct failure because
+  // the server repeats bad payloads.
+  const dropUndecodableNotification =
+    (method: string) => (error: CodexError.CodexAppServerError) => {
+      const key = `${method}\n${error.message}`;
+      const firstOfItsKind = !warnedDecodeFailures.has(key);
+      warnedDecodeFailures.add(key);
+      return firstOfItsKind
+        ? Effect.logWarning("Dropped a Codex App Server notification that failed to decode").pipe(
+            Effect.annotateLogs({ method, detail: error.message }),
+            Effect.asVoid,
+          )
+        : Effect.void;
+    };
 
   const getServerRequestParamSchema = <M extends CodexRpc.ServerRequestMethod>(
     method: M,
@@ -169,6 +186,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
         Effect.flatMap((decoded) =>
           Effect.forEach(handlers, (handler) => handler(decoded), { discard: true }),
         ),
+        Effect.catch(dropUndecodableNotification(notification.method)),
         Effect.ignore,
       );
     }
