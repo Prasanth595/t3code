@@ -27,7 +27,9 @@ export function rehypeChipPunctuation() {
       children[children.length - 1] = {
         type: "element",
         tagName: "span",
-        properties: { className: ["has-[>*>[data-slot=context-chip-label]]:whitespace-nowrap"] },
+        properties: {
+          className: ["has-[[data-slot=context-chip-label]]:whitespace-nowrap"],
+        },
         children: [previous, { type: "text", value: punctuation }],
       };
       const rest = (child.value ?? "").slice(punctuation.length);
