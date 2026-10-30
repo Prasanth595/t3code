@@ -32,7 +32,7 @@ const wholeSecond = () => Math.floor(Date.now() / 1000) * 1000;
 
 /** An accepted Update now: its build, what to say, and whether the server has since gone away. */
 interface Updating {
-  readonly commit: string | null;
+  readonly commit: string;
   readonly message: string;
   readonly away: boolean;
 }
@@ -54,12 +54,7 @@ const settleUpdating = (
     else if (status.status === "error") settled = entry.away ? entry : { ...entry, away: true };
     else {
       const pending = status.data?.deploy_pending;
-      if (
-        entry.away ||
-        pending == null ||
-        (entry.commit !== null && pending.commit !== entry.commit)
-      )
-        settled = null;
+      if (entry.away || pending == null || pending.commit !== entry.commit) settled = null;
     }
     if (settled === entry) continue;
     next ??= new Map(updating);
@@ -73,6 +68,13 @@ const withMember = <T,>(set: ReadonlySet<T>, member: T, present: boolean): Reado
   const next = new Set(set);
   if (present) next.add(member);
   else next.delete(member);
+  return next;
+};
+
+const withEntry = <K, V>(map: ReadonlyMap<K, V>, key: K, value: V | null): ReadonlyMap<K, V> => {
+  const next = new Map(map);
+  if (value === null) next.delete(key);
+  else next.set(key, value);
   return next;
 };
 
@@ -293,11 +295,13 @@ export function FactoryBelt({
   // outlive the readout.
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const [stopNote, setStopNote] = useState<string | null>(null);
-  // The environments with a snooze or Update now in flight, the accepted Update nows, and the
-  // answer of the latest one that failed.
+  // The environments with a snooze or Update now in flight, the accepted Update nows, and each
+  // environment's answer to its latest one that failed.
   const [deployBusy, setDeployBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [updating, setUpdating] = useState<ReadonlyMap<EnvironmentId, Updating>>(() => new Map());
-  const [deployNote, setDeployNote] = useState<string | null>(null);
+  const [deployNotes, setDeployNotes] = useState<ReadonlyMap<EnvironmentId, string>>(
+    () => new Map(),
+  );
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
@@ -348,7 +352,7 @@ export function FactoryBelt({
   };
   const deploy = async ({ environmentId, status }: FactoryEnvironment, now: boolean) => {
     setDeployBusy((current) => withMember(current, environmentId, true));
-    setDeployNote(null);
+    setDeployNotes((current) => withEntry(current, environmentId, null));
     try {
       if (now) {
         const { commit, kicked } = await factoryApi.deployNow(environmentId);
@@ -362,7 +366,7 @@ export function FactoryBelt({
         await factoryApi.snoozeDeploy(environmentId);
       }
     } catch (error) {
-      setDeployNote(messageOf(error));
+      setDeployNotes((current) => withEntry(current, environmentId, messageOf(error)));
     }
     setDeployBusy((current) => withMember(current, environmentId, false));
     status.refresh();
@@ -374,6 +378,7 @@ export function FactoryBelt({
     : report?.deploy_pending && report.deploy_pending.snoozed_until === null
       ? { why: "held for update" as const, since: Date.parse(report.deploy_pending.since) }
       : null;
+  const deployNote = deployNotes.get(selected.environmentId);
 
   return (
     <div className="relative flex flex-col gap-4" data-factory-belt="">

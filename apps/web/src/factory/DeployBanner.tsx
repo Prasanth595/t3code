@@ -15,13 +15,7 @@ import { Button } from "~/components/ui/button";
 
 import type { FactoryStatus } from "./api";
 import { formatClock } from "./belt";
-
-/** The states a run stays in while it waits on a person, which autodeploy does not wait for. */
-const WAITING_ON_A_PERSON = new Set(["pr-open", "needs-info", "stuck"]);
-
-/** The runs an update interrupts: the runs `factory/scripts/autodeploy.sh` waits on. */
-const runsInProgress = (runs: FactoryStatus["runs"]) =>
-  runs.filter(({ state, unreadable }) => unreadable || !WAITING_ON_A_PERSON.has(state ?? ""));
+import { runsInProgress } from "./updateInterrupts";
 
 const clockOf = (iso: string | null) => {
   const ms = iso === null ? Number.NaN : Date.parse(iso);
@@ -63,6 +57,7 @@ export function DeployBanner({
   }
 
   const inProgress = runsInProgress(status.runs);
+  const passRunning = status.passes.running;
   // A count T3 could not read may hide threads at work, so it asks as one would; an older server
   // that sends no count asks only for runs.
   const threads = status.threads === undefined ? 0 : status.threads.running;
@@ -92,7 +87,9 @@ export function DeployBanner({
           <Button
             disabled={busy}
             onClick={() =>
-              inProgress.length > 0 || threads !== 0 ? setConfirming(true) : onDeployNow()
+              inProgress.length > 0 || passRunning || threads !== 0
+                ? setConfirming(true)
+                : onDeployNow()
             }
             size="xs"
           >
@@ -116,6 +113,11 @@ export function DeployBanner({
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {passRunning ? (
+              <p className="text-sm text-muted-foreground">
+                The factory pass running now will be interrupted.
+              </p>
             ) : null}
             {threads !== 0 ? (
               <p className="text-sm text-muted-foreground">

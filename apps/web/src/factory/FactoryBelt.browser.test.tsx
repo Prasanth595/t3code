@@ -867,6 +867,7 @@ describe("a waiting update", () => {
         statusRun(2, { title: "Make the belt faster" }),
         statusRun(3, { title: null }),
         statusRun(4, { state: "pr-open", title: "Already on PR" }),
+        statusRun(5, { state: null, title: "Fresh claim" }),
       ],
       { threads: { running: 2 } },
     );
@@ -877,6 +878,7 @@ describe("a waiting update", () => {
     const text = dialog()!.textContent;
     expect(text).toContain("Make the belt faster");
     expect(text).toContain(runId(3));
+    expect(text).toContain("Fresh claim");
     expect(text).not.toContain("Already on PR");
     expect(text).toContain(
       "2 threads with an agent at work will be interrupted; you continue them in T3.",
@@ -899,6 +901,24 @@ describe("a waiting update", () => {
     expect(dialog()!.textContent).toContain(
       "1 thread with an agent at work will be interrupted; you continue them in T3.",
     );
+    await act(async () => dialogButton("Cancel")!.click());
+    await expect.poll(() => dialog()).toBeNull();
+    expect(deployNow).not.toHaveBeenCalled();
+    expect(banner(page)?.textContent).toContain("Update waiting.");
+  });
+
+  it("asks before Update now interrupts a running factory pass", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn();
+    __setFactoryApiForTests(api({ deployNow }));
+    const desktop = withUpdate([], {
+      threads: { running: 0 },
+      passes: { at: iso(NOW), poll_seconds: 60, running: true },
+    });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain("The factory pass running now will be interrupted.");
     expect(deployNow).not.toHaveBeenCalled();
   });
 
@@ -1061,15 +1081,22 @@ describe("a waiting update", () => {
         },
       }),
     );
-    await using page = await render(
-      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
-    );
+    const belt = props({
+      environments: [withUpdate([]), withUpdate([], {}, STUDIO, "Studio")],
+    });
+    await using page = await render(createElement(FactoryBelt, belt));
     await page.click(page.button("Update now")!);
-    const note = page
-      .all('[role="status"]')
-      .find((p) => p.textContent === "Missing permission environment:maintain");
-    expect(note).toBeDefined();
+    const note = () =>
+      page
+        .all('[role="status"]')
+        .find((p) => p.textContent === "Missing permission environment:maintain");
+    expect(note()).toBeDefined();
     expect(banner(page)?.textContent).toContain("Update waiting.");
+    // The refusal was Desktop's: Studio does not show it, and Desktop does again once picked.
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
+    expect(note()).toBeUndefined();
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Desktop"))!);
+    expect(note()).toBeDefined();
   });
 });
 

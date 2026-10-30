@@ -138,7 +138,8 @@ export interface FactorySnoozeResult {
 }
 
 export interface FactoryDeployNowResult {
-  readonly commit: string | null;
+  /** The build asked for: the server answers 409, not 202, when no build is waiting. */
+  readonly commit: string;
   /** Autodeploy started now; false when it starts on its next tick. */
   readonly kicked: boolean;
   readonly message: string;

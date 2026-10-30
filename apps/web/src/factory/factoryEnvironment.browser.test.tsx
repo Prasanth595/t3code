@@ -164,7 +164,7 @@ const fakeApi: FactoryApi = {
     return { dismissed: ids };
   },
   snoozeDeploy: async () => ({ snoozed_until: "2026-10-17T13:00:00.000Z" }),
-  deployNow: async () => ({ commit: null, kicked: true, message: "installing" }),
+  deployNow: async () => ({ commit: "abc", kicked: true, message: "installing" }),
 };
 
 const settle = async () => {

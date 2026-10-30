@@ -244,7 +244,8 @@ factory_idle() {
   fi
   # A server from before the thread count has no `threads`; it counts as none, so a rollback to
   # one does not stop autodeploy for good. A count T3 could not read is null, and waits like a
-  # thread at work: until deploy_wait_minutes.
+  # thread at work: until deploy_wait_minutes. The Factory page's Update now asks first by the same
+  # rule (apps/web/src/factory/updateInterrupts.ts).
   if ! busy=$(jq -r 'if .passes.running == true or any(.runs[];
       .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))
     then "a factory run is in progress"
