@@ -1453,6 +1453,74 @@ const removeWorktree = (path: string) =>
     return yield* sessions.removeWorktree(path);
   });
 
+const worktreeHead = (path: string) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions.FactorySessions;
+    return yield* sessions.worktreeHead(path);
+  });
+
+const gitPrinted = (exitCode: number, stdout: string) =>
+  ({ exitCode, stdout, stderr: "", stdoutTruncated: false, stderrTruncated: false }) as never;
+
+describe("FactorySessions.worktreeHead", () => {
+  const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const headWith = (
+    path: string,
+    answer: () => ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>,
+    calls: Array<GitCall> = [],
+  ) =>
+    worktreeHead(path).pipe(
+      Effect.provide(layerSessions(noThreadsOnWorktrees, {}, {}, recordingGit(calls, answer))),
+    );
+
+  it.effect("reads the full commit id with git rev-parse in the worktree", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const head = yield* headWith(
+        "/tmp/wt/t3-abc",
+        () => Effect.succeed(gitPrinted(0, `${SHA}\n`)),
+        calls,
+      );
+      assert.strictEqual(head, SHA);
+      assert.deepStrictEqual(
+        calls.map(({ cwd, args }) => ({ cwd, args })),
+        [{ cwd: "/tmp/wt/t3-abc", args: ["rev-parse", "--verify", "HEAD"] }],
+      );
+    }),
+  );
+
+  it.effect("fails as worktree-head on a relative path, a failed git, or no full commit id", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<
+        [string, () => ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>]
+      > = [
+        ["t3-abc", () => Effect.succeed(gitPrinted(0, SHA))],
+        ["/tmp/wt/t3-abc", () => Effect.succeed(gitPrinted(128, SHA))],
+        ["/tmp/wt/t3-abc", () => Effect.succeed(gitPrinted(0, SHA.slice(0, 7)))],
+        [
+          "/tmp/wt/t3-abc",
+          () =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "factory.sessions.worktreeHead",
+                command: "git rev-parse",
+                cwd: "/tmp/wt/t3-abc",
+                detail: "spawn git ENOENT",
+              }),
+            ),
+        ],
+      ];
+      for (const [path, answer] of cases) {
+        const error = yield* Effect.flip(headWith(path, answer));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        if (error._tag === "FactorySessionsError") {
+          assert.strictEqual(error.operation, "worktree-head");
+        }
+      }
+    }),
+  );
+});
+
 describe("FactorySessions.removeWorktree", () => {
   it.effect("refuses a relative path without running git", () =>
     Effect.gen(function* () {
