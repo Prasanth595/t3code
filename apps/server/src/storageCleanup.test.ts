@@ -112,14 +112,16 @@ describe("V2 storage cleanup eligibility", () => {
   const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
 
   it("allows an idle worktree and rejects the project checkout", () => {
-    expect(storageCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
-    expect(storageCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
+    expect(storageCleanupThreadIdle(candidate(), NOW_MS, DEFAULT_SERVER_SETTINGS)).toBe(true);
+    expect(storageCleanupThreadIdle(shell(), NOW_MS, DEFAULT_SERVER_SETTINGS)).toBe(false);
   });
 
   it.each(["running", "starting", "preparing", "waiting", "queued"] as const)(
     "retains a worktree while its thread is %s",
     (status) => {
-      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
+      expect(
+        storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS, DEFAULT_SERVER_SETTINGS),
+      ).toBe(false);
     },
   );
 
@@ -133,6 +135,7 @@ describe("V2 storage cleanup eligibility", () => {
             pendingBackgroundTasks: [{ taskId: "task-1", kind: "command" }],
           },
           NOW_MS,
+          DEFAULT_SERVER_SETTINGS,
         ),
       ).toBe(false);
     },
@@ -152,6 +155,7 @@ describe("V2 storage cleanup eligibility", () => {
             },
           },
           NOW_MS,
+          DEFAULT_SERVER_SETTINGS,
         ),
       ).toBe(false);
     },
@@ -159,15 +163,82 @@ describe("V2 storage cleanup eligibility", () => {
 
   it("retains an active run even if the shell status is idle", () => {
     expect(
-      storageCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
+      storageCleanupThreadIdle(
+        { ...candidate(), activeRunId: RunId.make("run") },
+        NOW_MS,
+        DEFAULT_SERVER_SETTINGS,
+      ),
     ).toBe(false);
   });
 
   it("retains a queued prompt before the new run has been projected", () => {
     expect(
-      storageCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
+      storageCleanupThreadIdle(
+        { ...candidate(), latestUserMessageAt: at(-1_000) },
+        NOW_MS,
+        DEFAULT_SERVER_SETTINGS,
+      ),
     ).toBe(false);
   });
+
+  it.each([
+    { name: "snoozed until a future reset", snooze: true, resetIn: DAY_MS, idle: false },
+    { name: "set to auto-resume", autoResume: true, resetIn: DAY_MS, idle: false },
+    { name: "with recovery turned off", resetIn: DAY_MS, idle: true },
+    { name: "auto-resuming after the reset", autoResume: true, resetIn: -1_000, idle: false },
+    { name: "snoozed past its reset", snooze: true, resetIn: -1_000, idle: true },
+    {
+      name: "settled with an auto-resume pending",
+      autoResume: true,
+      settled: true,
+      resetIn: -1_000,
+      idle: true,
+    },
+    { name: "not yet armed by the recovery worker", armed: false, resetIn: DAY_MS, idle: false },
+    {
+      name: "not yet armed, auto-resume after reset",
+      armed: false,
+      autoResumeSetting: true,
+      resetIn: -1_000,
+      idle: false,
+    },
+    {
+      name: "not armed with recovery settings off",
+      armed: false,
+      settingsOff: true,
+      resetIn: DAY_MS,
+      idle: true,
+    },
+  ])(
+    "treats a usage-limited thread $name as idle: $idle",
+    ({
+      autoResume = false,
+      snooze = false,
+      armed = true,
+      autoResumeSetting = false,
+      settled,
+      settingsOff,
+      resetIn,
+      idle,
+    }) => {
+      const runId = RunId.make("run-1");
+      const resetAt = DateTime.formatIso(at(resetIn));
+      expect(
+        storageCleanupThreadIdle(
+          {
+            ...candidateWithStatus("failed"),
+            latestRunId: runId,
+            lastErrorClass: "usage_limit",
+            usageLimitResetAt: resetAt,
+            settledOverride: settled ? "settled" : null,
+            limitRecovery: armed ? { runId, resetAt, autoResume, snooze } : null,
+          },
+          NOW_MS,
+          { autoResumeLimitedThreads: autoResumeSetting, snoozeLimitedThreads: !settingsOff },
+        ),
+      ).toBe(idle);
+    },
+  );
 
   it("uses V2 run activity instead of metadata refreshes for retention", () => {
     const thread = candidate();
