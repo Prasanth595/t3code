@@ -20,6 +20,7 @@ const model = (
     outputTokens: 0,
     reasoningTokens: 0,
   },
+  credits: 0,
   records: 1,
   unpricedRecords: 0,
   unpricedTokens: 0,
