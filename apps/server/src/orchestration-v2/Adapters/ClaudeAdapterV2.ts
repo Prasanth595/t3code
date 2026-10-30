@@ -132,6 +132,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
+  hasClaudeSkillMention,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4535,8 +4536,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const userInvocableSkills = (cwd: string | null) =>
-    discoverClaudeSkills(
+  const userInvocableSkills = (
+    cwd: string | null,
+    message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+  ) => {
+    // Attachment paths join the dispatched text and may contain skill mentions.
+    if (message.attachments.length === 0 && !hasClaudeSkillMention(message.text)) {
+      return Effect.succeed(new Map<string, ClaudeSkillTarget>());
+    }
+    return discoverClaudeSkills(
       adapterOptions.settings,
       cwd ?? undefined,
       adapterOptions.environment,
@@ -4552,6 +4560,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+  };
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -10164,7 +10173,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    skills: yield* userInvocableSkills(
+                      turnInput.runtimePolicy.cwd,
+                      turnInput.message,
+                    ),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -10609,7 +10621,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              skills: yield* userInvocableSkills(
+                currentTurn.input.runtimePolicy.cwd,
+                turnInput.message,
+              ),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
