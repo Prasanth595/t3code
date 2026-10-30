@@ -8,7 +8,9 @@ import {
 } from "@t3tools/contracts";
 import {
   scheduledTaskDefaultModel,
+  createDraft,
   DEFAULT_SCHEDULE,
+  hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
@@ -96,6 +98,15 @@ describe("scheduleFromDraft", () => {
     expect(scheduleFromDraft({ ...draft, runMissedOnce: false })).toMatchObject({
       missedRun: "skip",
     });
+  });
+
+  it("counts a run once if missed toggle as an unsaved change", () => {
+    const initial = createDraft(null, null);
+    const toggled = {
+      ...initial,
+      schedule: { ...initial.schedule, runMissedOnce: !initial.schedule.runMissedOnce },
+    };
+    expect(hasScheduledTaskDraftChanges(initial, toggled)).toBe(true);
   });
 
   it.each([

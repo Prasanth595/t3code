@@ -216,6 +216,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.mode,
     draft.schedule.timeOfDay,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
+    draft.schedule.runMissedOnce,
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,
