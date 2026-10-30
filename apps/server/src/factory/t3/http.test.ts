@@ -497,6 +497,7 @@ describe("GET /api/factory/status", () => {
         "slots",
         "threads",
         "paused_by_hand",
+        "deploy_pending",
         "runs",
         "left_out",
         "problems",

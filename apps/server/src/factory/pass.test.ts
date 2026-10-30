@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import { describe } from "vite-plus/test";
 
 import type { Attention, AttentionItem } from "./attention.ts";
-import type { HandPause, PendingDeploy } from "./claims.ts";
+import { PENDING_STALE_MS, type HandPause, type PendingDeploy } from "./claims.ts";
 import {
   timeLimitOnlyProjectConfig,
   type MachineConfig,
@@ -32,7 +32,6 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
-  PENDING_STALE_MS,
   PRUNE_EVERY_MS,
   STUCK_READ_EVERY_MS,
   UNSETTLED_READ_EVERY_MS,

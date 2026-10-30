@@ -20,13 +20,13 @@ export const DEPLOY_PENDING_FILE = "deploy-pending";
  * The file in the data dir that snoozes a waiting build: `<epoch seconds>`, the snooze's end.
  * Until then the pass claims as normal and autodeploy.sh installs nothing.
  */
-export const DEPLOY_SNOOZED_FILE = "deploy-snoozed";
+const DEPLOY_SNOOZED_FILE = "deploy-snoozed";
 
 /** The file in the data dir that asks autodeploy.sh to install the waiting build on its next tick. */
-export const DEPLOY_NOW_FILE = "deploy-now";
+const DEPLOY_NOW_FILE = "deploy-now";
 
 /** How long one snooze lasts. */
-export const DEPLOY_SNOOZE_MS = 60 * 60_000;
+const DEPLOY_SNOOZE_MS = 60 * 60_000;
 
 /**
  * Three ticks of the 10-minute autodeploy job: a `deploy-pending` not rewritten in that long

@@ -877,7 +877,9 @@ describe("autodeploy.sh snoozed or asked to deploy now", () => {
       expect(result.status).toBe(0);
       expect(result.deploys).toEqual([]);
       expect(lines(result.output)).toEqual([
-        expect.stringContaining(`not deploying ${short}: snoozed until ${formatTs(end * 1000)}`),
+        expect.stringContaining(
+          `not deploying ${short}: snoozed until ${formatTs(end * 1000).replace(".000Z", "Z")}`,
+        ),
       ]);
       expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(`${since} ${sha}\n`);
       expect(NodeFS.statSync(pendingFile()).mtimeMs).toBeGreaterThanOrEqual(before);

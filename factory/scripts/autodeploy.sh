@@ -21,6 +21,11 @@
 #   the build has waited; past `deploy_wait_minutes` (machine config, default 120) it deploys
 #   whatever is in the way: factory runs resume on the new build, and a person's thread is
 #   interrupted, which the person continues in T3;
+# - while `deploy-snoozed` in the data dir holds a time in the future (the Factory page's snooze),
+#   builds and installs nothing but keeps `deploy-pending` fresh; once that time has passed, the
+#   wait counts again from it and the file is deleted;
+# - takes `deploy-now` in the data dir (the Factory page's update now) as the wait being past
+#   `deploy_wait_minutes`; both files are deleted with `deploy-pending`;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
 #   its limit is tried on the next two ticks before the commit is given up on;
@@ -38,6 +43,10 @@ machine_config="$data_dir/config.yml"
 # `<epoch seconds> <sha>`: the first time a build was left waiting, and the newest build waiting.
 # The server reads it (claims.ts loadPendingDeploy) to stop claiming issues.
 pending_file="$data_dir/deploy-pending"
+# `<epoch seconds>`: the end of a snooze (claims.ts snoozeDeploy). Until then nothing is deployed.
+snooze_file="$data_dir/deploy-snoozed"
+# Any content: install the waiting build without waiting for the runs in progress.
+now_file="$data_dir/deploy-now"
 # Minutes a build may wait for the runs in progress; config.ts DEFAULT_DEPLOY_WAIT_MINUTES is the
 # same number, change both together.
 deploy_wait_default=120
@@ -80,8 +89,22 @@ fmt_duration() {
   fi
 }
 
+# A snooze or an update now is for the build waiting, so it goes with it.
 clear_pending() {
-  rm -f "$pending_file"
+  rm -f "$pending_file" "$snooze_file" "$now_file"
+}
+
+# Prints the end of the snooze in deploy-snoozed, in epoch seconds, ended or not; nothing when
+# there is none or its text is not whole seconds.
+snooze_end() {
+  local end=""
+  read -r end 2> /dev/null < "$snooze_file" || true
+  if [[ $end =~ ^[0-9]{1,12}$ ]]; then echo "$end"; fi
+}
+
+# Epoch seconds as ledger/time.ts formatTs writes a whole second: 2026-10-30T04:25:15Z.
+fmt_time() {
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2> /dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
 }
 
 if [[ -f $env_file ]]; then
@@ -154,7 +177,7 @@ fi
 # waiting, so it survives main moving: the wait is measured from the oldest undeployed build. The
 # file is written on every call, so its mtime shows the last tick that read the status.
 mark_pending() {
-  local since="" sha="" tmp
+  local since="" sha="" tmp end
   mkdir -p "$data_dir"
   read -r since _ 2> /dev/null < "$pending_file" || true
   [[ $since =~ ^[0-9]+$ ]] || since=$(date +%s)
@@ -163,9 +186,17 @@ mark_pending() {
   if [[ -n $(find "$pending_file" -mmin +"$pending_stale_minutes" 2> /dev/null) ]]; then
     since=$(date +%s)
   fi
+  # A snooze that has ended starts the wait again from its end, as the server counts it.
+  end=$(snooze_end)
+  if [[ -n $end ]] && ((end <= $(date +%s))); then
+    if ((end > since)); then since=$end; fi
+  else
+    end=""
+  fi
   tmp="$data_dir/.deploy-pending.$$"
   echo "$since $target" > "$tmp"
   mv -f "$tmp" "$pending_file"
+  if [[ -n $end ]]; then rm -f "$snooze_file"; fi
 }
 
 # Sets deploy_limit (minutes) from deploy_wait_minutes in the machine config, read as keep_versions
@@ -196,7 +227,14 @@ read_deploy_limit() {
 # factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
 # shows as interrupted in T3 and the person continues it.
 factory_idle() {
-  local body busy
+  local body busy end
+  # A person snoozed the build: keep the marker fresh so the status still shows it, and wait.
+  end=$(snooze_end)
+  if [[ -n $end ]] && ((end > $(date +%s))); then
+    mark_pending
+    say "not deploying $short: snoozed until $(fmt_time "$end")"
+    return 1
+  fi
   if [[ -z $token ]]; then
     say "not deploying $short: T3FAC_AUTODEPLOY_TOKEN is not set in $env_file"
     return 1
@@ -219,6 +257,12 @@ factory_idle() {
     return 1
   fi
   mark_pending
+  # Asked from the Factory page: as if the build had waited past the limit.
+  if [[ -f $now_file ]]; then
+    [[ -n $said_overdue ]] || say "deploying $short now, as asked from the Factory page${busy:+, although $busy}"
+    said_overdue=1
+    return 0
+  fi
   if [[ -n $busy ]]; then
     local since="" now waited
     read -r since _ 2> /dev/null < "$pending_file" || true
