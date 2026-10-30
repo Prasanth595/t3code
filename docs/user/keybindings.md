@@ -44,6 +44,15 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Rename the current thread
+
+Press **F2** from the conversation or composer to rename the open thread. On a Mac,
+you may need **fn+F2**. Enter saves the title, Escape cancels, and focus returns to
+the control you were using. You can also choose **Rename current thread** in the
+command palette. Change the shortcut in **Settings → Keybindings** under
+**Rename Current Thread** (`thread.rename`). The default leaves terminals and
+previews alone.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`

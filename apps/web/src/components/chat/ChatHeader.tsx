@@ -14,6 +14,7 @@ import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -42,6 +43,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { subscribeThreadRename, type ThreadRenameRequest } from "./threadRenameBus";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -159,12 +161,16 @@ export const ChatHeader = memo(function ChatHeader({
     isRenamingTitle,
   ]);
   const renameCommittedRef = useRef(false);
+  const renameReturnFocusRef = useRef<HTMLElement | null>(null);
   const startRename = () => {
     if (
       !isServerThread ||
       !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
     )
       return;
+    if (isRenamingTitle) return;
+    renameReturnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     renameCommittedRef.current = false;
     setRenaming({
       environmentId: activeThreadEnvironmentId,
@@ -209,6 +215,20 @@ export const ChatHeader = memo(function ChatHeader({
     clearTimeout(titleMenuTimerRef.current);
     titleMenuTimerRef.current = null;
   };
+  const handleRenameRequest = useEffectEvent((request: ThreadRenameRequest) => {
+    if (
+      request.threadRef.environmentId !== activeThreadEnvironmentId ||
+      request.threadRef.threadId !== activeThreadId ||
+      isRenamingTitle
+    )
+      return;
+    cancelPendingTitleMenu();
+    closeMenu();
+    startRename();
+    renameReturnFocusRef.current = request.returnFocus;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the mounted header to rename requests from chat shortcuts and the command palette
+  useEffect(() => subscribeThreadRename(handleRenameRequest), []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending title-menu timer when the thread switches or the header unmounts
   useEffect(
     () => () => {
@@ -269,12 +289,23 @@ export const ChatHeader = memo(function ChatHeader({
   const handleRenameKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
       renameCommittedRef.current = true;
       commitRename(event.currentTarget.value);
     } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
       renameCommittedRef.current = true;
       setRenaming(null);
+    } else {
+      return;
     }
+    const returnFocus = renameReturnFocusRef.current;
+    queueMicrotask(() => {
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+      else titleButtonRef.current?.focus({ preventScroll: true });
+    });
   };
   return (
     <div
@@ -354,6 +385,7 @@ export const ChatHeader = memo(function ChatHeader({
           {renamingTitle !== null ? (
             <input
               autoFocus
+              data-thread-rename
               dir="auto"
               aria-label="Thread title"
               className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-inset ring-ring/50 focus:ring-ring"

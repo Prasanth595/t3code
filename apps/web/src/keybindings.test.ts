@@ -600,6 +600,26 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "renames from editable fields on %s while leaving terminals and previews alone",
+    (platform) => {
+      const rename = event({ key: "F2" });
+      assert.equal(
+        resolveShortcutCommand(rename, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { editableFocus: true, composerFocus: true },
+        }),
+        "thread.rename",
+      );
+      for (const context of [{ terminalFocus: true }, { previewFocus: true }]) {
+        assert.equal(
+          resolveShortcutCommand(rename, DEFAULT_RESOLVED_KEYBINDINGS, { platform, context }),
+          null,
+        );
+      }
+    },
+  );
+
   it("routes mod+w to the terminal while focused and to the right panel otherwise", () => {
     const closeEvent = event({ key: "w", metaKey: true });
     assert.strictEqual(

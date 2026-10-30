@@ -30,6 +30,7 @@ import { useComposerResume } from "./chat/useComposerResume";
 import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
+import { openThreadRename } from "./chat/threadRenameBus";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
@@ -2666,6 +2667,18 @@ export default function ChatView(props: ChatViewProps) {
       ...threadLifecycleShortcuts,
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
+      },
+      "thread.rename": ({ event }) => {
+        if (event.target instanceof HTMLElement && event.target.closest('[data-slot="sidebar"]'))
+          return false;
+        if (
+          !isServerThread ||
+          rightPanelMaximized ||
+          !activeThreadRef ||
+          !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope)
+        )
+          return false;
+        if (!event.repeat) openThreadRename(activeThreadRef);
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)

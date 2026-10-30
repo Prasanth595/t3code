@@ -73,6 +73,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { openThreadRename } from "./chat/threadRenameBus";
 import {
   useDeferredValue,
   useEffect,
@@ -141,7 +142,11 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
-import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
+import {
+  PULL_REQUESTS_PANEL_REF,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   cn,
@@ -334,6 +339,8 @@ function CommandPaletteDialog(props: {
       data-testid="command-palette"
       finalFocus={() => {
         if (restoreWorkspaceFocusFromPalette()) return false;
+        const titleEditor = document.querySelector<HTMLInputElement>("input[data-thread-rename]");
+        if (titleEditor) return titleEditor;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
         const composer = composerHandleRef?.current;
@@ -448,6 +455,17 @@ function OpenCommandPaletteDialog(props: {
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
+  const canRenameActiveThread = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const activeThreadRightPanelMaximized = useRightPanelStore((state) => {
+    const threadRef = activeThread
+      ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+      : null;
+    const panel = selectThreadRightPanelState(state.byThreadKey, threadRef);
+    return panel.isOpen && panel.maximized === true;
+  });
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1226,6 +1244,22 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "chat.find",
       run: async () => {
         openThreadFind(activeThreadKey);
+      },
+    });
+  }
+
+  if (activeThread !== null && canRenameActiveThread && !activeThreadRightPanelMaximized) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:rename-current-thread",
+      title: "Rename current thread",
+      searchTerms: ["rename", "name", "title", "agent"],
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.rename",
+      run: async () => {
+        const returnFocus = getCommandPaletteReturnFocus();
+        openThreadRename(threadRef, returnFocus instanceof HTMLElement ? returnFocus : null);
       },
     });
   }
