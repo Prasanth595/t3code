@@ -43,7 +43,16 @@ describe("CommandPalette open intents", () => {
   });
 
   it.each([
-    { savedTitle: "Acme notes", query: "without project", command: "New thread in Acme notes" },
+    {
+      savedTitle: "Acme notes",
+      query: "without project",
+      command: "New thread in Acme notes (without a project)",
+    },
+    {
+      savedTitle: "Acme notes",
+      query: "Acme notes",
+      command: "New thread in Acme notes (without a project)",
+    },
     { savedTitle: null, query: "without project", command: "New thread without a project" },
   ])(
     "finds the scratch command for $query with saved title $savedTitle",
@@ -73,7 +82,13 @@ describe("CommandPalette open intents", () => {
       const input = page.getByPlaceholder("Search commands, projects, and threads...");
       await expect.element(input).toHaveFocus();
       await expect.element(input).toHaveValue(query);
-      await expect.element(page.getByRole("option", { name: new RegExp(command) })).toBeVisible();
+      await expect
+        .element(
+          page.getByRole("option", {
+            name: new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+          }),
+        )
+        .toBeVisible();
     },
   );
 });

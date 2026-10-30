@@ -287,6 +287,9 @@ export function DraftHeroHeadline({
             />
           }
         >
+          {isScratchDraft ? (
+            <ProjectFavicon project={activeProject} className="size-4 shrink-0" />
+          ) : null}
           <DraftProjectName value={activeProjectDisplayName ?? "Choose a project"} singleLine />
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (

@@ -1215,7 +1215,7 @@ function OpenCommandPaletteDialog(props: {
         "chat",
       ],
       title: scratchProject
-        ? `New thread in ${scratchProject.title}`
+        ? `New thread in ${scratchProject.title} (without a project)`
         : "New thread without a project",
       icon: scratchProject ? (
         <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
