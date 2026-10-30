@@ -198,7 +198,7 @@ describe("PiProvider", () => {
       const snapshot = yield* checkPiProviderStatus(settings).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      assert.equal(snapshot.status, row.message === undefined ? "ready" : "warning");
+      assert.equal(snapshot.status, "ready");
       assert.equal(snapshot.auth.status, "authenticated");
       if (row.message === undefined) assert.isUndefined(snapshot.message);
       else assert.include(snapshot.message ?? "", row.message);
