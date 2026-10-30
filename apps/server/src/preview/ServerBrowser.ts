@@ -193,7 +193,7 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
-  | { readonly _tag: "popup"; readonly tabId: string }
+  | { readonly _tag: "popup"; readonly tabId: string; readonly handoffId?: string }
   | {
       readonly _tag: "download";
       readonly id: string;
@@ -218,6 +218,8 @@ export class ServerBrowser extends Context.Service<
       readonly maxHeight: number;
       readonly quality: number;
       readonly canOperate: boolean;
+      readonly sessionId?: string;
+      readonly handoffId?: string | undefined;
     }) => Effect.Effect<
       ServerBrowserViewer,
       ServerBrowserTabNotFoundError | ServerBrowserLaunchError,
@@ -246,9 +248,16 @@ export class ServerBrowser extends Context.Service<
   }
 >()("t3/preview/ServerBrowser") {}
 
+interface PopupHandoff {
+  readonly id: string;
+  readonly sessionId: string | undefined;
+  active: boolean;
+}
+
 interface ViewerState {
   readonly id: string;
   readonly canOperate: boolean;
+  handoff: PopupHandoff;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
@@ -291,6 +300,7 @@ interface ServerTab {
   agentOperating: boolean;
   fileChooserIntercepted: boolean;
   readonly onFileChooser: (chooser: FileChooser) => void;
+  handoff: PopupHandoff | null;
 
   readonly isolatedContext: boolean;
 
@@ -468,7 +478,14 @@ const make = Effect.gen(function* () {
   const pendingTabs = new Map<string, Promise<ServerTab>>();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly handoff: PopupHandoff | null;
+    }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -779,6 +796,7 @@ const make = Effect.gen(function* () {
       agentOperating: false,
       fileChooserIntercepted: false,
       onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
+      handoff: adopted?.handoff ?? null,
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -789,7 +807,7 @@ const make = Effect.gen(function* () {
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
-      loading: false,
+      loading: adopted !== undefined && snapshot.navStatus._tag === "Loading",
       closing: false,
       recording: null,
       recordingStart: null,
@@ -921,6 +939,22 @@ const make = Effect.gen(function* () {
 
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
+    } else if (adopted) {
+      // An adopted page can finish loading before its listeners attach.
+      let loadReported = false;
+      page.once("load", () => {
+        loadReported = true;
+      });
+      const generation = tab.navigationGeneration;
+      void page
+        .waitForLoadState("load")
+        .then(() => {
+          if (!loadReported && tab.navigationGeneration === generation) {
+            tab.loading = false;
+            return reportLoaded(tab);
+          }
+        })
+        .catch(constVoid);
     }
     return tab;
   };
@@ -1198,34 +1232,42 @@ const make = Effect.gen(function* () {
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     const agentId = opener.control.agentId;
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
+    const humanId = opener.control.controller;
+    const controller = [...opener.viewers].find((viewer) => viewer.id === humanId);
+    if (
+      opener.closing ||
+      (agentId !== null && (controller === undefined ? atTabLimit(agentId) : atServerTabLimit()))
+    ) {
       await popup.close().catch(constVoid);
       return;
     }
     const url = popup.url();
+    const handoff = controller?.handoff ?? null;
 
-    const controller = [...opener.viewers].find(
-      (viewer) => viewer.id === opener.control.controller,
-    );
     await runPromise(
       manager.open({
         threadId: opener.threadId,
         ...(/^https?:/i.test(url) ? { url } : {}),
         runtime: "server",
         ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
-        ...(opener.control.agentId === null
+        ...(agentId === null
           ? {}
-          : { automationOwner: opener.control.agentId, reveal: false }),
+          : {
+              automationOwner: agentId,
+              // ChatView hides server surfaces with reveal:false, including the one we switch to.
+              ...(controller === undefined ? { reveal: false } : {}),
+            }),
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            handoff,
           }),
       }),
     ).then(
       (snapshot) => {
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+        if (handoff?.active)
+          controller?.push({ _tag: "popup", tabId: snapshot.tabId, handoffId: handoff.id });
       },
       async () => {
         await popup.close().catch(constVoid);
@@ -1271,8 +1313,9 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const atServerTabLimit = () => tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT;
   const atTabLimit = (agentSessionId: string) =>
-    tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
+    atServerTabLimit() ||
     [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
@@ -2307,6 +2350,7 @@ const make = Effect.gen(function* () {
     const viewer: ViewerState = {
       id: NodeCrypto.randomUUID(),
       canOperate: input.canOperate,
+      handoff: { id: NodeCrypto.randomUUID(), sessionId: input.sessionId, active: true },
       pressedKeys: new Map(),
       pressedButtons: new Map(),
       push: (next) => {
@@ -2348,7 +2392,16 @@ const make = Effect.gen(function* () {
           reportLiveTabs();
         }),
     );
-    if (input.canOperate && tab.control.agentId === null && tab.control.controller === null) {
+    if (
+      input.canOperate &&
+      tab.control.controller === null &&
+      (tab.control.agentId === null ||
+        (tab.handoff?.active &&
+          input.handoffId === tab.handoff.id &&
+          input.sessionId !== undefined &&
+          input.sessionId === tab.handoff.sessionId))
+    ) {
+      tab.handoff = null;
       yield* Effect.promise(() => tab.control.take(viewer.id));
     }
     broadcastControl(tab);
@@ -2425,10 +2478,19 @@ const make = Effect.gen(function* () {
           try {
             if (message.type === "takeControl") {
               const taking = tab.control.take(viewer.id);
+              if (!viewer.handoff.active) {
+                viewer.handoff = {
+                  id: NodeCrypto.randomUUID(),
+                  sessionId: input.sessionId,
+                  active: true,
+                };
+              }
               broadcastControl(tab);
               await taking;
               pushFileChooser(tab);
             } else if (message.type === "releaseControl") {
+              // A stream disconnect during the popup switch must preserve the grant.
+              if (viewer.id === tab.control.controller) viewer.handoff.active = false;
               const releasing = tab.control.release(viewer.id, () =>
                 releaseViewerInput(viewer, session),
               );

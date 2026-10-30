@@ -111,7 +111,7 @@ it.effect.each([
     );
     const server = Context.get(services, HttpServer.HttpServer);
     const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
-    const resource = `/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket${interactive ? "" : "&interactive=false"}`;
+    const resource = `/api/preview-stream/ws?threadId=thread&tabId=tab&handoffId=popup-claim&wsTicket=one-use-ticket${interactive ? "" : "&interactive=false"}`;
     const received = Promise.withResolvers<void>();
     const socket = yield* Effect.acquireRelease(
       Effect.sync(() => new WebSocket(`${origin}${resource}`)),
@@ -146,6 +146,8 @@ it.effect.each([
         maxHeight: 800,
         quality: 70,
         canOperate,
+        sessionId: "stream-test",
+        handoffId: "popup-claim",
       },
     ]);
     expect(auth.requests).toEqual([resource]);

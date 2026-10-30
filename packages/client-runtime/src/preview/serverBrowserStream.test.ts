@@ -113,6 +113,29 @@ describe("preview stream downloads", () => {
   beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
   afterEach(() => vi.unstubAllGlobals());
 
+  it("carries a targeted popup handoff only to its first interactive stream", () => {
+    const events = {
+      onFrame: vi.fn(),
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onPopup: vi.fn(),
+    };
+    const opener = createPreviewStreamClient(target, events);
+    FakeSocket.current.message(
+      JSON.stringify({ type: "popup", tabId: "popup", handoffId: "claim" }),
+    );
+    expect(events.onPopup).toHaveBeenCalledWith("popup");
+    const popup = { ...target, tabId: "popup" };
+    const watcher = createPreviewStreamClient({ ...popup, interactive: false }, events);
+    expect(new URL(FakeSocket.current.url).searchParams.has("handoffId")).toBe(false);
+    const operator = createPreviewStreamClient(popup, events);
+    expect(new URL(FakeSocket.current.url).searchParams.get("handoffId")).toBe("claim");
+    const later = createPreviewStreamClient(popup, events);
+    expect(new URL(FakeSocket.current.url).searchParams.has("handoffId")).toBe(false);
+    for (const client of [opener, watcher, operator, later]) client.stop();
+  });
+
   it("offers a download at a URL carrying the stream's ticket", () => {
     const onDownload = vi.fn();
     createPreviewStreamClient(
