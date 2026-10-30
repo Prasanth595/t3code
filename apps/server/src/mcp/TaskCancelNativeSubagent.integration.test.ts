@@ -62,7 +62,9 @@ const cancelBackgroundOnlyTask = (
   background: "subagent" | "command",
   {
     cancelAt = "settled",
+    remote = false,
   }: {
+    readonly remote?: boolean;
     readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" | "monitor" | "refused";
   } = {},
 ) =>
@@ -453,6 +455,23 @@ const cancelBackgroundOnlyTask = (
           yield* Queue.offer(child.events, event);
         }
         yield* Fiber.join(started);
+        if (remote) {
+          yield* orchestrator.dispatch({
+            type: "delegated_task.remote.request",
+            commandId: CommandId.make("remote-descendant"),
+            parentThreadId: task.childThreadId!,
+            parentRunId: child.turn.runId,
+            parentNodeId: child.turn.rootNodeId,
+            task: "Work in a linked environment",
+            driver,
+            modelSelection,
+            remoteChild: {
+              environmentId: EnvironmentId.make("environment:remote-descendant"),
+              threadId: ThreadId.make("thread:remote-descendant"),
+              label: "Remote",
+            },
+          });
+        }
         const turnEndEvents = [
           {
             type: "provider_turn.updated",
@@ -526,7 +545,7 @@ const cancelBackgroundOnlyTask = (
               threadId: task.childThreadId!,
               stopDelegatedTasks: false,
             },
-            stopDescendants: Effect.void,
+            stopDescendants: () => Effect.void,
           });
           const committed = yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect);
           assert.isTrue(
@@ -588,9 +607,16 @@ const cancelBackgroundOnlyTask = (
           nativeStatus,
         );
         assert.equal(
-          childAfter.turnItems.find((item) => item.type === "subagent")?.status,
+          childAfter.turnItems.find(
+            (item) => item.type === "subagent" && item.subagentId === subagentId,
+          )?.status,
           nativeStatus,
         );
+        if (remote) {
+          const descendant = childAfter.subagents.find((entry) => entry.remoteChild !== undefined);
+          assert.equal(descendant?.status, "interrupted");
+          assert.equal(descendant?.remoteChild?.stoppedThere, false);
+        }
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
         assert.equal(childAfter.runs.length, cancelAt === "monitor" || cancelAt === "turn" ? 2 : 1);
@@ -661,4 +687,8 @@ it.effect("cancellation and Stop commit together and recover before the outbox r
 
 it.effect("a refused descendant stop does not settle or dispose its parent task", () =>
   cancelBackgroundOnlyTask("command", { cancelAt: "refused" }),
+);
+
+it.effect("task_cancel stops a remote descendant without reacquiring its parent lock", () =>
+  cancelBackgroundOnlyTask("command", { remote: true }),
 );

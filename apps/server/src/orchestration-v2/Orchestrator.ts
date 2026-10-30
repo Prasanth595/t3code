@@ -324,7 +324,9 @@ export interface OrchestratorV2Shape {
     readonly parentThreadId: ThreadId;
     readonly taskId: NodeId;
     readonly command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>;
-    readonly stopDescendants: Effect.Effect<void, E, R>;
+    readonly stopDescendants: (
+      dispatch: OrchestratorV2Shape["dispatch"],
+    ) => Effect.Effect<void, E, R>;
   }) => Effect.Effect<void, E | OrchestratorV2Error, R>;
   readonly delegatedTaskResultPending: (
     childThreadId: ThreadId,
@@ -13409,7 +13411,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.threadId,
           Effect.gen(function* () {
             // Hold intake closed until descendants stop and this thread's Stop commits.
-            yield* input.stopDescendants;
+            yield* input.stopDescendants((command) =>
+              commandThreadId(command) === input.command.threadId
+                ? dispatchWithReceiptEffect(command)
+                : dispatchWithReceipt(command),
+            );
             const child = yield* projectionStore
               .getThreadRecords(
                 command.threadId,

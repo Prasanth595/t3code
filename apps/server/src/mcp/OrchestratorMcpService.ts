@@ -2468,28 +2468,27 @@ const make = Effect.gen(function* () {
           stopDelegatedTasks: false,
           reason,
         };
-        const stopDescendants = threadManagement.stopDelegatedTasks({
-          threadId: childThreadId,
-          commandId,
-          reason,
-        });
-        yield* (
-          isTerminalTaskStatus(current.status)
-            ? stopDescendants.pipe(Effect.andThen(threadManagement.dispatch(command)))
-            : threadManagement.cancelDelegatedTask({
-                parentThreadId: scope.thread.threadId,
-                taskId: input.taskId,
-                command,
-                stopDescendants,
-              })
-        ).pipe(
-          Effect.mapError((error) =>
-            failure(
-              "task_not_cancellable",
-              `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
+        yield* threadManagement
+          .cancelDelegatedTask({
+            parentThreadId: scope.thread.threadId,
+            taskId: input.taskId,
+            command,
+            stopDescendants: (remoteDispatch) =>
+              threadManagement.stopDelegatedTasks({
+                threadId: childThreadId,
+                commandId,
+                reason,
+                remoteDispatch,
+              }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "task_not_cancellable",
+                `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
+              ),
             ),
-          ),
-        );
+          );
         const stopped = yield* threadManagement
           .getThreadRecords(childThreadId, ["runs"])
           .pipe(Effect.mapError(threadManagementFailure));

@@ -1889,7 +1889,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 threadId: child.childThreadId,
                 stopDelegatedTasks: false,
               },
-              stopDescendants: Effect.void,
+              stopDescendants: () => Effect.void,
             });
           }
           yield* eventSink.write({
@@ -2614,7 +2614,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           threadId: child.childThreadId,
           stopDelegatedTasks: false,
         },
-        stopDescendants: Effect.void,
+        stopDescendants: () => Effect.void,
       });
       const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
         (row) => row.id === child.taskId,

@@ -543,6 +543,8 @@ describe("OrchestratorMcpService", () => {
             getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
             delegatedTaskResultPending: () => Effect.succeed(false),
             stopDelegatedTasks: () => Effect.void,
+            cancelDelegatedTask: ({ command }) =>
+              Ref.update(dispatched, (commands) => [...commands, command]),
             // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
             dispatch: (command) =>
               Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -645,7 +647,7 @@ describe("OrchestratorMcpService", () => {
             ),
           stopDelegatedTasks: () => Effect.void,
           cancelDelegatedTask: ({ command, stopDescendants }) =>
-            stopDescendants.pipe(
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
               Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
@@ -736,7 +738,7 @@ describe("OrchestratorMcpService", () => {
             ),
           stopDelegatedTasks: () => Effect.void,
           cancelDelegatedTask: ({ command, stopDescendants }) =>
-            stopDescendants.pipe(
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
               Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
             ),
         }),
@@ -827,7 +829,7 @@ describe("OrchestratorMcpService", () => {
             ),
           stopDelegatedTasks: () => Effect.void,
           cancelDelegatedTask: ({ command, stopDescendants }) =>
-            stopDescendants.pipe(
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
               Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
             ),
         }),
@@ -944,7 +946,7 @@ describe("OrchestratorMcpService", () => {
               Effect.as({} as never),
             ),
           cancelDelegatedTask: ({ command, stopDescendants }) =>
-            stopDescendants.pipe(
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
               Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
             ),
           stopDelegatedTasks: () =>
