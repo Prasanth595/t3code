@@ -110,6 +110,13 @@ no pending RPC response to send. The
 Their execution nodes do not block the run. Web, desktop, and mobile use their normal question
 panels, and requests remain pending after a turn finishes, a provider exits, or the server restarts.
 
+Claude's `AskUserQuestion` takes the same path from the start, because any steer, including another
+agent's message, aborts a live permission callback. The
+[adapter](../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) records a message
+request and denies the tool with its id at once, telling Claude to end its turn only if it is
+blocked. The internal resume-compaction question stays live. Claude's steers also abort running
+tools and approvals, so an answer to a running Claude turn queues behind it instead of steering.
+
 `runtime-request.respond` reads the persisted request and question item, validates required
 answers, and commits the resolution and a user message in one transaction. Repeating the same
 command returns its receipt without posting the answer twice. The normal message path starts or

@@ -4158,6 +4158,10 @@ export function claudeUserInputQuestions(
   });
 }
 
+function claudeMessageQuestionResult(requestId: string): string {
+  return `T3 showed these questions to the user without waiting (request ${requestId}; see t3_pending_request). They stay open across turns, and the answers arrive later as one user message. If you cannot continue without them, end your turn now. Otherwise keep working.`;
+}
+
 export function claudeSdkUserInputAnswers(
   answers: ProviderUserInputAnswers,
 ): NonNullable<AskUserQuestionInput["answers"]> {
@@ -9480,6 +9484,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
+          /** T3's own prompts still wait for the answer inside the turn. */
+          liveQuestion = false,
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
@@ -9528,6 +9534,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 parentToolUseId: null,
               });
             }
+          }
+
+          if (toolName === "AskUserQuestion" && !liveQuestion) {
+            // A live native question dies when the turn ends or a subagent message lands, so it
+            // is answered by message instead and the agent decides whether to stop.
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: nativeRequestId,
+              nativeRequestId,
+              requestKind: "user_input",
+              questions: claudeUserInputQuestions(nativeToolInput),
+            });
+            yield* Effect.all(
+              [
+                emitProviderEvent({
+                  type: "node.updated",
+                  driver: CLAUDE_PROVIDER,
+                  node: artifacts.node,
+                }),
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: { ...artifacts.request, responseCapability: { type: "message" } },
+                }),
+                emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: artifacts.turnItem,
+                }),
+              ],
+              { concurrency: 1 },
+            );
+            return {
+              behavior: "deny",
+              message: claudeMessageQuestionResult(artifacts.request.id),
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
           }
 
           if (toolName === "AskUserQuestion") {
@@ -9778,6 +9821,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestId: callbackOptions.requestId,
                   toolUseID: request.toolUseID ?? callbackOptions.requestId,
                 },
+                true,
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =

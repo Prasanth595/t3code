@@ -74,6 +74,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -907,99 +908,111 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
+  const startRunningTurn = Effect.fnUntraced(function* (
+    name: string,
+    capabilities: typeof CodexProviderCapabilitiesV2 | typeof ClaudeProviderCapabilitiesV2,
+  ) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const threadId = ThreadId.make(name);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}-create`),
+      threadId,
+      projectId: ProjectId.make(`${name}-project`),
+      title: "Delivery intent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: process.cwd(),
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}-first`),
+      threadId,
+      messageId: MessageId.make(`${name}-first`),
+      text: "Start work.",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+    });
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const run = initial.runs[0]!;
+    const providerThread = initial.providerThreads[0]!;
+    const now = yield* DateTime.now;
+    const providerSession = {
+      id: providerThread.providerSessionId!,
+      driver,
+      providerInstanceId: modelSelection.instanceId,
+      status: "running" as const,
+      cwd: process.cwd(),
+      model: modelSelection.model,
+      capabilities,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const providerTurn = {
+      id: ProviderTurnId.make(`${name}-turn`),
+      providerThreadId: providerThread.id,
+      nodeId: run.rootNodeId!,
+      runAttemptId: run.activeAttemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running" as const,
+      startedAt: now,
+      completedAt: null,
+    };
+    yield* eventSink.write({
+      commandId: CommandId.make(`${name}-running`),
+      events: [
+        {
+          id: EventId.make(`${name}-run-event`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "running", startedAt: now },
+        },
+        {
+          id: EventId.make(`${name}-session-event`),
+          type: "provider-session.attached",
+          threadId,
+          occurredAt: now,
+          payload: providerSession,
+        },
+        {
+          id: EventId.make(`${name}-turn-event`),
+          type: "provider-turn.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: providerTurn,
+        },
+      ],
+    });
+    const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+      Effect.succeedSome({
+        providerSession,
+      } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+    return { threadId, run, providerThread, providerSession, providerTurn };
+  });
+
   it.effect("resolves delivery intent against the active run and starts after it completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const threadId = ThreadId.make("runtime-delivery-intent");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-delivery-intent-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-delivery-intent-project"),
-        title: "Delivery intent",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-delivery-intent-first"),
-        threadId,
-        messageId: MessageId.make("runtime-delivery-intent-first"),
-        text: "Start work.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-      });
-      const initial = yield* orchestrator.getThreadProjection(threadId);
-      const run = initial.runs[0]!;
-      const providerThread = initial.providerThreads[0]!;
+      const { threadId, run, providerThread, providerSession, providerTurn } =
+        yield* startRunningTurn("runtime-delivery-intent", CodexProviderCapabilitiesV2);
       const now = yield* DateTime.now;
-      const providerSession = {
-        id: providerThread.providerSessionId!,
-        driver,
-        providerInstanceId: modelSelection.instanceId,
-        status: "running" as const,
-        cwd: process.cwd(),
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      };
-      const providerTurn = {
-        id: ProviderTurnId.make("runtime-delivery-intent-turn"),
-        providerThreadId: providerThread.id,
-        nodeId: run.rootNodeId!,
-        runAttemptId: run.activeAttemptId,
-        nativeTurnRef: null,
-        ordinal: 1,
-        status: "running" as const,
-        startedAt: now,
-        completedAt: null,
-      };
-      yield* eventSink.write({
-        commandId: CommandId.make("runtime-delivery-intent-running"),
-        events: [
-          {
-            id: EventId.make("runtime-delivery-intent-run-event"),
-            type: "run.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "running", startedAt: now },
-          },
-          {
-            id: EventId.make("runtime-delivery-intent-session-event"),
-            type: "provider-session.attached",
-            threadId,
-            occurredAt: now,
-            payload: providerSession,
-          },
-          {
-            id: EventId.make("runtime-delivery-intent-turn-event"),
-            type: "provider-turn.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: providerTurn,
-          },
-        ],
-      });
-      const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
-        Effect.succeedSome({
-          providerSession,
-        } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
 
       const steerCommandId = CommandId.make("runtime-delivery-intent-auto");
       const steerMessageId = MessageId.make("runtime-delivery-intent-auto");
@@ -1078,6 +1091,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         ["provider-turn.start"],
       );
     }),
+  );
+
+  it.effect.each([
+    { capabilities: CodexProviderCapabilitiesV2, effects: ["provider-turn.steer"] },
+    // Claude's steer aborts running tools and pending approvals, so its answer waits for the turn.
+    { capabilities: ClaudeProviderCapabilitiesV2, effects: [] },
+  ])(
+    "delivers an async answer into a running turn only when steering is safe",
+    ({ capabilities, effects }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const name = `runtime-async-answer-${effects.length}`;
+        const { threadId, run } = yield* startRunningTurn(name, capabilities);
+        const { requestId } = yield* seedPendingQuestion(threadId, run.id, { type: "message" });
+        const commandId = CommandId.make(`${name}-answer`);
+        yield* orchestrator.dispatch({
+          type: "runtime-request.respond",
+          commandId,
+          threadId,
+          requestId,
+          answers: { color: "Blue", sizes: ["Small"] },
+        });
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
+          effects,
+        );
+      }),
   );
 
   const seedPendingQuestion = Effect.fnUntraced(function* (
