@@ -42,7 +42,6 @@ import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
-const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
 
@@ -226,18 +225,6 @@ const LOADERS: ReadonlyArray<{
       ),
   },
   {
-    name: "thread snapshot",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}`,
-    response: encodeThreadSnapshot(THREAD),
-    expected: THREAD,
-    load: (input: HttpInput) =>
-      ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
-        ...input,
-        threadId: THREAD.projection.thread.id,
-      }),
-  },
-  {
     name: "thread transcript",
     method: "GET",
     path: `/api/orchestration/threads/${TRANSCRIPT.threadId}/transcript`,
@@ -282,7 +269,7 @@ describe("authenticated environment HTTP requests", () => {
         item: future,
       };
       for (const loader of LOADERS.filter((entry) =>
-        ["thread snapshot", "bounded thread snapshot", "older thread history"].includes(entry.name),
+        ["bounded thread snapshot", "older thread history"].includes(entry.name),
       )) {
         const wire = loader.response as Record<string, unknown>;
         const response =
@@ -372,12 +359,6 @@ describe("authenticated environment HTTP requests", () => {
       response: encodeThreadTranscript(TRANSCRIPT),
       load: (input: HttpInput) =>
         fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
-    },
-    {
-      name: "thread snapshot",
-      response: encodeThreadSnapshot(THREAD),
-      load: (input: HttpInput) =>
-        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
     },
     {
       name: "bounded thread snapshot",
