@@ -193,7 +193,7 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
-  | { readonly _tag: "popup"; readonly tabId: string }
+  | { readonly _tag: "popup"; readonly tabId: string; readonly handoffId?: string }
   | {
       readonly _tag: "download";
       readonly id: string;
@@ -219,6 +219,7 @@ export class ServerBrowser extends Context.Service<
       readonly quality: number;
       readonly canOperate: boolean;
       readonly sessionId?: string;
+      readonly handoffId?: string | undefined;
     }) => Effect.Effect<
       ServerBrowserViewer,
       ServerBrowserTabNotFoundError | ServerBrowserLaunchError,
@@ -247,10 +248,16 @@ export class ServerBrowser extends Context.Service<
   }
 >()("t3/preview/ServerBrowser") {}
 
+interface PopupHandoff {
+  readonly id: string;
+  readonly sessionId: string | undefined;
+  active: boolean;
+}
+
 interface ViewerState {
   readonly id: string;
   readonly canOperate: boolean;
-  readonly sessionId: string | undefined;
+  handoff: PopupHandoff;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
@@ -293,8 +300,7 @@ interface ServerTab {
   agentOperating: boolean;
   fileChooserIntercepted: boolean;
   readonly onFileChooser: (chooser: FileChooser) => void;
-  // Only the session that opened this popup can take its initial human handoff.
-  handoffSessionId: string | null;
+  handoff: PopupHandoff | null;
 
   readonly isolatedContext: boolean;
 
@@ -477,7 +483,7 @@ const make = Effect.gen(function* () {
     {
       readonly page: Page;
       readonly openerTabId: string;
-      handoffSessionId: string | null;
+      readonly handoff: PopupHandoff | null;
     }
   >();
   const closedSessions = new Set<string>();
@@ -735,6 +741,7 @@ const make = Effect.gen(function* () {
 
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
+    adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -789,7 +796,7 @@ const make = Effect.gen(function* () {
       agentOperating: false,
       fileChooserIntercepted: false,
       onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
-      handoffSessionId: adopted?.handoffSessionId ?? null,
+      handoff: adopted?.handoff ?? null,
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -800,7 +807,7 @@ const make = Effect.gen(function* () {
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
-      loading: false,
+      loading: adopted !== undefined && snapshot.navStatus._tag === "Loading",
       closing: false,
       recording: null,
       recordingStart: null,
@@ -914,8 +921,6 @@ const make = Effect.gen(function* () {
     }
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
-    // The opener's controller may have released during setup.
-    tab.handoffSessionId = adopted?.handoffSessionId ?? null;
     tabs.set(key, tab);
     reportLiveTabs();
     // Existing desktop and popup PDFs can start loading before interception attaches.
@@ -935,16 +940,19 @@ const make = Effect.gen(function* () {
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
     } else if (adopted) {
-      // Popup navigation can finish during setup, before this tab's listeners exist.
-      // A load after setup settles this wait too, and the `load` listener reports that one.
+      // An adopted page can finish loading before its listeners attach.
       let loadReported = false;
       page.once("load", () => {
         loadReported = true;
       });
+      const generation = tab.navigationGeneration;
       void page
         .waitForLoadState("load")
         .then(() => {
-          if (!loadReported) return reportLoaded(tab);
+          if (!loadReported && tab.navigationGeneration === generation) {
+            tab.loading = false;
+            return reportLoaded(tab);
+          }
         })
         .catch(constVoid);
     }
@@ -1234,6 +1242,7 @@ const make = Effect.gen(function* () {
       return;
     }
     const url = popup.url();
+    const handoff = controller?.handoff ?? null;
 
     await runPromise(
       manager.open({
@@ -1252,12 +1261,13 @@ const make = Effect.gen(function* () {
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
-            handoffSessionId: controller?.sessionId ?? null,
+            handoff,
           }),
       }),
     ).then(
       (snapshot) => {
-        if (controller !== undefined) controller.push({ _tag: "popup", tabId: snapshot.tabId });
+        if (handoff?.active)
+          controller?.push({ _tag: "popup", tabId: snapshot.tabId, handoffId: handoff.id });
       },
       async () => {
         await popup.close().catch(constVoid);
@@ -1284,7 +1294,6 @@ const make = Effect.gen(function* () {
       .finally(() => {
         pendingTabs.delete(key);
         closedPendingTabs.delete(key);
-        adoptedPages.delete(key);
       });
     pendingTabs.set(key, opening);
     return opening;
@@ -2341,7 +2350,7 @@ const make = Effect.gen(function* () {
     const viewer: ViewerState = {
       id: NodeCrypto.randomUUID(),
       canOperate: input.canOperate,
-      sessionId: input.sessionId,
+      handoff: { id: NodeCrypto.randomUUID(), sessionId: input.sessionId, active: true },
       pressedKeys: new Map(),
       pressedButtons: new Map(),
       push: (next) => {
@@ -2386,9 +2395,13 @@ const make = Effect.gen(function* () {
     if (
       input.canOperate &&
       tab.control.controller === null &&
-      (tab.control.agentId === null || input.sessionId === tab.handoffSessionId)
+      (tab.control.agentId === null ||
+        (tab.handoff?.active &&
+          input.handoffId === tab.handoff.id &&
+          input.sessionId !== undefined &&
+          input.sessionId === tab.handoff.sessionId))
     ) {
-      tab.handoffSessionId = null;
+      tab.handoff = null;
       yield* Effect.promise(() => tab.control.take(viewer.id));
     }
     broadcastControl(tab);
@@ -2465,29 +2478,19 @@ const make = Effect.gen(function* () {
           try {
             if (message.type === "takeControl") {
               const taking = tab.control.take(viewer.id);
+              if (!viewer.handoff.active) {
+                viewer.handoff = {
+                  id: NodeCrypto.randomUUID(),
+                  sessionId: input.sessionId,
+                  active: true,
+                };
+              }
               broadcastControl(tab);
               await taking;
               pushFileChooser(tab);
             } else if (message.type === "releaseControl") {
-              // Do not disarm on disconnect: the opener stream may drop while switching tabs.
-              if (viewer.id === tab.control.controller) {
-                for (const candidate of tabs.values()) {
-                  if (
-                    candidate.openerTabId === tab.tabId &&
-                    candidate.handoffSessionId === viewer.sessionId
-                  ) {
-                    candidate.handoffSessionId = null;
-                  }
-                }
-                for (const pending of adoptedPages.values()) {
-                  if (
-                    pending.openerTabId === tab.tabId &&
-                    pending.handoffSessionId === viewer.sessionId
-                  ) {
-                    pending.handoffSessionId = null;
-                  }
-                }
-              }
+              // A stream disconnect during the popup switch must preserve the grant.
+              if (viewer.id === tab.control.controller) viewer.handoff.active = false;
               const releasing = tab.control.release(viewer.id, () =>
                 releaseViewerInput(viewer, session),
               );

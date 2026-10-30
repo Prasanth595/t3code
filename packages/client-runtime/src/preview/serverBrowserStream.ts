@@ -204,6 +204,10 @@ export interface PreviewStreamClient {
   readonly stop: () => void;
 }
 
+const popupHandoffs = new Map<string, string>();
+const popupKey = (target: PreviewStreamTarget, tabId: string) =>
+  JSON.stringify([target.access.wsBase, target.threadId, tabId]);
+
 const ACK_MESSAGE = JSON.stringify({ type: "ack" });
 export function createPreviewStreamClient(
   target: PreviewStreamTarget,
@@ -216,6 +220,12 @@ export function createPreviewStreamClient(
     maxHeight: String(Math.max(1, Math.round(target.maxHeight))),
   });
   if (target.interactive === false) query.set("interactive", "false");
+  else {
+    const key = popupKey(target, target.tabId);
+    const handoffId = popupHandoffs.get(key);
+    popupHandoffs.delete(key);
+    if (handoffId !== undefined) query.set("handoffId", handoffId);
+  }
   const url = withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
   let stopped = false;
   let socket: WebSocket | null = null;
@@ -271,6 +281,7 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        handoffId,
       } = message as Record<string, unknown>;
       if (
         type === "fileChooser" &&
@@ -298,6 +309,10 @@ export function createPreviewStreamClient(
       ) {
         events.onPointer?.({ phase, x, y, sequence });
       } else if (type === "popup" && typeof tabId === "string") {
+        if (events.onPopup && typeof handoffId === "string") {
+          popupHandoffs.set(popupKey(target, tabId), handoffId);
+          if (popupHandoffs.size > 32) popupHandoffs.delete(popupHandoffs.keys().next().value!);
+        }
         events.onPopup?.(tabId);
       } else if (type === "clipboard" && typeof text === "string") {
         events.onClipboard?.(text);

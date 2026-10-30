@@ -365,11 +365,17 @@ const ready = Effect.gen(function* () {
   const tabId = PreviewTabId.make(opened.tabId!);
   return { browser, broker, tabId };
 });
-const viewerInput = (tabId: string, canOperate: boolean, sessionId?: string) => ({
+const viewerInput = (
+  tabId: string,
+  canOperate: boolean,
+  sessionId?: string,
+  handoffId?: string,
+) => ({
   threadId: scope.thread.threadId,
   tabId,
   canOperate,
   ...(sessionId === undefined ? {} : { sessionId }),
+  ...(handoffId === undefined ? {} : { handoffId }),
   maxWidth: 1280,
   maxHeight: 800,
   quality: 70,
@@ -949,6 +955,7 @@ it.live("an adopted popup that is still loading is not reported as successful ea
       }
 
       yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+      popup.page.emit("framenavigated", popup.page);
       expect(popup.page.waitForLoadState).toHaveBeenCalledWith("load");
       // reportLoaded reads the title first, so an early report would have called it by now.
       expect(popup.page.title).not.toHaveBeenCalled();
@@ -1008,7 +1015,6 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const browser = yield* ServerBrowser.ServerBrowser;
       const manager = yield* Manager.PreviewManager;
       const events = yield* manager.subscribeEvents;
-      yield* Effect.yieldNow;
       const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
       const page = contexts[0]!.page;
@@ -1138,10 +1144,11 @@ it.live("the person who opens a popup from an agent tab controls the popup", () 
       const events = yield* manager.subscribeEvents;
       const opener = contexts[0]!.page;
       opener.emit("popup", popup.page);
-      const shown = yield* Fiber.join(waitingForPopup);
-      const popupTabId = PreviewTabId.make(shown.tabId);
       let opened = yield* PubSub.take(events);
       while (opened.type !== "opened") opened = yield* PubSub.take(events);
+      expect(opened.snapshot.reveal).toBeUndefined();
+      const shown = yield* Fiber.join(waitingForPopup);
+      const popupTabId = PreviewTabId.make(shown.tabId);
       const openerTab = (yield* manager.list({ threadId: scope.thread.threadId })).sessions.find(
         (session) => session.tabId === tabId,
       );
@@ -1152,7 +1159,9 @@ it.live("the person who opens a popup from an agent tab controls the popup", () 
       });
       expect(opened.snapshot.reveal).toBeUndefined();
 
-      const popupViewer = yield* browser.attachViewer(viewerInput(popupTabId, true, sessionId));
+      const popupViewer = yield* browser.attachViewer(
+        viewerInput(popupTabId, true, sessionId, shown.handoffId),
+      );
       let control = yield* Queue.take(popupViewer.output);
       while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
       expect(control).toMatchObject({ controller: "you" });
@@ -1200,6 +1209,11 @@ it.live("a watcher from the handoff session does not consume the popup handoff",
       while (control._tag !== "control") control = yield* Queue.take(watcher.output);
       expect(control).toMatchObject({ controller: "agent" });
 
+      const sameSession = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      control = yield* Queue.take(sameSession.output);
+      while (control._tag !== "control") control = yield* Queue.take(sameSession.output);
+      expect(control).toMatchObject({ controller: "agent" });
+
       const otherSession = yield* browser.attachViewer(
         viewerInput(shown.tabId, true, "other-session"),
       );
@@ -1207,13 +1221,17 @@ it.live("a watcher from the handoff session does not consume the popup handoff",
       while (control._tag !== "control") control = yield* Queue.take(otherSession.output);
       expect(control).toMatchObject({ controller: "agent" });
 
-      const operator = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      const operator = yield* browser.attachViewer(
+        viewerInput(shown.tabId, true, sessionId, shown.handoffId),
+      );
       control = yield* Queue.take(operator.output);
       while (control._tag !== "control") control = yield* Queue.take(operator.output);
       expect(control).toMatchObject({ controller: "you" });
 
       yield* operator.input({ type: "releaseControl" });
-      const later = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      const later = yield* browser.attachViewer(
+        viewerInput(shown.tabId, true, sessionId, shown.handoffId),
+      );
       control = yield* Queue.take(later.output);
       while (control._tag !== "control") control = yield* Queue.take(later.output);
       expect(control).toMatchObject({ controller: "agent" });
@@ -1236,7 +1254,9 @@ it.live(
         const shown = yield* Fiber.join(waitingForPopup);
 
         yield* opener.input({ type: "releaseControl" });
-        const popupViewer = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+        const popupViewer = yield* browser.attachViewer(
+          viewerInput(shown.tabId, true, sessionId, shown.handoffId),
+        );
         let control = yield* Queue.take(popupViewer.output);
         while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
         expect(control).toMatchObject({ controller: "agent" });
@@ -1275,9 +1295,41 @@ it.live("releasing the opener while its popup is still starting lets the agent k
 
       yield* opener.input({ type: "releaseControl" });
       setUp.resolve();
-      const popupViewer = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      const popupViewer = yield* browser.attachViewer(
+        viewerInput(shown.tabId, true, sessionId, shown.handoffId),
+      );
       let control = yield* Queue.take(popupViewer.output);
       while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
+      expect(control).toMatchObject({ controller: "agent" });
+
+      yield* opener.input({ type: "takeControl" });
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const registering = Promise.withResolvers<void>();
+      const register = Promise.withResolvers<void>();
+      const registered = Promise.withResolvers<void>();
+      const open = manager.open;
+      using _open = vi.spyOn(manager, "open").mockImplementationOnce((input) =>
+        Effect.promise(() => {
+          registering.resolve();
+          return register.promise;
+        }).pipe(
+          Effect.andThen(open(input)),
+          Effect.tap(() => Effect.sync(() => registered.resolve())),
+        ),
+      );
+      contexts[0]!.page.emit("popup", makeContext().page);
+      yield* Effect.promise(() => registering.promise);
+      yield* opener.input({ type: "releaseControl" });
+      register.resolve();
+      yield* Effect.promise(() => registered.promise);
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened") opened = yield* PubSub.take(events);
+      const lateViewer = yield* browser.attachViewer(
+        viewerInput(opened.snapshot.tabId, true, sessionId),
+      );
+      control = yield* Queue.take(lateViewer.output);
+      while (control._tag !== "control") control = yield* Queue.take(lateViewer.output);
       expect(control).toMatchObject({ controller: "agent" });
     }),
   ).pipe(Effect.provide(layer)),
