@@ -61,6 +61,8 @@ describe("presentComposerGoalBar", () => {
     expect(present("paused", "/goal all tests pass")?.playback).toBe("play");
     expect(present("usage_limited", "")?.playback).toBe("play");
     expect(present("active", "", { canPauseResume: false })?.playback).toBeNull();
+    expect(present("paused", "", { working: true })?.playback).toBeNull();
+    expect(present("active", "", { working: true })?.playback).toBe("pause");
   });
 
   it("names pause, clear, and a replacement the same way", () => {

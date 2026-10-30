@@ -57,7 +57,15 @@ export function presentComposerGoalBar(input: {
   const resting = {
     objective: presentation.objective,
     usage: presentation.usage,
-    playback: input.canPauseResume ? (goal.status === "active" ? "pause" : "play") : null,
+    // Play resumes a waiting goal. Hide it while the thread is working so it does not
+    // stop unrelated work. Pause stays available on an active goal.
+    playback: !input.canPauseResume
+      ? null
+      : goal.status === "active"
+        ? "pause"
+        : input.working
+          ? null
+          : "play",
   } as const;
   switch (intent) {
     case "resume":

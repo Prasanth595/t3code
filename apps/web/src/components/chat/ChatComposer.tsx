@@ -920,6 +920,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  const providerAvailable =
+    multipleModelSelections !== null || (!noProviderAvailable && providerSendBlockReason === null);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
@@ -2965,9 +2967,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   : selection,
               )
             : null,
-        providerAvailable:
-          multipleModelSelections !== null ||
-          (!noProviderAvailable && providerSendBlockReason === null),
+        providerAvailable,
         selectedProvider,
         selectedModel,
         selectedProviderModels,
@@ -3032,6 +3032,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setMultipleModelSelections,
       routeKind,
       noProviderAvailable,
+      providerAvailable,
       providerSendBlockReason,
       selectedPromptEffort,
       selectedProvider,
@@ -3213,7 +3214,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {composerGoal === null ? null : (
               <ComposerGoalBar
                 model={composerGoal}
-                canOperate={canOperateThread}
+                canOperate={canOperateThread && providerAvailable}
                 onSendCommand={props.onSendStandaloneCommand}
               />
             )}
