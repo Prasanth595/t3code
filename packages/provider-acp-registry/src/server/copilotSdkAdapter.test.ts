@@ -2411,11 +2411,15 @@ describe("CopilotSdkAdapterV2", () => {
           stdio: ["ignore", "pipe", "ignore"],
         });
         const exited = new Promise((resolve) => cli.once("exit", resolve));
+        let descendant: number | undefined;
+        let verified = false;
         try {
-          const descendant = Number(
-            await new Promise<string>((resolve) =>
-              cli.stdout.once("data", (chunk) => resolve(`${chunk}`)),
-            ),
+          descendant = Number(
+            await new Promise<string>((resolve, reject) => {
+              cli.once("error", reject);
+              cli.stdout.once("data", (chunk) => resolve(`${chunk}`));
+              cli.stdout.once("close", () => reject(new Error("sh exited without a child pid")));
+            }),
           );
           const tracked = copilotClientProcess({ cliProcess: cli });
           if (!tracked) return assert.fail("Copilot's process is not tracked");
@@ -2429,8 +2433,14 @@ describe("CopilotSdkAdapterV2", () => {
           ).stdout.trim();
           // Killed: gone, or a zombie until whoever inherited it reaps it.
           assert.isTrue(state === "" || state.startsWith("Z"), `process ${descendant} is ${state}`);
+          verified = true;
         } finally {
           cli.kill("SIGKILL");
+          // A failed kill must not leave the sleep behind, stopped and holding the pipe. After a
+          // verified kill its pid is free for reuse, so it is left alone.
+          if (descendant !== undefined && !verified) {
+            NodeChildProcess.spawnSync("kill", ["-KILL", String(descendant)]);
+          }
         }
       });
     }).pipe(Effect.provide(testLayer)),
