@@ -21,6 +21,7 @@ import {
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
+import { readRuns } from "../ledger/listRuns.ts";
 import { field, readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
@@ -600,16 +601,47 @@ export const withBoundBranches = (earlier: EarlierAttempts, seen: Seen): Earlier
     : { ...earlier, branches: [...earlier.branches, ...seen.boundBranches] };
 
 /**
- * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
- * the claim, its head the worktree's HEAD. Issue text can name the branch, but not make another
- * person's pull request newer than the claim. No worktree, or a failed read, is no proof.
+ * Whether another issue's run of the repo names `pull` or its head branch, read from every ledger
+ * that may have been written since `sinceMs`. A ledger that cannot be read names everything.
  */
-const madeBySession = (
+const otherRunNames = (
   ctx: BuildingContext,
+  run: RunId,
+  pull: PullRequest,
+  sinceMs: number,
+): Effect.Effect<boolean> =>
+  ledger(() =>
+    readRuns(ctx.dataDir, { skipFinishedBefore: sinceMs }).some(({ summary, seen }) => {
+      const { id } = summary;
+      if (asciiLower(id.repo) !== asciiLower(run.repo) || id.issue === run.issue) return false;
+      if (seen === null) return true;
+      const prs = [...seen.opened, ...seen.left.map((left) => left.pr)];
+      const branches = [
+        seen.lastBranch,
+        seen.resumedFrom,
+        seen.launchResumedFrom,
+        seen.interruption?.branch,
+        seen.relaunch?.branch,
+        launchBranchOf(seen.worktree),
+        ...seen.boundBranches,
+      ];
+      return prs.includes(pull.number) || branches.includes(pull.headRef);
+    }),
+  ).pipe(Effect.orElseSucceed(() => true));
+
+/**
+ * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
+ * the claim, named by no other issue's run, and its head the worktree's HEAD. The session can
+ * check out any commit, so the claim time and the other runs are the proof; the HEAD only ties
+ * the pull request to this worktree. No worktree, or a failed read, is no proof.
+ */
+const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
+  ctx: BuildingContext,
+  run: RunId,
   pull: PullRequest,
   claimedMs: number | null,
   worktreePath: string | null,
-): Effect.Effect<boolean> => {
+): Effect.fn.Return<boolean> {
   const createdMs = parseTs(pull.createdAt);
   if (
     !pull.open ||
@@ -621,13 +653,14 @@ const madeBySession = (
     createdMs <= claimedMs ||
     worktreePath === null
   ) {
-    return Effect.succeed(false);
+    return false;
   }
-  return ctx.sessions.worktreeHead(worktreePath).pipe(
+  if (yield* otherRunNames(ctx, run, pull, claimedMs)) return false;
+  return yield* ctx.sessions.worktreeHead(worktreePath).pipe(
     Effect.map((head) => head === pull.headSha),
     Effect.orElseSucceed(() => false),
   );
-};
+});
 
 const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
   kind: "stuck",
@@ -888,7 +921,7 @@ export const advance = (
           const madeHere =
             unbound !== null &&
             pull !== null &&
-            (yield* madeBySession(ctx, pull, seen.claimedMs, status.worktreePath));
+            (yield* madeBySession(ctx, run, pull, seen.claimedMs, status.worktreePath));
           if (madeHere && pull !== null) {
             yield* append(
               out,
