@@ -1748,8 +1748,28 @@ const make = Effect.gen(function* () {
         Stream.runHead,
       );
     },
-    (effect, _scope, _taskId, timeoutMs) =>
-      effect.pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten)),
+    (effect, scope, taskId, timeoutMs) =>
+      effect.pipe(
+        Effect.timeoutOption(Duration.millis(timeoutMs)),
+        Effect.map(Option.flatten),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : threadManagement
+                .dispatch({
+                  type: "delegated_task.wake-policy",
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: taskId,
+                    operation: "delegate-task-wake-policy",
+                  }),
+                  parentThreadId: scope.thread.threadId,
+                  taskId,
+                  completionWake: "always",
+                })
+                .pipe(Effect.ignoreCause({ log: true })),
+        ),
+      ),
   );
 
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
