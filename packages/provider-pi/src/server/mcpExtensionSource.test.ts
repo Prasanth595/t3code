@@ -77,6 +77,29 @@ describe("Pi orchestration prompt section", () => {
   });
 });
 
+describe("Pi project trust", () => {
+  it.each([
+    { name: "no protected resources or an explicit launch decision", asked: false, trusted: false },
+    { name: "a trusted folder", asked: true, trusted: true },
+    { name: "an untrusted folder", asked: true, trusted: false },
+  ])("defers to Pi and explains skipped resources once for $name", async ({ asked, trusted }) => {
+    const handlers = (await loadHooks()) as Map<string, (event: unknown, ctx: unknown) => unknown>;
+    if (asked) {
+      assert.deepEqual(await handlers.get("project_trust")!({ cwd: "/repo" }, {}), {
+        trusted: "undecided",
+      });
+    }
+    const notices: string[] = [];
+    const ctx = {
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => notices.push(message) },
+    };
+    for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+    assert.equal(notices.length, asked && !trusted ? 1 : 0);
+    if (notices[0] !== undefined) assert.include(notices[0], "not trusted");
+  });
+});
+
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [

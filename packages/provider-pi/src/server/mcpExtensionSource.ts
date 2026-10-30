@@ -241,6 +241,23 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // RPC has no startup trust prompt, so Pi skips an undecided folder's protected resources.
+  // Leave the decision to Pi; T3 drops notices outside a turn, so explain it in the next one.
+  let explainProjectTrust = false;
+  pi.on("project_trust", () => {
+    explainProjectTrust = true;
+    return { trusted: "undecided" };
+  });
+  pi.on("before_agent_start", (_event, ctx) => {
+    if (!explainProjectTrust) return;
+    explainProjectTrust = false;
+    if (ctx.isProjectTrusted()) return;
+    ctx.ui.notify(
+      "Pi did not load this project's settings, extensions, skills, prompts or MCP servers because the folder is not trusted. Run pi in this folder, trust it with /trust, then start a new thread. To trust every project instead, add --approve to Pi's launch arguments in T3 Code settings.",
+      "warning",
+    );
+  });
+
   // Keep skill chips in the request. Pi expands only one leading /skill:
   // command, so use its own frontmatter loader for every selected chip here.
   pi.on("input", async (event, ctx) => {
