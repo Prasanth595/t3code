@@ -126,6 +126,14 @@ describe("ServerBrowserContexts", () => {
     expect(human.close).toHaveBeenCalledTimes(1);
   });
 
+  it("creates no launcher for a profile whose storage cannot be created", async () => {
+    launches.mkdir.mockRejectedValueOnce(new Error("EACCES"));
+    const { configuration } = withLauncher();
+    const pool = new ServerBrowserContexts(configuration);
+    await expect(pool.contextFor("work/team")).rejects.toThrow("EACCES");
+    expect(configuration.launcher).not.toHaveBeenCalled();
+  });
+
   it("clears a profile by closing its open context before deleting its storage", async () => {
     const human = makeContext();
     const browser = makeBrowser();

@@ -171,9 +171,9 @@ export class ServerBrowserContexts {
       return browser.newContext(contextOptions);
     }
     const directory = this.profileDirectory(profileId);
+    await NodeFSP.mkdir(directory, { recursive: true });
     const { executable, release, ...options } = await this.launchOptions();
     const { chromium } = loadPlaywright();
-    await NodeFSP.mkdir(directory, { recursive: true });
     return this.launch({ executable, release }, () =>
       chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
     );
