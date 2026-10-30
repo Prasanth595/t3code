@@ -71,6 +71,7 @@ import {
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
+  ThreadListV2FolderHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -155,6 +156,14 @@ function ThreadNavigationSidebarPane(
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const sidebarScrollGesture = useNativeGesture();
   const {
+    moveThreadToFolder,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    moveFolder,
+    setFolderCollect,
+    applyFolderRule,
+    settleFolder,
     archiveThread,
     confirmDeleteThread,
     settleThread,
@@ -265,6 +274,8 @@ function ThreadNavigationSidebarPane(
   const showMoreSettled = () =>
     setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT);
   const {
+    collapsedFolders,
+    toggleFolder,
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
@@ -286,16 +297,19 @@ function ThreadNavigationSidebarPane(
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
+    threadFolderEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
   const {
+    folders,
     layout: threadListV2Layout,
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
+    collapsedFolders,
     threads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
@@ -461,6 +475,7 @@ function ThreadNavigationSidebarPane(
   });
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
+    folders,
     activeNewTask,
     selectedThreadKey: props.selectedThreadKey ?? "",
     projectByKey,
@@ -592,10 +607,15 @@ function ThreadNavigationSidebarPane(
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+            folders={folders}
+            foldersSupported={threadFolderEnvironmentIds.has(thread.environmentId)}
+            onMoveThreadToFolder={moveThreadToFolder}
+            onCreateFolder={createFolder}
             reorderSupported={
-              item.item.pinned
+              !item.item.folderKey &&
+              (item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
@@ -612,6 +632,25 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-folder-header":
+        return (
+          <ThreadListV2FolderHeader
+            item={item}
+            pane="sidebar"
+            onToggle={toggleFolder}
+            onMove={moveFolder}
+            onCollect={setFolderCollect}
+            onApplyRule={applyFolderRule}
+            onSettle={settleFolder}
+            onRename={renameFolder}
+            onDelete={deleteFolder}
+            environmentLabel={
+              Object.keys(savedConnectionsById).length > 1
+                ? savedConnectionsById[item.environmentId]?.environmentLabel
+                : null
+            }
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader

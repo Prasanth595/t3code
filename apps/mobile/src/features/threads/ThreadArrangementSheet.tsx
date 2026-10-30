@@ -14,7 +14,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { environmentServerConfigsAtom } from "../../state/server";
+import { threadFoldersAtom, environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -167,6 +167,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
+  const folders = useAtomValue(threadFoldersAtom);
   const { moveThread } = useThreadListActions();
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
@@ -183,6 +184,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const sections = useMemo(() => {
     const shared = {
       threads,
+      folders,
       now,
       queuedThreadKeys,
       pendingOrder,
@@ -193,7 +195,11 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     const active = getThreadListV2OrderedSection({ ...shared, section: "active" });
     const visible = new Set([...pinned, ...active].map(keyOf));
     const parked = threads.filter(
-      (thread) => thread.archivedAt === null && !visible.has(keyOf(thread)),
+      (thread) =>
+        thread.archivedAt === null &&
+        !visible.has(keyOf(thread)) &&
+        (effectiveSnoozed(thread, { now }) ||
+          (thread.settledOverride === "settled" && !queuedThreadKeys.has(keyOf(thread)))),
     );
     return {
       pinned,
@@ -203,7 +209,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [threads, folders, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);

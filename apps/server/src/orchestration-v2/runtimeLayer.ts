@@ -14,6 +14,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ThreadFolderService from "../threadFolders/ThreadFolderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
@@ -311,7 +312,16 @@ const layerProviderContinuationWorkerProvided = ProviderContinuationService.laye
 );
 const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      TextGeneration.layer,
+      ThreadFolderService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer, TextGeneration.layer),
+        ),
+      ),
+    ),
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
@@ -375,6 +385,9 @@ export const layerProduction = Layer.mergeAll(
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
+  ThreadFolderService.layer.pipe(
+    Layer.provide(Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer, TextGeneration.layer)),
+  ),
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),

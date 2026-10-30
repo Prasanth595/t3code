@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { threadFoldersAtom } from "../../state/server";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
@@ -33,6 +35,7 @@ type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
  * the React Compiler cached none of it and every render of the screen re-rendered every row.
  */
 export function useThreadListV2(input: {
+  readonly collapsedFolders: readonly string[];
   readonly threads: LayoutInput["threads"];
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
@@ -56,6 +59,8 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const folders = useAtomValue(threadFoldersAtom);
+  const collapsedFolderKeys = useKeySet([...input.collapsedFolders].sort().join("\n"));
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
@@ -78,6 +83,7 @@ export function useThreadListV2(input: {
         section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
       ordered: getThreadListV2OrderedSection({
         threads,
+        folders,
         section,
         pendingOrder: input.pendingOrder,
         now: input.now,
@@ -99,6 +105,8 @@ export function useThreadListV2(input: {
     visibleCount: input.searchQuery.trim().length === 0 ? input.settledLimit : 0,
   });
   const layout = buildThreadListV2Items({
+    folders,
+    collapsedFolderKeys,
     pendingOrder: input.pendingOrder,
     threads: threads.filter((thread) => thread.archivedAt === null),
     environmentId: input.environmentId,
@@ -148,6 +156,7 @@ export function useThreadListV2(input: {
   );
   const items = buildThreadListV2ListItems({
     items: layout.items,
+    folderHeaders: layout.folderHeaders,
     pendingTasks,
     workingCount: layout.workingCount,
     workingShelfExpanded: input.workingShelfExpanded,
@@ -164,7 +173,7 @@ export function useThreadListV2(input: {
     moveAvailability,
     shelfPreferencesLoading: !input.shelfPreferencesLoaded,
   });
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  return { layout, items, folders, contentOnlyThreadKeys, olderSettledShelf };
 }
 
 /** The list's scope per environment: its projects there, or every project. */

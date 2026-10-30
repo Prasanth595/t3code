@@ -9,12 +9,14 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  ThreadFolderId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ThreadFolderService from "../threadFolders/ThreadFolderService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -62,6 +64,10 @@ function makeHarness(
     Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
   );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const applySmartPick = vi.fn(() => Effect.void);
+  const candidates = [
+    { id: ThreadFolderId.make("folder:reviews"), name: "PR reviews", examples: ["Review PR 12"] },
+  ];
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
@@ -89,6 +95,10 @@ function makeHarness(
   const layerTitleRegeneration = ThreadTitleRegeneration.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(ThreadFolderService.ThreadFolderService)({
+          smartCandidates: () => Effect.succeed(candidates),
+          applySmartPick,
+        }),
         layerThreadManagement,
         layerProjectedProjects,
         Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),
@@ -105,6 +115,8 @@ function makeHarness(
       layerDatabase,
     ),
     generateThreadTitle,
+    applySmartPick,
+    candidates,
   };
 }
 
@@ -345,7 +357,7 @@ describe("ThreadTitleRegenerationService", () => {
   it.effect("lands the regenerated title from the conversation digest", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        generateTitle: () => Effect.succeed({ title: "Fresh title" }),
+        generateTitle: () => Effect.succeed({ title: "Fresh title", folderId: "folder:reviews" }),
       });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -364,6 +376,8 @@ describe("ThreadTitleRegenerationService", () => {
         yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
 
         const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.deepStrictEqual(call?.folders, harness.candidates);
+        assert.deepStrictEqual(harness.applySmartPick.mock.calls, [[threadId, "folder:reviews"]]);
         assert.equal(call?.previousTitle, "Seed title");
         assert.equal(call?.cwd, "/repo");
         assert.include(call?.message, "USER:\nInvestigate the flaky login test");
@@ -371,6 +385,50 @@ describe("ThreadTitleRegenerationService", () => {
         assert.equal(projection.thread.title, "Fresh title");
         assert.isNotOk(projection.thread.titleRegeneration);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("drops the folder pick of a request replaced or cancelled while the model ran", () =>
+    Effect.gen(function* () {
+      for (const interruption of ["replaced", "cancelled"] as const) {
+        let interrupt: Effect.Effect<void> = Effect.void;
+        const harness = makeHarness({
+          generateTitle: () =>
+            interrupt.pipe(Effect.as({ title: "Fresh title", folderId: "folder:reviews" })),
+        });
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const threadId = yield* createThread({
+            command: `command:title:${interruption}:create`,
+            thread: `thread:title:${interruption}`,
+          });
+          yield* dispatchUserMessage({
+            command: `command:title:${interruption}:message`,
+            threadId,
+            text: "Investigate the flaky login test",
+          });
+          const requestId = yield* armRegeneration({
+            command: `command:title:${interruption}:1`,
+            threadId,
+          });
+          const context = yield* Effect.context<ThreadManagement.ThreadManagementService>();
+          const next = CommandId.make(`command:title:${interruption}:2`);
+          interrupt = threads
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: next,
+              threadId,
+              regenerateTitle: interruption === "replaced",
+            })
+            .pipe(Effect.provide(context), Effect.orDie, Effect.asVoid);
+
+          yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+          assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
+          assert.deepStrictEqual(harness.applySmartPick.mock.calls, []);
+        }).pipe(Effect.provide(harness.layer));
+      }
     }),
   );
 

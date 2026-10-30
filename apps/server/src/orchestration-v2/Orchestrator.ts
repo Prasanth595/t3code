@@ -3784,6 +3784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (command.type === "thread.title.regeneration.complete" && updatedThread === thread) return;
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"
@@ -13091,6 +13092,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          // A replaced or cancelled title request completes as a no-op.
+          command.type === "thread.title.regeneration.complete" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close",
         (_planned) =>

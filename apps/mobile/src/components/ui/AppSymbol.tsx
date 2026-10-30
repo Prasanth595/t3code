@@ -134,6 +134,12 @@ import IconWifi from "@tabler/icons-react-native/IconWifi";
 import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
 import IconX from "@tabler/icons-react-native/IconX";
+import IconBug from "@tabler/icons-react-native/IconBug";
+import IconFlask from "@tabler/icons-react-native/IconFlask";
+import IconRocket from "@tabler/icons-react-native/IconRocket";
+import IconBulb from "@tabler/icons-react-native/IconBulb";
+import IconShieldCheck from "@tabler/icons-react-native/IconShieldCheck";
+import IconGauge from "@tabler/icons-react-native/IconGauge";
 import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
 import { withUniwind } from "uniwind";
 
@@ -250,6 +256,13 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
   safari: IconExternalLink,
   "server.rack": IconServer,
+  ladybug: IconBug,
+  flask: IconFlask,
+  paperplane: IconRocket,
+  lightbulb: IconBulb,
+  "checkmark.shield": IconShieldCheck,
+  cylinder: IconDatabase,
+  "gauge.with.dots.needle.33percent": IconGauge,
   stethoscope: IconStethoscope,
   "sidebar.left": IconLayoutSidebar,
   "sidebar.right": IconLayoutSidebarRight,

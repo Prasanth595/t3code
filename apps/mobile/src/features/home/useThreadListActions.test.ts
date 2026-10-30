@@ -1,3 +1,4 @@
+import type { EnvironmentThreadFolder } from "@t3tools/client-runtime/state/thread-folders";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -7,6 +8,8 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  ThreadFolderId,
+  type ThreadFolderMutation,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -19,6 +22,8 @@ const state = vi.hoisted(() => ({
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
+  folders: [] as EnvironmentThreadFolder[],
+  folderRequests: [] as { environmentId: string; input: ThreadFolderMutation }[],
   requests: [] as {
     action: string;
     environmentId: string;
@@ -42,6 +47,7 @@ vi.mock("react-native", () => ({
       state.alerts.push({ title, buttons }),
   },
 }));
+vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("expo-haptics", () => ({
   impactAsync: async () => {},
   ImpactFeedbackStyle: { Light: "light" },
@@ -62,6 +68,16 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
+  serverEnvironment: {
+    mutateThreadFolders: async (request: {
+      environmentId: string;
+      input: ThreadFolderMutation;
+    }) => {
+      state.folderRequests.push(request);
+      return AsyncResult.success(undefined);
+    },
+  },
+  threadFoldersAtom: "thread-folders",
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -69,28 +85,31 @@ vi.mock("../../state/atom-registry", () => ({
       state.dropBusy = value;
     },
     get: (atom: string) =>
-      atom === "thread-drop-busy"
-        ? state.dropBusy
-        : atom === "thread-shells"
-          ? state.shells
-          : atom === "queued-thread-keys"
-            ? new Set<string>()
-            : new Map(
-                [...state.scopes.keys()].map((environmentId) => [
-                  environmentId,
-                  {
-                    environment: {
-                      capabilities: {
-                        threadSettlement: true,
-                        threadSnooze: true,
-                        threadPinning: true,
-                        threadPinReorder: true,
-                        threadTitleRegeneration: true,
+      atom === "thread-folders"
+        ? state.folders
+        : atom === "thread-drop-busy"
+          ? state.dropBusy
+          : atom === "thread-shells"
+            ? state.shells
+            : atom === "queued-thread-keys"
+              ? new Set<string>()
+              : new Map(
+                  [...state.scopes.keys()].map((environmentId) => [
+                    environmentId,
+                    {
+                      environment: {
+                        capabilities: {
+                          threadFolders: true,
+                          threadSettlement: true,
+                          threadSnooze: true,
+                          threadPinning: true,
+                          threadPinReorder: true,
+                          threadTitleRegeneration: true,
+                        },
                       },
                     },
-                  },
-                ]),
-              ),
+                  ]),
+                ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -189,6 +208,8 @@ beforeEach(() => {
   ]);
   state.requests = [];
   state.shells = [];
+  state.folders = [];
+  state.folderRequests = [];
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
@@ -479,5 +500,57 @@ describe("thread archive guard", () => {
     expect(state.requests).toEqual([]);
     expect(state.archivedRefreshes).toEqual([]);
     expect(state.alerts.at(-1)?.title).toBe("Could not archive thread");
+  });
+});
+
+describe("folder actions", () => {
+  it("reorders only within the folder's environment and rejects moves at the ends", async () => {
+    const folder: EnvironmentThreadFolder = {
+      environmentId: primaryEnvironmentId,
+      id: ThreadFolderId.make("first"),
+      name: "First",
+      icon: null,
+      threadIds: [],
+      rule: { titleKeywords: ["test"] },
+      autoFile: false,
+      ruleSetAt: null,
+      createdAt: "2026-09-02T00:00:00.000Z",
+      updatedAt: "2026-09-02T00:00:00.000Z",
+    };
+    const second = { ...folder, id: ThreadFolderId.make("second") };
+    const third = { ...folder, id: ThreadFolderId.make("third") };
+    state.folders = [folder, { ...folder, environmentId: otherEnvironmentId }, second, third];
+    const actions = useThreadListActions();
+    const shown = [folder, second, third];
+    expect(await actions.moveFolder(folder, "up", shown)).toBe(false);
+    expect(await actions.moveFolder(third, "down", shown)).toBe(false);
+    expect(await actions.moveFolder(second, "up", shown)).toBe(true);
+    expect(await actions.moveFolder(folder, "down", shown)).toBe(true);
+    expect(await actions.moveFolder(second, "down", shown)).toBe(true);
+    expect(state.folderRequests).toEqual([
+      {
+        environmentId: primaryEnvironmentId,
+        input: { type: "folder.reorder", folderId: second.id, beforeFolderId: folder.id },
+      },
+      {
+        environmentId: primaryEnvironmentId,
+        input: { type: "folder.reorder", folderId: folder.id, beforeFolderId: third.id },
+      },
+      {
+        environmentId: primaryEnvironmentId,
+        input: { type: "folder.reorder", folderId: second.id, beforeFolderId: null },
+      },
+    ]);
+    expect(await actions.setFolderCollect(folder, { by: "topic" })).toBe(true);
+    expect(state.folderRequests.at(-1)?.input).toEqual({
+      type: "folder.update",
+      folderId: folder.id,
+      rule: { smart: true },
+      autoFile: true,
+    });
+    state.scopes.get(primaryEnvironmentId)!.clear();
+    expect(await actions.moveFolder(second, "up", shown)).toBe(false);
+    expect(await actions.setFolderCollect(folder, { by: "topic" })).toBe(false);
+    expect(state.folderRequests).toHaveLength(4);
   });
 });

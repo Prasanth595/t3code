@@ -5,12 +5,13 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderTextGeneration, ThreadTitleGenerationInput } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
+  buildThreadFolderClassificationPrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -68,6 +69,18 @@ export const decodeJsonReply = <S extends Schema.Top>(
     ),
   );
 };
+
+/** The model's folder pick, kept only when it names one of the offered candidates. */
+export function validFolderPick(
+  input: Pick<ThreadTitleGenerationInput, "folders">,
+  generated: object,
+): { readonly folderId?: string } {
+  return "folderId" in generated &&
+    typeof generated.folderId === "string" &&
+    input.folders?.some((folder) => folder.id === generated.folderId)
+    ? { folderId: generated.folderId }
+    : {};
+}
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
@@ -141,6 +154,8 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       modelSelection: input.modelSelection,
       attachments: input.attachments,
       ...buildThreadTitlePrompt({
+        folders: input.folders,
+        folderContext: input.folderContext,
         message: input.message,
         previousTitle: input.previousTitle,
         forkSource: input.forkSource,
@@ -151,6 +166,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
     return {
       title: sanitizeThreadTitle(generated.title),
+      ...validFolderPick(input, generated),
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });
@@ -167,11 +183,23 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const classifyThreadFolder: ProviderTextGeneration["classifyThreadFolder"] = Effect.fn(
+    `${name}.classifyThreadFolder`,
+  )(function* (input) {
+    return yield* run({
+      operation: "classifyThreadFolder",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildThreadFolderClassificationPrompt(input),
+    });
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    classifyThreadFolder,
   } satisfies ProviderTextGeneration;
 }

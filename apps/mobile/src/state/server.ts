@@ -1,3 +1,7 @@
+import { Atom, AsyncResult } from "effect/reactivity";
+import type { EnvironmentId, ThreadFolderListResult } from "@t3tools/contracts";
+import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
+import type { EnvironmentThreadFolder } from "@t3tools/client-runtime/state/thread-folders";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import {
   createOutdatedServerDescriptionCommand,
@@ -25,3 +29,27 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
 export const threadListEnvironmentsAtom = createThreadListEnvironmentsAtom(
   environmentServerConfigsAtom,
 );
+
+const environmentThreadFoldersAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previousList: ThreadFolderListResult | null = null;
+  let previous: ReadonlyArray<EnvironmentThreadFolder> = [];
+  return Atom.make((get) => {
+    const result = get(serverEnvironment.threadFoldersLive({ environmentId, input: {} }));
+    if (!AsyncResult.isSuccess(result) || result.value === previousList) return previous;
+    previousList = result.value;
+    previous = result.value.folders.map((folder) => ({ ...folder, environmentId }));
+    return previous;
+  });
+});
+
+export const threadFoldersAtom = (() => {
+  let previous: ReadonlyArray<EnvironmentThreadFolder> = [];
+  return Atom.make((get) => {
+    const next = [...get(threadListEnvironmentsAtom).threadFolderEnvironmentIds].flatMap(
+      (environmentId) => get(environmentThreadFoldersAtom(environmentId)),
+    );
+    if (arrayElementsEqual(previous, next)) return previous;
+    previous = next;
+    return next;
+  });
+})();

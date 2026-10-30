@@ -288,6 +288,7 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    classifyThreadFolder: () => Effect.die("unused"),
     ...overrides,
   };
 
@@ -337,6 +338,7 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    classifyThreadFolder: (input) => implementation.classifyThreadFolder(input),
   };
 }
 

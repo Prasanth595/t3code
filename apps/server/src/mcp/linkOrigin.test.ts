@@ -34,6 +34,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadFolderService from "../threadFolders/ThreadFolderService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -130,6 +131,7 @@ const layerTools = Layer.mergeAll(
     }),
   ),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(Layer.mock(ThreadFolderService.ThreadFolderService)({})),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
       getById: () => Effect.succeedNone,

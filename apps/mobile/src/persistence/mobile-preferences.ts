@@ -106,6 +106,7 @@ export interface Preferences {
   /** Unset means on: crash reports are sent unless the user turns them off. */
   readonly crashReportsEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
+  readonly threadListCollapsedFolders?: readonly string[];
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
   /** Hardware Return behavior is iOS-only. */
@@ -187,6 +188,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     mathRenderingEnabled?: boolean;
     crashReportsEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
+    threadListCollapsedFolders?: readonly string[];
     collapsedProjectGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
@@ -281,6 +283,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",
+    );
+  }
+  if (Array.isArray(parsed.threadListCollapsedFolders)) {
+    preferences.threadListCollapsedFolders = parsed.threadListCollapsedFolders.filter(
+      (key): key is string => typeof key === "string",
     );
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
