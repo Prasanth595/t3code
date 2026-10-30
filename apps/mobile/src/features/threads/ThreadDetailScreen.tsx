@@ -340,8 +340,7 @@ const threadVisitTracker = createThreadVisitTracker({
 // Past the composer's 180 ms height animation.
 const COMPOSER_HEIGHT_SETTLE_MS = 220;
 
-// A reconnect often fails once before it lands (a resumed app's first attempt,
-// a failure left over from the background), so it reads as Reconnecting first.
+// Connection failures survive retries and app suspension.
 const RECONNECT_ERROR_DELAY_MS = 5_000;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to

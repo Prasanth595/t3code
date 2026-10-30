@@ -33,6 +33,9 @@ describe("stepDelayedStatus", () => {
       () => 0,
     );
     expect(delayedStatusDeadline(slow)).toBe(5_000);
+    expect(shownDelayedStatus(step(slow, "failed", 4_999), "thread-1")).toBeNull();
+    expect(shownDelayedStatus(step(slow, "failed", 5_000), "thread-1")).toBe("failed");
+    expect(step(slow, null, 200).phase).toBe("idle");
   });
 
   it("never shows a status that clears before the show delay", () => {
