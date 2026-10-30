@@ -5,6 +5,11 @@ On mobile, use **Settings > Maintenance > Privacy**. The choice is saved on each
 and applies to everyone connected to it. Turning it off stops collection without restarting and
 discards queued events, including failed deliveries. Turning it back on collects new events only.
 
+Startup events can be recorded and sent before the onboarding choice appears. To prevent
+collection from the first start, set `T3CODE_TELEMETRY_ENABLED=false` before launching, as
+described below. Changing the saved preference requires permission to change environment
+settings; ask the environment administrator if the control is unavailable.
+
 When enabled, the T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
 associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and

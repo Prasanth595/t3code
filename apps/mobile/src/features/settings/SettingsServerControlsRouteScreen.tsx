@@ -476,11 +476,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       icon="chart.bar.xaxis"
                       label="Share product analytics"
                       subtitle={
-                        analyticsSupported
-                          ? "Sends usage events and hashed account and installation IDs to T3 Code and PostHog. These are pseudonymous: they can link activity across installations. No prompts or file contents."
-                          : "Update the selected environment servers to control product analytics here. Older servers may collect analytics by default."
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : analyticsSupported
+                            ? "Sends usage events and hashed account and installation IDs to T3 Code and PostHog. These are pseudonymous: they can link activity across installations. No prompts or file contents."
+                            : "Update the selected environment servers to control product analytics here. Older servers may collect analytics by default."
                       }
                       value={analyticsSupported ? uniform("telemetryEnabled") : null}
+                      mixedValue={false}
                       disabled={!analyticsSupported || disabledFor("telemetryEnabled")}
                       onValueChange={(value) => write({ telemetryEnabled: value })}
                     />

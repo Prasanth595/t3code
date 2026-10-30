@@ -1016,6 +1016,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.isFalse(settings.telemetryEnabled);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );

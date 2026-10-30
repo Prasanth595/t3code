@@ -90,6 +90,7 @@ const SETTINGS_SEARCH_TERMS = {
     "restart",
     "manage environments",
     "analytics",
+    "share product analytics",
     "telemetry",
     "privacy",
     "opt out",
