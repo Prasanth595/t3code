@@ -177,7 +177,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           const activeBottom = [...parent.querySelectorAll('[aria-current="page"]')]
             .find((row) => !row.closest("[inert]"))
             ?.getBoundingClientRect().bottom;
-          setGap(Math.min(gap + deficit, scroller.clientHeight / 2));
+          setGap(
+            Math.min(
+              gap + deficit,
+              scroller.clientHeight - ([...next.values()].at(-1)?.height ?? 0),
+            ),
+          );
           scroller.scrollTop = scrollTop;
           if (
             activeBottom !== undefined &&
