@@ -151,6 +151,19 @@ describe("factoryApi over HTTP", () => {
     expect(await sent().json()).toEqual({ ids: ["config", "gone"] });
   });
 
+  it("snoozes and installs a waiting update with POSTs to the deploy paths", async () => {
+    answer(200, '{"snoozed_until":"2026-10-30T09:00:00.000Z"}');
+    expect(await factoryApi.snoozeDeploy(ENV_1)).toEqual({
+      snoozed_until: "2026-10-30T09:00:00.000Z",
+    });
+    expect(sent().method).toBe("POST");
+    expect(new URL(sent().url).pathname).toBe("/api/factory/deploy/snooze");
+    answer(202, '{"commit":"abc","kicked":false,"message":"next tick"}');
+    expect((await factoryApi.deployNow(ENV_1)).kicked).toBe(false);
+    expect(sent().method).toBe("POST");
+    expect(new URL(sent().url).pathname).toBe("/api/factory/deploy/now");
+  });
+
   it("maps an error body to the status, code and message", async () => {
     answer(404, '{"code":"run_not_found","message":"no such run"}');
     const error = await failure(factoryApi.run(ENV_1, "x"));
@@ -319,6 +332,8 @@ describe("factoryApi on the given environment", () => {
       () => factoryApi.pauseClaims(ENV_2),
       () => factoryApi.resumeClaims(ENV_2),
       () => factoryApi.dismissAttention(ENV_2, ["config"]),
+      () => factoryApi.snoozeDeploy(ENV_2),
+      () => factoryApi.deployNow(ENV_2),
     ];
     for (const call of calls) {
       answer(200, "{}");

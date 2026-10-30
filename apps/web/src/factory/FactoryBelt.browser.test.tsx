@@ -188,6 +188,8 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  snoozeDeploy: vi.fn(),
+  deployNow: vi.fn(),
   ...overrides,
 });
 
@@ -716,6 +718,250 @@ describe("the control bar", () => {
     expect(stat(page, "Slots")).toBe("0/3");
     await page.click(page.all("button").find((b) => b.textContent?.startsWith("Desktop"))!);
     expect(stat(page, "Slots")).toBe("1/2");
+  });
+});
+
+describe("a waiting update", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const since = at(14, 10);
+  const deployBy = at(16, 10);
+  const waiting = (
+    pending: Partial<NonNullable<FactoryStatus["deploy_pending"]>> = {},
+  ): FactoryStatus["deploy_pending"] => ({
+    commit: SHA,
+    since: iso(since),
+    waited_ms: NOW - since,
+    deploy_by: iso(deployBy),
+    snoozed_until: null,
+    ...pending,
+  });
+  const withUpdate = (
+    runs: ReadonlyArray<StatusRun>,
+    status: Partial<FactoryStatus> = {},
+    id: EnvironmentId = DESKTOP,
+    label = "Desktop",
+  ) => environment(id, label, runs, { deploy_pending: waiting(), ...status });
+  const banner = (page: Page) =>
+    page.all('[data-slot="alert"]').find((node) => node.closest("[data-factory-update]"));
+  const dialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
+  const dialogButton = (label: string) =>
+    Array.from(dialog()?.querySelectorAll("button") ?? []).find((b) => b.textContent === label);
+
+  it("says which build waits, until when claims hold, and that runs in progress finish first", async () => {
+    using _state = await setup();
+    const desktop = withUpdate([statusRun(2), statusRun(4, { state: "pr-open" })]);
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toBe(
+      "Update waiting." +
+        `Build 0123456 is ready to install. The factory claims no new work until it installs, at ${clock(deployBy)} at the latest, or sooner once the runs in progress finish.` +
+        "Snooze 1 hourUpdate now",
+    );
+    expect(station(page, "claimed").textContent).toContain(
+      `claims held for update since ${clock(since)}`,
+    );
+  });
+
+  it("leaves out the runs clause with none in progress, and names no sha it does not have", async () => {
+    using _state = await setup();
+    // A run on PR open, needs info or stuck is not in progress; an unreadable one is.
+    const desktop = withUpdate(
+      [
+        statusRun(4, { state: "pr-open" }),
+        statusRun(5, { state: "needs-info" }),
+        statusRun(6, { state: "stuck" }),
+      ],
+      { deploy_pending: waiting({ commit: null }) },
+    );
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toContain(
+      `A new build is ready to install. The factory claims no new work until it installs, at ${clock(deployBy)} at the latest.Snooze`,
+    );
+  });
+
+  it("gives a hand pause the Claimed post over the update hold", async () => {
+    using _state = await setup();
+    const paused = at(11, 2);
+    const desktop = withUpdate([], { paused_by_hand: { since: iso(paused), for_ms: 0 } });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(station(page, "claimed").textContent).toContain(
+      `claims paused by hand since ${clock(paused)}`,
+    );
+    expect(station(page, "claimed").textContent).not.toContain("held for update");
+  });
+
+  it("says until when a snoozed update waits, and holds no claims", async () => {
+    using _state = await setup();
+    const until = at(16, 0);
+    const desktop = withUpdate([statusRun(2)], {
+      deploy_pending: waiting({ deploy_by: null, snoozed_until: iso(until) }),
+    });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toBe(
+      `Update snoozed until ${clock(until)}.` +
+        "Build 0123456 is waiting. The factory claims work as normal until then." +
+        "Snooze 1 hourUpdate now",
+    );
+    expect(station(page, "claimed").textContent).not.toContain("held for update");
+  });
+
+  it("shows no banner while nothing waits", async () => {
+    using _state = await setup();
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    expect(banner(page)).toBeUndefined();
+  });
+
+  it("snoozes the selected environment's update, disabling both its buttons and no other's, then reads status again", async () => {
+    using _state = await setup();
+    let finish!: () => void;
+    const snoozeDeploy = vi.fn(
+      () =>
+        new Promise<{ snoozed_until: string }>((resolve) => {
+          finish = () => resolve({ snoozed_until: iso(at(16, 0)) });
+        }),
+    );
+    __setFactoryApiForTests(api({ snoozeDeploy }));
+    const belt = props({
+      environments: [withUpdate([]), withUpdate([], {}, STUDIO, "Studio")],
+      recent: recentOf([DESKTOP, []], [STUDIO, []]),
+    });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Snooze 1 hour")!);
+    expect(snoozeDeploy).toHaveBeenCalledWith(DESKTOP);
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(true);
+    expect(page.button("Update now")!.disabled).toBe(true);
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
+    expect(page.button("Update now")!.disabled).toBe(false);
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Desktop"))!);
+    await act(async () => finish());
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
+    expect(belt.environments[0]!.status.refresh).toHaveBeenCalled();
+    expect(belt.environments[1]!.status.refresh).not.toHaveBeenCalled();
+  });
+
+  it("shows the message of a snooze the server refuses", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({
+        snoozeDeploy: async () => {
+          throw new FactoryApiError(409, "snooze_limit", "this build has been snoozed 3 times");
+        },
+      }),
+    );
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Snooze 1 hour")!);
+    const note = page
+      .all('[role="status"]')
+      .find((p) => p.textContent === "this build has been snoozed 3 times");
+    expect(note).toBeDefined();
+  });
+
+  it("asks before Update now interrupts runs and threads, naming each run", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn(async () => ({ commit: SHA, kicked: true, message: "installing" }));
+    __setFactoryApiForTests(api({ deployNow }));
+    const desktop = withUpdate(
+      [
+        statusRun(2, { title: "Make the belt faster" }),
+        statusRun(3, { title: null }),
+        statusRun(4, { state: "pr-open", title: "Already on PR" }),
+      ],
+      { threads: { running: 2 } },
+    );
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    expect(deployNow).not.toHaveBeenCalled();
+    const text = dialog()!.textContent;
+    expect(text).toContain("Make the belt faster");
+    expect(text).toContain(runId(3));
+    expect(text).not.toContain("Already on PR");
+    expect(text).toContain(
+      "2 threads with an agent at work will be interrupted; you continue them in T3.",
+    );
+    await act(async () => dialogButton("Update now")!.click());
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP);
+    await expect
+      .poll(() => banner(page)?.textContent)
+      .toBe("Updating. The server restarts once the build is installed.");
+  });
+
+  it("asks before Update now when only threads are at work", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn();
+    __setFactoryApiForTests(api({ deployNow }));
+    const desktop = withUpdate([], { threads: { running: 1 } });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain(
+      "1 thread with an agent at work will be interrupted; you continue them in T3.",
+    );
+    expect(deployNow).not.toHaveBeenCalled();
+  });
+
+  it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn(async () => ({ commit: SHA, kicked: false, message: "next tick" }));
+    __setFactoryApiForTests(api({ deployNow }));
+    const belt = props({
+      environments: [withUpdate([statusRun(4, { state: "pr-open" })], { threads: { running: 0 } })],
+    });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Update now")!);
+    expect(dialog()).toBeNull();
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP);
+    expect(banner(page)?.textContent).toBe("Updating within 10 minutes.");
+    // The banner says updating until the build is no longer waiting.
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...belt,
+        environments: [withUpdate([], { deploy_pending: null })],
+      }),
+    );
+    await expect.poll(() => banner(page)).toBeUndefined();
+  });
+
+  it("drops the updating note once the server answers again after going away", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({ deployNow: async () => ({ commit: SHA, kicked: true, message: "installing" }) }),
+    );
+    const desktop = withUpdate([]);
+    const belt = props({ environments: [desktop] });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Update now")!);
+    expect(banner(page)?.textContent).toContain("Updating.");
+    const gone = {
+      ...desktop,
+      status: { ...desktop.status, status: "error" as const, error: new Error("gone") },
+    };
+    await page.rerender(createElement(FactoryBelt, { ...belt, environments: [gone] }));
+    await expect.poll(() => banner(page)?.textContent).toContain("Updating.");
+    await page.rerender(createElement(FactoryBelt, { ...belt, environments: [withUpdate([])] }));
+    await expect.poll(() => banner(page)?.textContent).toContain("Update waiting.");
+  });
+
+  it("shows the message of an Update now the server refuses", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({
+        deployNow: async () => {
+          throw new FactoryApiError(403, null, "Missing permission environment:maintain");
+        },
+      }),
+    );
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    const note = page
+      .all('[role="status"]')
+      .find((p) => p.textContent === "Missing permission environment:maintain");
+    expect(note).toBeDefined();
+    expect(banner(page)?.textContent).toContain("Update waiting.");
   });
 });
 
