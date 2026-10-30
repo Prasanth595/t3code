@@ -904,7 +904,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className="chat-message font-chat text-(length:--font-size-chat,var(--text-sm)) text-foreground"
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}

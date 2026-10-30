@@ -2,10 +2,12 @@ import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
+  MAX_CHAT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MAX_TERMINAL_FONT_SIZE,
+  MIN_CHAT_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
@@ -27,7 +29,12 @@ import {
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
 import { AdvancedSettings } from "./AdvancedSettings";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import {
+  ChatFontPreview,
+  CodeFontPreview,
+  PromptFontPreview,
+  TerminalFontPreview,
+} from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -83,6 +90,37 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
         onChange: (fontSizeInterface) => updateSettings({ fontSizeInterface }),
       }}
       {...(preview !== undefined ? { preview } : {})}
+    />
+  );
+}
+
+function ChatFontRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const defaults = useFontDefaultFamilies();
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("chat-font")}
+      description="Messages and the new-thread heading. Try a serif such as Georgia."
+      defaultFamily={defaults.interfaceFamily}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyChat}
+      value={settings.fontFamilyChat}
+      onValueChange={(fontFamilyChat) => updateSettings({ fontFamilyChat })}
+      onReset={() =>
+        updateSettings({
+          fontFamilyChat: DEFAULT_UNIFIED_SETTINGS.fontFamilyChat,
+          fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat,
+        })
+      }
+      size={{
+        label: "Chat font size",
+        min: MIN_CHAT_FONT_SIZE,
+        max: MAX_CHAT_FONT_SIZE,
+        value: settings.fontSizeChat,
+        defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeChat,
+        onChange: (fontSizeChat) => updateSettings({ fontSizeChat }),
+      }}
+      preview={<ChatFontPreview />}
     />
   );
 }
@@ -259,6 +297,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ChatFontRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -276,7 +315,7 @@ function SeparateFontsRow({
   return (
     <SettingsRow
       {...searchableSetting("separate-fonts")}
-      description="Set the prompt, code, and terminal fonts separately instead of one monospace font."
+      description="Set the chat, prompt, code, and terminal fonts separately instead of one monospace font."
       control={
         <Switch
           checked={checked}

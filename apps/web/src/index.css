@@ -172,6 +172,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-chat: var(--font-sans);
 }
 
 @theme inline {
@@ -2209,6 +2210,28 @@ code {
 
 /* Top-aligned so wrapped rows share a first line, and the outer columns sit
    flush with the surrounding prose. */
+/* Message bodies carry the chat font size, so their fixed rem sizes become ratios of the
+   0.875rem body; at the default size these resolve to the same pixels as the rules above. */
+.chat-markdown.chat-message h1 {
+  font-size: calc(1.25em / 0.875);
+}
+
+.chat-markdown.chat-message h2 {
+  font-size: calc(1.125em / 0.875);
+}
+
+.chat-markdown.chat-message h3 {
+  font-size: calc(1em / 0.875);
+}
+
+.chat-markdown.chat-message :is(h4, h5, h6, table) {
+  font-size: 1em;
+}
+
+.chat-markdown.chat-message section[data-footnotes] {
+  font-size: calc(0.75em / 0.875);
+}
+
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;

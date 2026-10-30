@@ -364,6 +364,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["typography family size system sans"],
   },
   {
+    id: "chat-font",
+    title: "Chat font",
+    to: "/settings/appearance",
+    searchTerms: ["typography family size serif messages bubbles reading welcome heading"],
+  },
+  {
     id: "prompt-font",
     title: "Prompt font",
     to: "/settings/appearance",
@@ -1389,6 +1395,7 @@ export function searchSettings(
 
 // These rows only exist with separate fonts on, so a search jump to one turns them on.
 const ADVANCED_TYPOGRAPHY_TARGET_IDS: ReadonlySet<string> = new Set([
+  "chat-font",
   "prompt-font",
   "terminal-font",
 ]);

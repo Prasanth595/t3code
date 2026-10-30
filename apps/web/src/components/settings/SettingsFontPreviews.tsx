@@ -54,6 +54,18 @@ export function PromptFontPreview() {
   );
 }
 
+export function ChatFontPreview() {
+  return (
+    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2 font-chat">
+      <p className="text-xl tracking-tight">What should we build?</p>
+      <p className="mt-1 text-(length:--font-size-chat,var(--text-sm)) leading-relaxed text-foreground/90">
+        The flaky test raced the settings write. I moved the assertion after the commit, so it now
+        waits on the persisted event instead of a timer.
+      </p>
+    </div>
+  );
+}
+
 const DIFF_PREVIEW_PATCH = [
   "diff --git a/src/formatUser.ts b/src/formatUser.ts",
   "--- a/src/formatUser.ts",

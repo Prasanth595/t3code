@@ -167,6 +167,14 @@ export const PromptFontSize = Schema.Int.check(
 export type PromptFontSize = typeof PromptFontSize.Type;
 export const DEFAULT_PROMPT_FONT_SIZE: PromptFontSize = 14;
 
+export const MIN_CHAT_FONT_SIZE = 12;
+export const MAX_CHAT_FONT_SIZE = 20;
+export const ChatFontSize = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_CHAT_FONT_SIZE, maximum: MAX_CHAT_FONT_SIZE }),
+);
+export type ChatFontSize = typeof ChatFontSize.Type;
+export const DEFAULT_CHAT_FONT_SIZE: ChatFontSize = 14;
+
 export const MIN_CODE_FONT_SIZE = 10;
 export const MAX_CODE_FONT_SIZE = 18;
 export const CodeFontSize = Schema.Int.check(
@@ -432,12 +440,16 @@ export const ClientSettingsSchema = Schema.Struct({
   fontSizePrompt: PromptFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROMPT_FONT_SIZE)),
   ),
+  fontSizeChat: ChatFontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_FONT_SIZE)),
+  ),
   fontSizeCode: CodeFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE)),
   ),
   fontSizeTerminal: TerminalFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_FONT_SIZE)),
   ),
+  fontFamilyChat: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilyCode: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilyComposer: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilySans: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1750,8 +1762,10 @@ export const ClientSettingsPatch = Schema.Struct({
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
+  fontSizeChat: Schema.optionalKey(ChatFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
   fontSizeTerminal: Schema.optionalKey(TerminalFontSize),
+  fontFamilyChat: Schema.optionalKey(FontFamilyPreference),
   fontFamilyCode: Schema.optionalKey(FontFamilyPreference),
   fontFamilyComposer: Schema.optionalKey(FontFamilyPreference),
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
