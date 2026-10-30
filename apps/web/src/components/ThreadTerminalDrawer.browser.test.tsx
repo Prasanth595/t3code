@@ -11,7 +11,7 @@ const fixture = vi.hoisted(() => ({
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
 const fakeSurface: object = new Proxy(
-  { input: { readOnly: false } },
+  { input: document.createElement("textarea") },
   {
     get: (target, key) =>
       key === "then" ? undefined : key in target ? Reflect.get(target, key) : () => undefined,
@@ -25,13 +25,22 @@ vi.mock("~/terminal/ghostty/surface", () => ({
       }),
   },
 }));
-vi.mock("../state/terminalSessions", () => ({
-  useAttachedTerminalSession: (input: { terminal: { threadId: string } }) => ({
-    ...EMPTY_TERMINAL_SESSION_STATE,
-    status: fixture.statusByThreadId.get(input.terminal.threadId),
-    version: 1,
-  }),
-}));
+vi.mock("../state/terminalSessions", async () => {
+  const Atom = await import("effect/reactivity/Atom");
+  const sessions = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.family((threadId: ThreadId) =>
+      Atom.make({
+        ...EMPTY_TERMINAL_SESSION_STATE,
+        status: fixture.statusByThreadId.get(threadId) ?? "closed",
+        version: 1,
+      }),
+    ),
+  );
+  return {
+    attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
+      sessions(environmentId)(terminal.threadId),
+  };
+});
 vi.mock("../state/session", () => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
