@@ -5818,23 +5818,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     Effect.void
                 );
               }
-              if (notification.update.sessionUpdate === "config_option_update") {
-                const selection = yield* Ref.get(activeSelection);
-                const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
-                const model =
-                  selection === null
-                    ? undefined
-                    : (flavor.resolveModelId?.(selection) ?? selection.model);
-                if (
-                  model !== undefined &&
-                  modelOption?.type === "select" &&
-                  !flattenSelectChoices(modelOption.options).some(
-                    (choice) => choice.value === model,
-                  )
-                ) {
-                  yield* Ref.set(activeSelection, null);
-                }
-              }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
@@ -6685,6 +6668,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return activated;
         });
 
+        const validateModelSelection = Effect.fn("AcpAdapterV2.validateModelSelection")(function* (
+          modelSelection: ModelSelection,
+        ) {
+          const model = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
+          if (
+            flavor.applyModelSelection !== undefined ||
+            model.length === 0 ||
+            model === "default" ||
+            model === "auto" ||
+            flavor.customModels?.includes(model) === true
+          )
+            return;
+          const option = findModelConfigOption(yield* runtime.getConfigOptions);
+          const models = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
+          const available =
+            option?.type === "select"
+              ? flattenSelectChoices(option.options).some((choice) => choice.value === model)
+              : models?.availableModels.some((choice) => choice.modelId === model);
+          if (available === false) {
+            return yield* new AcpModelSelectionError({
+              model: modelSelection.model,
+              cause: EffectAcpErrors.AcpRequestError.invalidParams(
+                "The requested model is not available in this session.",
+              ),
+            });
+          }
+        });
+
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
@@ -6736,19 +6747,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtime.setSessionModel(requestedModel).pipe(Effect.mapError(rejectedModel));
               }
               appliedModel = requestedModel;
-            }
-            if (
-              appliedModel === undefined &&
-              requestedModel !== "default" &&
-              requestedModel !== "auto" &&
-              (modelOption?.type === "select" || modelState != null)
-            ) {
-              return yield* new AcpModelSelectionError({
-                model: modelSelection.model,
-                cause: EffectAcpErrors.AcpRequestError.invalidParams(
-                  "The requested model is not available in this session.",
-                ),
-              });
             }
           }
           if (appliedModel !== undefined) {
@@ -6904,6 +6902,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
             }
           }
+          yield* validateModelSelection(modelSelection);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
@@ -7400,6 +7399,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
               }
             }
+            yield* validateModelSelection(turnInput.modelSelection);
             yield* Ref.set(lastTurnRoute, {
               threadId: turnInput.threadId,
               providerThreadId: turnInput.providerThread.id,

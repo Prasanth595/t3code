@@ -784,43 +784,63 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect.each(["config", "legacy", "updated-config"] as const)(
+    it.effect.each([
+      "config",
+      "legacy",
+      "updated-config",
+      "removed-config",
+      "configuration-update",
+    ] as const)(
       "rejects an unavailable explicit model in a %s catalog before inference",
-      (catalog) =>
-        openWithStoredPicks({
-          setup:
-            catalog === "legacy"
+      (catalog) => {
+        const duringTurn = catalog === "updated-config" || catalog === "removed-config";
+        const duringConfiguration = catalog === "configuration-update";
+        const model = duringTurn || duringConfiguration ? "hermes" : "missing";
+        const restrictedOption = {
+          ...modelOption("model", "other"),
+          options: [{ value: "other", name: "Other" }],
+        };
+        return openWithStoredPicks({
+          setup: {
+            ...(catalog === "legacy" || catalog === "removed-config"
               ? {
                   models: {
                     currentModelId: "other",
                     availableModels: [{ modelId: "other", name: "Other" }],
                   },
                 }
-              : {
-                  configOptions: [
+              : {}),
+            configOptions:
+              catalog === "legacy"
+                ? []
+                : [
                     {
                       ...modelOption("model", "hermes"),
                       options: [{ value: "hermes", name: "Hermes" }],
                     },
+                    ...(duringConfiguration ? [permissionModeOption("ask")] : []),
                   ],
-                },
-          storedModel: catalog === "updated-config" ? "hermes" : "missing",
-          ...(catalog === "updated-config" ? { turnModels: ["hermes", "hermes"] } : {}),
-          rejectedModel: catalog === "updated-config" ? "hermes" : "missing",
-          pickFrames:
-            catalog === "updated-config"
+          },
+          storedModel: model,
+          ...(duringTurn ? { turnModels: [model, model] } : {}),
+          ...(duringConfiguration ? { storedModePick: "auto" } : {}),
+          rejectedModel: model,
+          pickFrames: duringTurn
+            ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
+            : duringConfiguration
               ? [
-                  ...prompt(
-                    configOptionUpdate([
-                      {
-                        ...modelOption("model", "other"),
-                        options: [{ value: "other", name: "Other" }],
-                      },
-                    ]),
-                  ),
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "permission-mode",
+                    value: "auto",
+                  }),
+                  answer("session/set_config_option", {
+                    configOptions: [restrictedOption, permissionModeOption("auto")],
+                  }),
                 ]
               : [],
-        }).pipe(Effect.provide(layerTest), Effect.scoped),
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
 
     // regression: #19519 models come from session model state, not a hardcoded list
