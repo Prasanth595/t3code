@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import {
   CircleDashedIcon,
   CircleStopIcon,
+  EyeIcon,
   GitBranchIcon,
   MessageCircleIcon,
   ShieldQuestionIcon,
@@ -179,29 +180,45 @@ export function backgroundWorkNowItem(input: {
   const newest = rows
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
-  const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
-  const verb = presentation.waiting ? "Waiting on" : "Running";
+  const kinds = rows.map((row) => row.task.kind);
+  // Monitors describe themselves in prose; commands are code.
+  const isCode = (kind: (typeof kinds)[number]) => kind !== "subagent" && kind !== "monitor";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
-    title: only ? (
+    icon: kinds.every((kind) => kind === "monitor") ? (
+      <EyeIcon />
+    ) : kinds.includes("subagent") ? (
+      <CircleDashedIcon />
+    ) : (
+      <TerminalIcon />
+    ),
+    title: presentation.subject ? (
       <>
-        {verb} <span className={cn(isCommand(only) && "font-mono")}>{only.task.label}</span>
+        {presentation.subject.verb === null ? null : `${presentation.subject.verb} `}
+        <span
+          className={cn(
+            "text-foreground",
+            isCode(presentation.subject.item.kind) && "font-mono text-2xs",
+          )}
+        >
+          {presentation.subject.item.label}
+        </span>
       </>
     ) : (
       presentation.title
     ),
-    description: only ? (
-      only.activity
-    ) : newest ? (
-      `${newest.task.label}: ${newest.activity}`
-    ) : rows.every(isCommand) ? (
-      <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
-    ) : (
-      rows.map((row) => row.task.label).join(", ")
-    ),
+    description: only
+      ? only.activity
+      : newest
+        ? `${newest.task.label}: ${newest.activity}`
+        : rows.map((row, index) => (
+            <Fragment key={row.task.taskId}>
+              {index > 0 ? ", " : null}
+              <span className={cn(isCode(row.task.kind) && "font-mono")}>{row.task.label}</span>
+            </Fragment>
+          )),
     actions: (
       <>
         {startedAtMs === null ? null : (
@@ -218,7 +235,11 @@ export function backgroundWorkNowItem(input: {
             Open
           </InlineButton>
         )}
-        <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
+        <InlineButton
+          tone="muted"
+          disabled={input.stopDisabled}
+          onClick={() => void input.onStop()}
+        >
           {input.stopping ? "Stopping..." : "Stop"}
         </InlineButton>
       </>

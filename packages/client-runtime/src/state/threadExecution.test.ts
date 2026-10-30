@@ -25,6 +25,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  presentPendingBackgroundWork,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -325,6 +326,44 @@ describe("presentRunStop", () => {
     },
   ])("presents $name", ({ runs, turnItems, state }) => {
     expect(presentRunStop({ runs, turnItems })?.state ?? null).toBe(state);
+  });
+});
+
+describe("presentPendingBackgroundWork", () => {
+  const watch = "Watching pull request #404";
+  it.each([
+    { kind: "monitor", awaited: true, description: watch, title: watch, verb: null },
+    { kind: "monitor", awaited: undefined, description: watch, title: watch, verb: null },
+    {
+      kind: "command",
+      awaited: true,
+      description: "pnpm test",
+      title: "Waiting on command pnpm test",
+      verb: "Waiting on",
+    },
+    {
+      kind: "command",
+      awaited: undefined,
+      description: "pnpm test",
+      title: "Running: pnpm test",
+      verb: "Running",
+    },
+  ] as const)(
+    "titles a $kind with awaited $awaited",
+    ({ kind, awaited, description, title, verb }) => {
+      const presentation = presentPendingBackgroundWork([
+        { taskId: "bg-1", description, kind, ...(awaited ? { awaited } : {}) },
+      ]);
+      expect(presentation?.title).toBe(title);
+      expect(presentation?.subject).toMatchObject({ verb, item: { kind, label: description } });
+    },
+  );
+
+  it("leaves an unnamed task without a subject", () => {
+    expect(presentPendingBackgroundWork([{ taskId: "bg-1", kind: "command" }])).toMatchObject({
+      title: "Running a command",
+      subject: null,
+    });
   });
 });
 
