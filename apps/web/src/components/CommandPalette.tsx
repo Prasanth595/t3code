@@ -623,6 +623,11 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const scratchProject = projects.find(
+    (project) =>
+      project.environmentId === scratchTargetEnvironmentId &&
+      isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
+  );
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -785,9 +790,6 @@ function OpenCommandPaletteDialog(props: {
     );
     if (scratchTargetEnvironmentId === null) return projectItems;
 
-    const scratchProject = projects.find(
-      (project) => project.environmentId === scratchTargetEnvironmentId && isScratch(project),
-    );
     const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
     const noProjectTitle = scratchProject?.title ?? "No project";
     return [
@@ -1204,9 +1206,22 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
-      searchTerms: ["new thread", "no project", "without project", "none", "chat"],
-      title: "New thread without a project",
-      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+      searchTerms: [
+        scratchProject?.title ?? "No project",
+        "new thread",
+        "no project",
+        "without project",
+        "none",
+        "chat",
+      ],
+      title: scratchProject
+        ? `New thread in ${scratchProject.title}`
+        : "New thread without a project",
+      icon: scratchProject ? (
+        <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
+      ) : (
+        <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />
+      ),
       shortcutCommand: "chat.newWithoutProject",
       run: () => startScratchThread(scratchTargetEnvironmentId),
     });
