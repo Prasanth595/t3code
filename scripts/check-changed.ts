@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off
+// @effect-diagnostics nodeBuiltinImport:off - hashes inputs with node:crypto and sizes the budget with node:os.
 // Runs CI's fast checks for this branch's changes: format and lint of the
 // changed files, knip, generated GraphQL operations, typecheck of the affected
 // packages and their dependents, the test files beside the changed files, and
@@ -7,425 +7,530 @@
 // A dependency change also gets the unused-patch install check below. CI still
 // runs the full test suites and the jobs listed in the summary.
 //
-//   vp run check:changed          compare against the merge base with origin/main
-//   vp run check:changed <ref>    compare against the merge base with <ref>
+//   vp run check:changed                  compare against the merge base with origin/main
+//   vp run check:changed <ref>            compare against the merge base with <ref>
+//   vp run check:changed --concurrency 1  run the steps one at a time
 //
 // Uncommitted and untracked files count. Affected packages come from
 // .github/scripts/ci-changes.cjs, the same mapping CI uses to gate its jobs.
-// The steps run side by side, as many at once as the machine's cores and
-// available memory allow (CHECK_CHANGED_CONCURRENCY overrides; 1 runs them one
-// by one), and each prints its output when it finishes. A step running past
-// CHECK_CHANGED_TIMEOUT seconds (default 900) is killed with its process tree
-// and reported as TIMEOUT. A rerun on exactly the files of the last passing run
-// prints that run's summary.
-import * as NodeChildProcess from "node:child_process";
+// The steps run side by side within a budget derived from the machine's cores
+// and available memory, and each prints its output when it finishes. A step
+// running past the timeout is killed with its process group and reported as
+// TIMEOUT. A rerun on exactly the files of the last passing run prints that
+// run's summary.
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
-import {
-  awaitStep,
-  createLimiter,
-  defaultConcurrency,
-  positiveInteger,
-  type StepOutcome,
-} from "./lib/check-changed-steps.ts";
 
-const root = NodePath.resolve(import.meta.dirname, "..");
+const GiB = 1024 ** 3;
+
+// A typecheck or test step can take several cores and gigabytes of memory, so
+// allow one step per two cores and per 6 GiB of available memory.
+export const defaultConcurrency = (cores: number, availableBytes: number) =>
+  Math.max(1, Math.min(Math.floor(cores / 2), Math.floor(availableBytes / (6 * GiB))));
+
+export type Outcome = "pass" | "FAIL" | "TIMEOUT";
+
+export interface Step<R> {
+  readonly name: string;
+  readonly run: Effect.Effect<{ readonly ok: boolean; readonly output: string }, never, R>;
+  // Budget slots the step holds: one per worker it runs in parallel.
+  readonly weight?: number;
+  // Vitest runs started together race to rebuild node_modules/.vitest-cache (ENOTEMPTY).
+  readonly serial?: boolean;
+}
+
+// Interrupting a step at its timeout closes the scopes of the processes it
+// spawned, which kills each one's process group.
+export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
+  steps: ReadonlyArray<Step<R>>,
+  options: { readonly concurrency: number; readonly timeoutSeconds: number },
+) {
+  const budget = yield* Semaphore.make(options.concurrency);
+  const serial = yield* Semaphore.make(1);
+  return yield* Effect.forEach(
+    steps,
+    (step) => {
+      const timed = Effect.gen(function* () {
+        const started = yield* Clock.currentTimeMillis;
+        const result = yield* Effect.timeoutOption(step.run, `${options.timeoutSeconds} seconds`);
+        const seconds = ((yield* Clock.currentTimeMillis) - started) / 1000;
+        const outcome: Outcome = Option.match(result, {
+          onNone: () => "TIMEOUT",
+          onSome: ({ ok }) => (ok ? "pass" : "FAIL"),
+        });
+        const time =
+          outcome === "TIMEOUT"
+            ? `killed after ${options.timeoutSeconds}s`
+            : `${seconds.toFixed(1)}s`;
+        yield* Console.log(`\n> vp ${step.name}  ${outcome}  ${time}`);
+        const output = Option.getOrUndefined(result)?.output.trimEnd();
+        if (output) yield* Console.log(output);
+        return { name: step.name, outcome, time };
+      });
+      const limited = budget.withPermits(Math.min(step.weight ?? 1, options.concurrency))(timed);
+      return step.serial ? serial.withPermit(limited) : limited;
+    },
+    { concurrency: "unbounded" },
+  );
+});
+
+const CacheEntry = Schema.fromJsonString(
+  Schema.Struct({ key: Schema.String, summary: Schema.Array(Schema.String) }),
+);
+const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
+const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
+const decodeRootPackageJson = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
+);
+
 const CODE = /\.[cm]?[jt]sx?$/;
-
-// quotePath=false keeps non-ASCII paths as real paths instead of quoted escapes.
-const git = (...args: Array<string>) =>
-  NodeChildProcess.execFileSync("git", ["-c", "core.quotePath=false", ...args], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })
-    .split("\n")
-    .filter(Boolean);
-
-const ref = process.argv[2] ?? "origin/main";
-const mergeBase = NodeChildProcess.spawnSync("git", ["merge-base", "HEAD", ref], {
-  cwd: root,
-  encoding: "utf8",
-});
-if (mergeBase.status !== 0) {
-  console.error(
-    `check:changed: no merge base with ${ref}. Run \`git fetch origin\` or pass a ref.`,
-  );
-  process.exit(1);
-}
-const base = mergeBase.stdout.trim();
-// --no-renames lists a rename as its old and new path, as CI does.
-const untracked = git("ls-files", "--others", "--exclude-standard");
-const files = [
-  ...new Set([...git("diff", "--name-only", "--no-renames", base, "--"), ...untracked]),
-].sort();
-
-if (files.length === 0) {
-  console.log(`check:changed: no changes since ${base.slice(0, 12)}.`);
-  process.exit(0);
-}
-console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
-
-// Ignored generated sources, declarations, env files, and install state affect check results.
-// Include them in the key, but skip large ignored folders that no check reads.
-// Recompute after a passing run so edits made during it are never cached as passing.
-const inputKey = () => {
-  const hash = NodeCrypto.createHash("sha256");
-  // CI changes test behavior (vite.config.ts rejects .only under CI).
-  hash.update(`${process.version}\0${base}\0${process.env.CI ?? ""}\0`);
-  hash.update(
-    NodeChildProcess.execFileSync(
-      "git",
-      ["diff", "--binary", "--no-renames", "--no-ext-diff", "--no-textconv", base, "--"],
-      { cwd: root, maxBuffer: 1024 * 1024 * 1024 },
-    ),
-  );
-  const ignored = git(
-    "ls-files",
-    "--others",
-    "--ignored",
-    "--exclude-standard",
-    "--",
-    ":(glob)**/.generated/**",
-    ":(glob)**/.astro/**",
-    ":(glob)**/*.d.ts",
-    ":(glob)**/.env*",
-    ":(exclude,glob)**/node_modules/**",
-  );
-  for (const file of [
-    // Raw bytes of changed files too: .gitattributes normalizes line endings in
-    // the diff, but the formatter reads the file as it is on disk.
-    ...git("diff", "--name-only", "--no-renames", base, "--"),
-    ...git("ls-files", "--others", "--exclude-standard"),
-    ...ignored,
-    "node_modules/.modules.yaml",
-    "node_modules/.pnpm/lock.yaml",
-  ]) {
-    hash.update(`\0${file}\0`);
-    const path = NodePath.join(root, file);
-    // Untracked nested repositories are listed as directories.
-    if (NodeFS.statSync(path, { throwIfNoEntry: false })?.isFile()) {
-      hash.update(NodeFS.readFileSync(path));
-    }
-  }
-  return hash.digest("hex");
-};
-const key = inputKey();
-const cachePath = NodePath.join(root, "node_modules/.cache/check-changed.json");
-// A missing or unreadable cache is a miss, never a failure.
-const readCache = () => {
-  try {
-    return JSON.parse(NodeFS.readFileSync(cachePath, "utf8")) as {
-      key: string;
-      summary: Array<string>;
-    };
-  } catch {
-    return undefined;
-  }
-};
-const cached = readCache();
-if (cached?.key === key) {
-  console.log("Nothing changed since the last passing run.\n");
-  for (const line of cached.summary) console.log(line);
-  process.exit(0);
-}
-
-const present = files.filter((file) => NodeFS.existsSync(NodePath.join(root, file)));
-const code = present.filter((file) => CODE.test(file));
-const packages = readWorkspace();
-const { affected, outputs } = decide(files, packages, false);
-
-// Changed test files, and the test files beside a changed source file
-// (foo.ts -> foo.test.ts, foo.browser.test.tsx). Vitest's import-graph
-// `related` reaches most of a package: one leaf server file pulled in 252 of
-// 406 server test files and took 7 minutes. CI runs the rest.
 const TEST = /\.test\.[cm]?[jt]sx?$/;
-const tests = new Set(code.filter((file) => TEST.test(file)));
-for (const file of code) {
-  const dir = NodePath.dirname(file);
-  const prefix = `${NodePath.basename(file).replace(CODE, "")}.`;
-  for (const entry of NodeFS.readdirSync(NodePath.join(root, dir))) {
-    if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(NodePath.join(dir, entry));
-  }
-}
-// It reads files other than the ones beside it, so no changed file selects it.
-if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
-
-// React Compiler coverage compiles every client source file, so run only the
-// changed files' cases, in one extra step: a -t filter in the main test step
-// would drop every other test. An app is skipped when the main step already
-// runs its coverage file unfiltered. File filters mirror each coverage test.
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const compilerApps = [
-  {
-    test: "apps/web/src/reactCompilerCoverage.test.ts",
-    root: "apps/web/src/",
-    // Test names keep the repo-relative path.
-    name: (file: string) => file,
-    compiled: (file: string) =>
-      /\.tsx?$/.test(file) && !/\.(test|browser)\.tsx?$/.test(file) && !file.endsWith(".gen.ts"),
-    // Web has only per-file cases.
-    always: [],
-  },
-  {
-    test: "apps/mobile/src/reactCompilerCoverage.test.ts",
-    root: "apps/mobile/src/",
-    name: (file: string) => file.slice("apps/mobile/".length),
-    compiled: (file: string) => /\.tsx?$/.test(file) && !/\.(test\.tsx?|d\.ts)$/.test(file),
-    // The Metro, cache, and stale-allowlist cases check more than one file, deletions included.
-    always: ["^(?!.*compiles )"],
-  },
-].flatMap(({ test, root: appRoot, name, compiled, always }) => {
-  const changed = files.filter((file) => file.startsWith(appRoot) && compiled(file));
-  if (changed.length === 0 || tests.has(test)) return [];
-  const names = changed
-    .filter((file) => present.includes(file))
-    .map((file) => `compiles ${escapeRegExp(name(file))}$`);
-  const pattern = [...names, ...always];
-  return pattern.length > 0 ? [{ test, names, pattern }] : [];
-});
-const compilerCoverage = compilerApps.length > 0 && {
-  name: `react compiler (${compilerApps.reduce((count, app) => count + app.names.length, 0)} files)`,
-  args: [
-    "test",
-    "run",
-    ...compilerApps.map((app) => app.test),
-    "-t",
-    compilerApps.flatMap((app) => app.pattern).join("|"),
-  ],
-};
 
-// knip:check cannot be scoped to a package. Any code change can leave a file,
-// export, or dependency unused (removing the last import of a helper does), so
-// it runs whenever code or a manifest changes.
-const runKnip = files.some(
-  (file) => CODE.test(file) || NodePath.basename(file) === "package.json" || file === "knip.jsonc",
-);
-// CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
-// do not depend on each other, so they run side by side here.
-const knipCheck: string = JSON.parse(
-  NodeFS.readFileSync(NodePath.join(root, "package.json"), "utf8"),
-).scripts["knip:check"];
-const knipPasses = knipCheck.split(" && ").map((command, index, all) => {
-  const [bin, ...args] = command.trim().split(/\s+/);
-  if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
-    throw new Error(`check:changed cannot split knip:check: ${command}`);
+// A flag wins over its environment variable; either must be a positive integer.
+const override = Effect.fn("checkChanged.override")(function* (
+  flagName: string,
+  flag: Option.Option<number>,
+  envName: string,
+) {
+  const [name, value] = Option.isSome(flag)
+    ? [`--${flagName}`, flag]
+    : [envName, yield* Config.option(Config.Int(envName))];
+  if (Option.isSome(value) && value.value < 1) {
+    return yield* Effect.fail(`check:changed: ${name} must be a positive integer.`);
   }
-  return { name: `knip ${index + 1}/${all.length}`, args: ["exec", "knip", ...args] };
+  return value;
 });
 
-// A version bump can leave a patch unused, causing pnpm to reject the install
-// with ERR_PNPM_UNUSED_PATCH. Check it here as Release Smoke does in CI.
-const runPatchCheck = files.some(
-  (file) =>
-    file === "pnpm-workspace.yaml" ||
-    file === "pnpm-lock.yaml" ||
-    file === ".pnpmfile.cjs" ||
-    file.startsWith("patches/") ||
-    file.startsWith("apps/mobile/deps/") ||
-    NodePath.basename(file) === "package.json",
-);
+const checkChanged = Effect.fn("checkChanged")(function* (input: {
+  readonly ref: string;
+  readonly concurrency: Option.Option<number>;
+  readonly timeout: Option.Option<number>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const root = yield* path.fromFileUrl(new URL("..", import.meta.url));
+  const inRoot = (file: string) => path.join(root, file);
 
-// Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
-// Copy mobile modules too: they are file: dependencies, not workspace packages.
-// Cached registry metadata limits this to patches stranded by local changes, not registry drift.
-const checkPatches = async () => {
-  const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
-  // The signal handlers exit before this function's finally can run.
-  const cleanup = () => NodeFS.rmSync(temp, { recursive: true, force: true });
-  process.once("exit", cleanup);
-  try {
-    const copy = (relative: string) => {
-      const dest = NodePath.join(temp, relative);
-      NodeFS.mkdirSync(NodePath.dirname(dest), { recursive: true });
-      NodeFS.cpSync(NodePath.join(root, relative), dest, { recursive: true });
-    };
-    copy("package.json");
-    copy("pnpm-workspace.yaml");
-    for (const pkg of packages) copy(`${pkg.dir}/package.json`);
-    const modulesDir = NodePath.join(root, "apps/mobile/modules");
-    if (NodeFS.existsSync(modulesDir)) {
-      for (const entry of NodeFS.readdirSync(modulesDir)) {
-        const manifest = `apps/mobile/modules/${entry}/package.json`;
-        if (NodeFS.existsSync(NodePath.join(root, manifest))) copy(manifest);
+  // macOS counts its file cache as used, so available memory there would
+  // starve a large Mac. Elsewhere availableMemory() honors a cgroup limit.
+  const platform = yield* HostProcess.Platform;
+  const concurrency = Option.getOrElse(
+    yield* override("concurrency", input.concurrency, "CHECK_CHANGED_CONCURRENCY"),
+    () =>
+      defaultConcurrency(
+        NodeOS.availableParallelism(),
+        platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
+      ),
+  );
+  const timeoutSeconds = Option.getOrElse(
+    yield* override("timeout", input.timeout, "CHECK_CHANGED_TIMEOUT"),
+    () => 900,
+  );
+
+  // quotePath=false keeps non-ASCII paths as real paths instead of quoted escapes.
+  const gitCommand = (args: ReadonlyArray<string>) =>
+    ChildProcess.make("git", ["-c", "core.quotePath=false", ...args], { cwd: root });
+  const git = (...args: Array<string>) =>
+    spawner
+      .string(gitCommand(args))
+      .pipe(Effect.map((output) => output.split("\n").filter(Boolean)));
+
+  const mergeBase = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(gitCommand(["merge-base", "HEAD", input.ref]));
+      const [output, exitCode] = yield* Effect.all(
+        [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],
+        { concurrency: 2 },
+      );
+      return exitCode === 0 ? Option.some(output.trim()) : Option.none();
+    }),
+  );
+  if (Option.isNone(mergeBase)) {
+    return yield* Effect.fail(
+      `check:changed: no merge base with ${input.ref}. Run \`git fetch origin\` or pass a ref.`,
+    );
+  }
+  const base = mergeBase.value;
+  // --no-renames lists a rename as its old and new path, as CI does.
+  const changedFiles = git("diff", "--name-only", "--no-renames", base, "--");
+  const untrackedFiles = git("ls-files", "--others", "--exclude-standard");
+  const files = [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
+
+  if (files.length === 0) {
+    yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)}.`);
+    return true;
+  }
+  yield* Console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
+
+  // Ignored generated sources, declarations, env files, and install state affect check results.
+  // Include them in the key, but skip large ignored folders that no check reads.
+  // Recompute after a passing run so edits made during it are never cached as passing.
+  const ci = Option.getOrElse(yield* Config.option(Config.String("CI")), () => "");
+  const inputKey = Effect.gen(function* () {
+    const hash = NodeCrypto.createHash("sha256");
+    // CI changes test behavior (vite.config.ts rejects .only under CI).
+    hash.update(`${process.version}\0${base}\0${ci}\0`);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          gitCommand([
+            "diff",
+            "--binary",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            base,
+            "--",
+          ]),
+        );
+        yield* Stream.runForEach(handle.stdout, (chunk) => Effect.sync(() => hash.update(chunk)));
+      }),
+    );
+    const ignored = yield* git(
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--",
+      ":(glob)**/.generated/**",
+      ":(glob)**/.astro/**",
+      ":(glob)**/*.d.ts",
+      ":(glob)**/.env*",
+      ":(exclude,glob)**/node_modules/**",
+    );
+    for (const file of [
+      // Raw bytes of changed files too: .gitattributes normalizes line endings in
+      // the diff, but the formatter reads the file as it is on disk.
+      ...(yield* changedFiles),
+      ...(yield* untrackedFiles),
+      ...ignored,
+      "node_modules/.modules.yaml",
+      "node_modules/.pnpm/lock.yaml",
+    ]) {
+      hash.update(`\0${file}\0`);
+      // Untracked nested repositories are listed as directories.
+      const info = yield* Effect.option(fs.stat(inRoot(file)));
+      if (Option.isSome(info) && info.value.type === "File") {
+        hash.update(yield* fs.readFile(inRoot(file)));
       }
     }
-    for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
-      if (NodeFS.existsSync(NodePath.join(root, extra))) copy(extra);
-    }
-    const result = await spawnStep(["install", "--lockfile-only", "--ignore-scripts"], temp);
-    if (result.outcome !== "FAIL" || !result.output.includes("ERR_PNPM_UNUSED_PATCH"))
-      return result;
-    const hint =
-      "Unused dependency patches: remove each patch named above from " +
-      "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
-      "update it to the version the install resolves, " +
-      "or pin the dependency that pulls it in to the patched version.\n";
-    return { ...result, output: Buffer.concat([result.output, Buffer.from(hint)]) };
-  } finally {
-    process.removeListener("exit", cleanup);
-    cleanup();
-  }
-};
-
-// CI's Lint job checks that generated GraphQL operations match their sources.
-const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
-  files.some((file) => file.startsWith(`${dir}/`)),
-);
-
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script has no Effect runtime.
-const platform = process.platform;
-// macOS
-// counts its file cache as used, so available memory there would starve a large
-// Mac. Elsewhere availableMemory() also honors a container's cgroup limit.
-const concurrency =
-  positiveInteger(process.env.CHECK_CHANGED_CONCURRENCY) ??
-  defaultConcurrency(
-    NodeOS.availableParallelism(),
-    platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
-  );
-const timeoutSeconds = positiveInteger(process.env.CHECK_CHANGED_TIMEOUT) ?? 900;
-
-const typecheckWorkers = Math.min(concurrency, affected.length);
-const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
-const steps = [
-  runPatchCheck && { name: "unused patches", run: checkPatches },
-  present.length > 0 && {
-    name: "format",
-    args: ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present],
-  },
-  code.length > 0 && { name: "lint", args: ["lint", ...code] },
-  ...(runKnip ? knipPasses : []),
-  ...graphql.map((dir) => ({
-    name: `graphql (${dir})`,
-    args: ["run", "--filter", `./${dir}`, "generate", "--check"],
-  })),
-  affected.length > 0 && {
-    name: `typecheck (${affected.length} packages)`,
-    // Each parallel package typecheck takes a slot of the step budget.
-    weight: typecheckWorkers,
-    // `tsc --noEmit` writes nothing another package reads, so dependency order
-    // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
-    args: [
-      "run",
-      "--cache",
-      "--parallel",
-      "--concurrency-limit",
-      String(typecheckWorkers),
-      ...filters(affected),
-      "typecheck",
-    ],
-  },
-  // From the repo root, the root vite.config.ts hands each file to its package's config.
-  tests.size > 0 && {
-    name: `test (${tests.size} files)`,
-    args: ["test", "run", "--passWithNoTests", ...tests],
-  },
-  compilerCoverage,
-].filter((step) => step !== false);
-
-// Output is piped, so keep the colors a terminal would get.
-const env = process.stdout.isTTY ? { ...process.env, FORCE_COLOR: "1" } : process.env;
-// Each command leads its own process group so a timeout can kill the workers it
-// started. That also hides Ctrl-C from them, so kill them on it. Windows has no
-// process groups; taskkill /t walks the tree instead.
-const windows = platform === "win32";
-const running = new Set<NodeChildProcess.ChildProcess>();
-const killTree = (child: NodeChildProcess.ChildProcess) => {
-  if (child.pid === undefined) return;
-  try {
-    if (windows) {
-      NodeChildProcess.spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
-    } else {
-      process.kill(-child.pid, "SIGKILL");
-    }
-  } catch {
-    // Already gone.
-  }
-};
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    for (const child of running) killTree(child);
-    process.exit(signal === "SIGINT" ? 130 : 143);
+    return hash.digest("hex");
   });
-}
-const spawnStep = async (args: ReadonlyArray<string>, cwd = root) => {
-  const child = NodeChildProcess.spawn("vp", args, { cwd, env, detached: !windows });
-  running.add(child);
-  try {
-    return await awaitStep(child, timeoutSeconds * 1000, () => killTree(child));
-  } finally {
-    running.delete(child);
+  const key = yield* inputKey;
+  const cachePath = inRoot("node_modules/.cache/check-changed.json");
+  // A missing or unreadable cache is a miss, never a failure.
+  const cached = yield* fs
+    .readFileString(cachePath)
+    .pipe(Effect.flatMap(decodeCacheEntry), Effect.option);
+  if (Option.isSome(cached) && cached.value.key === key) {
+    yield* Console.log("Nothing changed since the last passing run.\n");
+    for (const line of cached.value.summary) yield* Console.log(line);
+    return true;
   }
-};
-const runStep = async (step: (typeof steps)[number]) => {
-  const started = performance.now();
-  const finish = (outcome: StepOutcome, output?: Buffer) => {
-    const time =
-      outcome === "TIMEOUT"
-        ? `killed after ${timeoutSeconds}s`
-        : `${((performance.now() - started) / 1000).toFixed(1)}s`;
-    console.log(`\n> vp ${step.name}  ${outcome}  ${time}`);
-    if (output) process.stdout.write(output);
-    return { name: step.name, outcome, time };
-  };
-  const { outcome, output } = await ("run" in step ? step.run() : spawnStep(step.args));
-  return finish(outcome, output);
-};
 
-const limit = createLimiter(concurrency);
+  const present = yield* Effect.filter(files, (file) => fs.exists(inRoot(file)));
+  const code = present.filter((file) => CODE.test(file));
+  const packages = readWorkspace();
+  const { affected, outputs } = decide(files, packages, false);
 
-// Vitest runs started together race to rebuild node_modules/.vitest-cache after
-// an install (ENOTEMPTY), so they run one after another.
-let previousVitest: Promise<unknown> = Promise.resolve();
-const results = await Promise.all(
-  steps.map((step) => {
-    const weight = "weight" in step ? step.weight : 1;
-    if (!("args" in step) || step.args[0] !== "test") return limit(() => runStep(step), weight);
-    const result = previousVitest.then(() => limit(() => runStep(step)));
-    previousVitest = result;
-    return result;
-  }),
-);
+  // Changed test files, and the test files beside a changed source file
+  // (foo.ts -> foo.test.ts, foo.browser.test.tsx). Vitest's import-graph
+  // `related` reaches most of a package: one leaf server file pulled in 252 of
+  // 406 server test files and took 7 minutes. CI runs the rest.
+  const tests = new Set(code.filter((file) => TEST.test(file)));
+  for (const file of code) {
+    const dir = path.dirname(file);
+    const prefix = `${path.basename(file).replace(CODE, "")}.`;
+    for (const entry of yield* fs.readDirectory(inRoot(dir))) {
+      if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(path.join(dir, entry));
+    }
+  }
+  // It reads files other than the ones beside it, so no changed file selects it.
+  if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
 
-const summary = ["check:changed summary"];
-for (const result of results) {
-  summary.push(`  ${result.outcome}  ${result.name}  ${result.time}`);
-}
-if (results.some((result) => result.outcome === "TIMEOUT")) {
-  summary.push(
-    `  TIMEOUT: ran past CHECK_CHANGED_TIMEOUT=${timeoutSeconds}s and was killed; this is not ` +
-      "a check failure. Raise CHECK_CHANGED_TIMEOUT or lower CHECK_CHANGED_CONCURRENCY.",
+  // React Compiler coverage compiles every client source file, so run only the
+  // changed files' cases, in one extra step: a -t filter in the main test step
+  // would drop every other test. An app is skipped when the main step already
+  // runs its coverage file unfiltered. File filters mirror each coverage test.
+  const compilerApps = [
+    {
+      test: "apps/web/src/reactCompilerCoverage.test.ts",
+      root: "apps/web/src/",
+      // Test names keep the repo-relative path.
+      name: (file: string) => file,
+      compiled: (file: string) =>
+        /\.tsx?$/.test(file) && !/\.(test|browser)\.tsx?$/.test(file) && !file.endsWith(".gen.ts"),
+      // Web has only per-file cases.
+      always: [],
+    },
+    {
+      test: "apps/mobile/src/reactCompilerCoverage.test.ts",
+      root: "apps/mobile/src/",
+      name: (file: string) => file.slice("apps/mobile/".length),
+      compiled: (file: string) => /\.tsx?$/.test(file) && !/\.(test\.tsx?|d\.ts)$/.test(file),
+      // The Metro, cache, and stale-allowlist cases check more than one file, deletions included.
+      always: ["^(?!.*compiles )"],
+    },
+  ].flatMap(({ test, root: appRoot, name, compiled, always }) => {
+    const changed = files.filter((file) => file.startsWith(appRoot) && compiled(file));
+    if (changed.length === 0 || tests.has(test)) return [];
+    const names = changed
+      .filter((file) => present.includes(file))
+      .map((file) => `compiles ${escapeRegExp(name(file))}$`);
+    const pattern = [...names, ...always];
+    return pattern.length > 0 ? [{ test, names, pattern }] : [];
+  });
+
+  // knip:check cannot be scoped to a package. Any code change can leave a file,
+  // export, or dependency unused (removing the last import of a helper does), so
+  // it runs whenever code or a manifest changes.
+  const runKnip = files.some(
+    (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
   );
-}
-const ciOnly = Object.entries({
-  "full test suites": outputs.test || outputs.test_web || outputs.test_server,
-  build: outputs.build,
-  rust: outputs.rust,
-  "mobile native lint": outputs.mobile_native,
-  "release smoke": outputs.release_smoke,
-}).flatMap(([job, runs]) => (runs ? [job] : []));
-if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
-if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
-if (!runKnip) summary.push("  knip skipped: no code or manifest changed");
-console.log(`\n${summary.join("\n")}`);
-// exitCode, not exit(): piped stdout is asynchronous on macOS, and exit()
-// would cut off a failing step's output.
-if (results.some((result) => result.outcome !== "pass")) {
-  process.exitCode = 1;
-} else if (inputKey() !== key) {
-  console.log("  pass not cached: files changed during the run");
-} else {
-  try {
-    // Write then rename, so a concurrent run never reads half a file.
-    const temp = `${cachePath}.${process.pid}`;
-    NodeFS.mkdirSync(NodePath.dirname(cachePath), { recursive: true });
-    NodeFS.writeFileSync(temp, JSON.stringify({ key, summary }));
-    NodeFS.renameSync(temp, cachePath);
-  } catch (error) {
-    console.warn(`  pass not cached: ${error instanceof Error ? error.message : String(error)}`);
+  // CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
+  // do not depend on each other, so they run side by side here.
+  const rootPackage = yield* fs
+    .readFileString(inRoot("package.json"))
+    .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
+  const knipCheck = rootPackage.scripts["knip:check"];
+  const knipPasses: Array<Array<string>> = [];
+  for (const command of knipCheck.split(" && ")) {
+    const [bin, ...args] = command.trim().split(/\s+/);
+    if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
+      return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
+    }
+    knipPasses.push(["exec", "knip", ...args]);
   }
+
+  // A version bump can leave a patch unused, causing pnpm to reject the install
+  // with ERR_PNPM_UNUSED_PATCH. Check it here as Release Smoke does in CI.
+  const runPatchCheck = files.some(
+    (file) =>
+      file === "pnpm-workspace.yaml" ||
+      file === "pnpm-lock.yaml" ||
+      file === ".pnpmfile.cjs" ||
+      file.startsWith("patches/") ||
+      file.startsWith("apps/mobile/deps/") ||
+      path.basename(file) === "package.json",
+  );
+
+  // Output is piped, so keep the colors a terminal would get.
+  const env = process.stdout.isTTY ? { FORCE_COLOR: "1" } : {};
+  const vp = (args: ReadonlyArray<string>, cwd = root) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("vp", args, { cwd, env, extendEnv: true, forceKillAfter: "5 seconds" }),
+        );
+        const [output, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(handle.all)), handle.exitCode],
+          { concurrency: 2 },
+        );
+        return { ok: exitCode === 0, output };
+      }),
+    ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
+
+  // Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
+  // Copy mobile modules too: they are file: dependencies, not workspace packages.
+  // Cached registry metadata limits this to patches stranded by local changes, not registry drift.
+  const checkPatches = Effect.scoped(
+    Effect.gen(function* () {
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-patch-check-" });
+      const copy = Effect.fnUntraced(function* (relative: string) {
+        const dest = path.join(temp, relative);
+        yield* fs.makeDirectory(path.dirname(dest), { recursive: true });
+        yield* fs.copy(inRoot(relative), dest);
+      });
+      yield* copy("package.json");
+      yield* copy("pnpm-workspace.yaml");
+      for (const pkg of packages) yield* copy(`${pkg.dir}/package.json`);
+      const modulesDir = "apps/mobile/modules";
+      if (yield* fs.exists(inRoot(modulesDir))) {
+        for (const entry of yield* fs.readDirectory(inRoot(modulesDir))) {
+          const manifest = `${modulesDir}/${entry}/package.json`;
+          if (yield* fs.exists(inRoot(manifest))) yield* copy(manifest);
+        }
+      }
+      for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+        if (yield* fs.exists(inRoot(extra))) yield* copy(extra);
+      }
+      const result = yield* vp(["install", "--lockfile-only", "--ignore-scripts"], temp);
+      if (result.ok || !result.output.includes("ERR_PNPM_UNUSED_PATCH")) return result;
+      return {
+        ok: false,
+        output:
+          `${result.output}\nUnused dependency patches: remove each patch named above from ` +
+          "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
+          "update it to the version the install resolves, " +
+          "or pin the dependency that pulls it in to the patched version.",
+      };
+    }),
+  ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
+
+  // CI's Lint job checks that generated GraphQL operations match their sources.
+  const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
+    files.some((file) => file.startsWith(`${dir}/`)),
+  );
+  const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
+  const typecheckWorkers = Math.min(concurrency, affected.length);
+  const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
+  const compilerFiles = compilerApps.reduce((count, app) => count + app.names.length, 0);
+
+  const steps: Array<Step<never>> = [
+    ...(runPatchCheck ? [{ name: "unused patches", run: checkPatches }] : []),
+    ...(present.length > 0
+      ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
+      : []),
+    ...(code.length > 0 ? [command("lint", ["lint", ...code])] : []),
+    ...(runKnip
+      ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
+      : []),
+    ...graphql.map((dir) =>
+      command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
+    ),
+    ...(affected.length > 0
+      ? [
+          {
+            // `tsc --noEmit` writes nothing another package reads, so dependency order
+            // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
+            ...command(`typecheck (${affected.length} packages)`, [
+              "run",
+              "--cache",
+              "--parallel",
+              "--concurrency-limit",
+              String(typecheckWorkers),
+              ...filters(affected),
+              "typecheck",
+            ]),
+            weight: typecheckWorkers,
+          },
+        ]
+      : []),
+    // From the repo root, the root vite.config.ts hands each file to its package's config.
+    ...(tests.size > 0
+      ? [
+          {
+            ...command(`test (${tests.size} files)`, [
+              "test",
+              "run",
+              "--passWithNoTests",
+              ...tests,
+            ]),
+            serial: true,
+          },
+        ]
+      : []),
+    ...(compilerApps.length > 0
+      ? [
+          {
+            ...command(`react compiler (${compilerFiles} files)`, [
+              "test",
+              "run",
+              ...compilerApps.map((app) => app.test),
+              "-t",
+              compilerApps.flatMap((app) => app.pattern).join("|"),
+            ]),
+            serial: true,
+          },
+        ]
+      : []),
+  ];
+
+  const results = yield* runSteps(steps, { concurrency, timeoutSeconds });
+
+  const summary = ["check:changed summary"];
+  for (const result of results) {
+    summary.push(`  ${result.outcome}  ${result.name}  ${result.time}`);
+  }
+  if (results.some((result) => result.outcome === "TIMEOUT")) {
+    summary.push(
+      `  TIMEOUT: ran past ${timeoutSeconds}s and was killed; this is not a check failure. ` +
+        "Raise --timeout or lower --concurrency.",
+    );
+  }
+  const ciOnly = Object.entries({
+    "full test suites": outputs.test || outputs.test_web || outputs.test_server,
+    build: outputs.build,
+    rust: outputs.rust,
+    "mobile native lint": outputs.mobile_native,
+    "release smoke": outputs.release_smoke,
+  }).flatMap(([job, runs]) => (runs ? [job] : []));
+  if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
+  if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
+  if (!runKnip) summary.push("  knip skipped: no code or manifest changed");
+  yield* Console.log(`\n${summary.join("\n")}`);
+
+  if (results.some((result) => result.outcome !== "pass")) return false;
+  if ((yield* inputKey) !== key) {
+    yield* Console.log("  pass not cached: files changed during the run");
+    return true;
+  }
+  // Write then rename, so a concurrent run never reads half a file.
+  const temp = `${cachePath}.${process.pid}`;
+  yield* Effect.gen(function* () {
+    yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
+    yield* fs.writeFileString(temp, yield* encodeCacheEntry({ key, summary }));
+    yield* fs.rename(temp, cachePath);
+  }).pipe(Effect.catch((error) => Console.warn(`  pass not cached: ${error.message}`)));
+  return true;
+});
+
+export const checkChangedCommand = Command.make(
+  "check-changed",
+  {
+    ref: Argument.String("ref").pipe(
+      Argument.withDescription("Compare against the merge base with this ref."),
+      Argument.withDefault("origin/main"),
+    ),
+    concurrency: Flag.Int("concurrency").pipe(
+      Flag.withDescription(
+        "Budget of parallel steps and typecheck workers; also CHECK_CHANGED_CONCURRENCY. Defaults to one per two cores and per 6 GiB of available memory.",
+      ),
+      Flag.optional,
+    ),
+    timeout: Flag.Int("timeout").pipe(
+      Flag.withDescription(
+        "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
+      ),
+      Flag.optional,
+    ),
+  },
+  (input) =>
+    checkChanged(input).pipe(
+      Effect.catch((message) => Console.error(message).pipe(Effect.as(false))),
+      // exitCode, not a failed exit: runMain calls process.exit() on failure, and
+      // piped stdout is asynchronous on macOS, so it would cut off step output.
+      Effect.flatMap((ok) =>
+        Effect.sync(() => {
+          if (!ok) process.exitCode = 1;
+        }),
+      ),
+    ),
+).pipe(Command.withDescription("Run CI's fast checks for this branch's changes."));
+
+if (import.meta.main) {
+  Command.run(checkChangedCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
