@@ -50,6 +50,7 @@ import {
   copilotClientProcess,
   copilotSdkCliCandidates,
   descendantPids,
+  type ProcessIdentity,
   stopProcessTree,
   type CopilotSdkClient,
   type CopilotSdkClientOptions,
@@ -1819,13 +1820,15 @@ describe("CopilotSdkAdapterV2", () => {
   it("freezes every generation of Copilot's processes before killing them", async () => {
     const signals: Array<string> = [];
     // Each listing is a `pid ppid` table, or an Error for a listing that fails. The last one
-    // repeats once the queue runs out. Parents come from the latest table unless reassigned.
+    // repeats once the queue runs out. Identities come from the latest table, with start time
+    // "t0", unless a test replaces one; `refusing` pids reject every signal.
     const stop = (
       listings: Array<string | Error>,
       options: {
         readonly onList?: (count: number) => void;
         readonly rootExited?: () => boolean;
-        readonly reassigned?: ReadonlyMap<number, number>;
+        readonly replaced?: Map<number, ProcessIdentity>;
+        readonly refusing?: ReadonlySet<number>;
       } = {},
     ) => {
       let current = "";
@@ -1840,13 +1843,19 @@ describe("CopilotSdkAdapterV2", () => {
           current = next;
           return next;
         },
-        parentOf: async (pid) =>
-          options.reassigned?.get(pid) ??
-          current
+        identify: async (pid) => {
+          const replaced = options.replaced?.get(pid);
+          if (replaced) return replaced;
+          const parent = current
             .split("\n")
             .map((line) => line.trim().split(/\s+/).map(Number))
-            .find(([listed]) => listed === pid)?.[1],
-        signal: (pid, name) => void signals.push(`${name} ${pid}`),
+            .find(([listed]) => listed === pid)?.[1];
+          return parent === undefined ? undefined : { parent, started: "t0" };
+        },
+        signal: (pid, name) => {
+          signals.push(`${name} ${pid}`);
+          return !options.refusing?.has(pid);
+        },
         selfPid: 1,
       });
     };
@@ -1881,10 +1890,30 @@ describe("CopilotSdkAdapterV2", () => {
     // parent shows that, so it is never stopped, even when the next listing fails.
     signals.length = 0;
     const reused = await stop(["101 100", new Error("ps timed out")], {
-      reassigned: new Map([[101, 999]]),
+      replaced: new Map([[101, { parent: 999, started: "t1" }]]),
     });
     assert.include(reused, "ps timed out");
     assert.deepStrictEqual(signals, ["SIGSTOP 100"]);
+
+    // Something else killed the frozen 101 and its pid was reused while the CLI exited. The
+    // start time no longer matches, so the new process is not killed.
+    signals.length = 0;
+    const replaced = new Map<number, ProcessIdentity>();
+    const killedElsewhere = await stop(["101 100", "101 100"], {
+      onList: (count) => {
+        if (count > 1) replaced.set(101, { parent: 999, started: "t1" });
+      },
+      rootExited: () => replaced.size > 0,
+      replaced,
+    });
+    assert.include(killedElsewhere, "exited");
+    assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101"]);
+
+    // A process T3 may not signal, such as one under sudo, is reported, not counted as stopped.
+    signals.length = 0;
+    const refused = await stop(["101 100\n102 100"], { refusing: new Set([102]) });
+    assert.include(refused, "102 refused to stop");
+    assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101", "SIGSTOP 102", "SIGKILL 101"]);
   });
 
   it("lists the processes under Copilot's CLI from a ps listing", () => {
