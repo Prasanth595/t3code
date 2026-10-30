@@ -8,10 +8,12 @@ import type {
   PullRequestFilesViewedResult,
   PullRequestRef,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  subscribePullRequestFilesViewedAnswers,
+} from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
 import {
@@ -36,7 +38,7 @@ type FilesViewedBatch = ReadonlyArray<{
 
 export interface FilesViewedStoreDeps {
   readonly flushDelayMs: number;
-  /** Calls `onAnswer` with the current answer, then after each completed read. */
+  /** Calls `onAnswer` only after completed server reads, excluding persisted values. */
   readonly subscribeAnswers: (
     target: FilesViewedTarget,
     onAnswer: (answer: PullRequestFilesViewedResult | null) => void,
@@ -230,14 +232,8 @@ const filesViewedAtom = ({ environmentId, reference }: FilesViewedTarget) =>
 
 const filesViewedStore = createFilesViewedStore({
   flushDelayMs: 400,
-  subscribeAnswers: (target, onAnswer) =>
-    appAtomRegistry.subscribe(
-      filesViewedAtom(target),
-      (result) => {
-        if (AsyncResult.isSuccess(result) && !result.waiting) onAnswer(result.value);
-      },
-      { immediate: true },
-    ),
+  subscribeAnswers: ({ environmentId, reference }, onAnswer) =>
+    subscribePullRequestFilesViewedAnswers({ environmentId, input: reference }, onAnswer),
   send: ({ environmentId, reference }, files) =>
     runAtomCommand(
       appAtomRegistry,
