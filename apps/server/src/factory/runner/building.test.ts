@@ -231,9 +231,8 @@ interface World {
   textCheck: TextCheck | GitHubError;
   status: ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
-  /** The commit the session's worktree has checked out, or the failed read of it. */
-  /** What each worktree has checked out, by path, or the failed read of it; a path missing here fails. */
-  checkouts: Record<string, Checkout | SessionsError>;
+  /** What each worktree has checked out, by path, null for none, or the failed read of it; a path missing here fails. */
+  checkouts: Record<string, Checkout | SessionsError | null>;
   /** A thread by id, in place of `thread`. */
   threads: Record<string, Thread | ThreadNotFoundError | SessionsError>;
   /** The next call of each method fails with this, once. */
@@ -476,7 +475,9 @@ const rigFor = (
     worktreeCheckout: (path) => {
       t3Call(`worktreeCheckout ${path}`);
       const answer =
-        world.checkouts[path] ?? new SessionsError({ operation: "worktree-head", cause: path });
+        path in world.checkouts
+          ? world.checkouts[path]!
+          : new SessionsError({ operation: "worktree-head", cause: path });
       return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
     },
   };
@@ -3503,6 +3504,17 @@ describe("advance: done on a branch the session made itself", () => {
     assert.ok(!linesOf(rig).some((line) => line.event === "branch_bound"));
   };
 
+  /** The pass failed before deciding: nothing written, nothing said, the worktree kept. */
+  const assertWaits = (rig: Rig, failure: { readonly _tag: string }, tag: string) => {
+    assert.strictEqual(failure._tag, tag);
+    assert.deepStrictEqual(linesOf(rig), [...STARTED]);
+    assert.deepStrictEqual(
+      rig.gh.filter((call) => call.startsWith("comment")),
+      [],
+    );
+    assert.ok(!rig.t3.some((call) => call.startsWith("removeWorktree")), rig.t3.join("\n"));
+  };
+
   it.effect("binds a pull request opened after the claim on the worktree's HEAD", () =>
     Effect.gen(function* () {
       const rig = ownBranchRig();
@@ -3668,31 +3680,40 @@ describe("advance: done on a branch the session made itself", () => {
         // Its ledger decides: its live worktree is not asked.
         assert.ok(!rig.t3.includes("thread thread-2"), what);
       }
+      // A run that finished, its file last written a week before the claim, still names them.
+      for (const events of [[launched(OWN)], [elsewhere, PR_OPENED]]) {
+        const rig = ownBranchRig();
+        seed(rig.dataDir, other, [...events, FINISHED_EVENT]);
+        const weekBefore = (T0 - 7 * 24 * 60 * MINUTE) / 1000;
+        NodeFS.utimesSync(runPath(rig.dataDir, other), weekBefore, weekBefore);
+        assertUnbound(rig, yield* advanceIn(rig));
+      }
     }),
   );
 
-  it.effect("is stuck when the runs cannot be listed", () =>
+  it.effect("waits a pass when the runs cannot be listed", () =>
     Effect.gen(function* () {
       const rig = ownBranchRig();
       // The run's own file stays open to write; only the listing fails.
       const runs = NodePath.dirname(runPath(rig.dataDir, rig.run));
       NodeFS.chmodSync(runs, 0o300);
       try {
-        assertUnbound(rig, yield* advanceIn(rig));
+        assertWaits(rig, yield* Effect.flip(advanceIn(rig)), "LedgerIoError");
       } finally {
         NodeFS.chmodSync(runs, 0o700);
       }
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
     }),
   );
 
-  it.effect("is stuck when another issue's ledger cannot be read", () =>
+  it.effect("waits a pass when another issue's ledger cannot be read", () =>
     Effect.gen(function* () {
       const rig = ownBranchRig();
       seed(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 }, STARTED);
       const path = runPath(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 });
       NodeFS.chmodSync(path, 0o000);
       try {
-        assertUnbound(rig, yield* advanceIn(rig));
+        assertWaits(rig, yield* Effect.flip(advanceIn(rig)), "LedgerIoError");
       } finally {
         NodeFS.chmodSync(path, 0o600);
       }
@@ -3755,7 +3776,7 @@ describe("advance: done on a branch the session made itself", () => {
     Effect.gen(function* () {
       // Issue 11's session made the branch and opened the pull request, and has not reported it:
       // its ledger names neither yet.
-      const holds: ReadonlyArray<[string, Thread, Checkout | SessionsError | undefined]> = [
+      const holds: ReadonlyArray<[string, Thread, Checkout]> = [
         [
           "its thread is on the branch",
           { worktreePath: "/t3/wt2", branch: OWN, archived: false },
@@ -3771,17 +3792,12 @@ describe("advance: done on a branch the session made itself", () => {
           { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false },
           { head: "abc123", branch: null },
         ],
-        [
-          "its checkout cannot be read",
-          { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false },
-          new SessionsError({ operation: "worktree-head", cause: "gone" }),
-        ],
       ];
       for (const [what, thread, checkout] of holds) {
         const rig = ownBranchRig();
         seed(rig.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
         rig.world.threads["thread-2"] = thread;
-        if (checkout !== undefined) rig.world.checkouts["/t3/wt2"] = checkout;
+        rig.world.checkouts["/t3/wt2"] = checkout;
         const outcome = yield* advanceIn(rig);
         assert.strictEqual(outcome.kind, "stuck", what);
       }
@@ -3803,8 +3819,15 @@ describe("advance: done on a branch the session made itself", () => {
       seed(gone.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
       gone.world.threads["thread-2"] = new ThreadNotFoundError({ threadId: "thread-2" });
       assert.strictEqual((yield* advanceIn(gone)).kind, "ready-for-gate");
-      const failed = ownBranchRig();
-      seed(failed.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      const noWorktree = ownBranchRig();
+      seed(noWorktree.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      noWorktree.world.threads["thread-2"] = {
+        worktreePath: "/t3/wt2",
+        branch: "t3code/xyz",
+        archived: false,
+      };
+      noWorktree.world.checkouts["/t3/wt2"] = null;
+      assert.strictEqual((yield* advanceIn(noWorktree)).kind, "ready-for-gate");
       for (const thread of [
         { worktreePath: "/t3/wt2", branch: OWN, archived: true },
         { worktreePath: null, branch: "t3code/xyz", archived: false },
@@ -3818,22 +3841,47 @@ describe("advance: done on a branch the session made itself", () => {
           JSON.stringify(thread),
         );
       }
-      failed.world.threads["thread-2"] = new SessionsError({
-        operation: "thread",
-        cause: "timeout",
-      });
-      assert.strictEqual((yield* advanceIn(failed)).kind, "stuck");
     }),
   );
 
-  it.effect("is stuck when the worktree's HEAD cannot be read", () =>
+  it.effect("waits a pass when another issue's thread or worktree cannot be read", () =>
     Effect.gen(function* () {
-      const rig = ownBranchRig();
-      rig.world.checkouts["/t3/wt"] = new SessionsError({
-        operation: "worktree-head",
-        cause: "not a git repo",
+      const live: Thread = { worktreePath: "/t3/wt2", branch: "t3code/xyz", archived: false };
+      const threadFails = ownBranchRig();
+      seed(threadFails.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      threadFails.world.threads["thread-2"] = new SessionsError({
+        operation: "thread",
+        cause: "timeout",
       });
-      assertUnbound(rig, yield* advanceIn(rig));
+      assertWaits(threadFails, yield* Effect.flip(advanceIn(threadFails)), "FactorySessionsError");
+      const checkoutFails = ownBranchRig();
+      seed(checkoutFails.dataDir, { repo: REPO, issue: "11", attempt: 1 }, siblingStarted);
+      checkoutFails.world.threads["thread-2"] = live;
+      checkoutFails.world.checkouts["/t3/wt2"] = new SessionsError({
+        operation: "worktree-head",
+        cause: "git timed out",
+      });
+      assertWaits(
+        checkoutFails,
+        yield* Effect.flip(advanceIn(checkoutFails)),
+        "FactorySessionsError",
+      );
+      // The next pass reads it and binds.
+      checkoutFails.world.checkouts["/t3/wt2"] = { head: "f00", branch: "t3code/xyz" };
+      assert.strictEqual((yield* advanceIn(checkoutFails)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("is stuck when the worktree's HEAD cannot be read or the worktree is gone", () =>
+    Effect.gen(function* () {
+      for (const checkout of [
+        new SessionsError({ operation: "worktree-head", cause: "not a git repo" }),
+        null,
+      ]) {
+        const rig = ownBranchRig();
+        rig.world.checkouts["/t3/wt"] = checkout;
+        assertUnbound(rig, yield* advanceIn(rig));
+      }
     }),
   );
 });

@@ -1465,11 +1465,15 @@ const gitPrinted = (exitCode: number, stdout: string) =>
 describe("FactorySessions.worktreeCheckout", () => {
   const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   type Answer = ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>;
-  /** The worktree's checkout with git answering its calls in turn: rev-parse, then symbolic-ref. */
+  /**
+   * The worktree's checkout with git answering its calls in turn: rev-parse, then symbolic-ref.
+   * A path with `gone` in it has no `.git`; `exists` records each path asked about.
+   */
   const checkoutWith = (
     path: string,
     answers: ReadonlyArray<() => Answer>,
     calls: Array<GitCall> = [],
+    exists: Array<string> | null = null,
   ) => {
     let call = 0;
     return worktreeCheckout(path).pipe(
@@ -1479,6 +1483,12 @@ describe("FactorySessions.worktreeCheckout", () => {
           {},
           {},
           recordingGit(calls, () => answers[call++]!()),
+          FileSystem.layerNoop({
+            exists: (checked) => {
+              exists?.push(checked);
+              return Effect.succeed(!checked.includes("gone"));
+            },
+          }),
         ),
       ),
     );
@@ -1502,6 +1512,16 @@ describe("FactorySessions.worktreeCheckout", () => {
           { cwd: "/tmp/wt/t3-abc", args: ["symbolic-ref", "--quiet", "--short", "HEAD"] },
         ],
       );
+    }),
+  );
+
+  it.effect("reads a path with no .git as no worktree, without running git", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const exists: Array<string> = [];
+      assert.isNull(yield* checkoutWith("/tmp/wt/gone", [], calls, exists));
+      assert.deepStrictEqual(exists, ["/tmp/wt/gone/.git"]);
+      assert.deepStrictEqual(calls, []);
     }),
   );
 

@@ -18,12 +18,12 @@ import {
   parseSessionResult,
   type SessionResult,
 } from "../domain/resultLine.ts";
-import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
+import { LedgerIoError, ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRuns } from "../ledger/listRuns.ts";
 import { field, readRun, type Entry } from "../ledger/read.ts";
-import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
+import { asciiLower, runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
@@ -45,6 +45,7 @@ import {
   type FactorySessions,
   type Model,
   type RunStatus,
+  type SessionsError,
   type ThreadStatus,
 } from "../t3/sessions.ts";
 import {
@@ -602,8 +603,8 @@ export const withBoundBranches = (earlier: EarlierAttempts, seen: Seen): Earlier
 
 /**
  * Whether the live worktree of another run's thread holds `pull`: its thread or checkout is on the
- * head branch, or its HEAD is the head commit. A thread T3 no longer has, or has archived, holds
- * nothing; any other failed read holds everything.
+ * head branch, or its HEAD is the head commit. A thread T3 no longer has, or has archived, or whose
+ * worktree is gone, holds nothing. A failed read fails: the pass asks again.
  */
 const threadHolds = (ctx: BuildingContext, threadId: string, pull: PullRequest) =>
   ctx.sessions.thread(threadId).pipe(
@@ -615,35 +616,40 @@ const threadHolds = (ctx: BuildingContext, threadId: string, pull: PullRequest) 
         .worktreeCheckout(thread.worktreePath)
         .pipe(
           Effect.map(
-            (checkout) => checkout.head === pull.headSha || checkout.branch === pull.headRef,
+            (checkout) =>
+              checkout !== null &&
+              (checkout.head === pull.headSha || checkout.branch === pull.headRef),
           ),
         );
     }),
     Effect.catchIf(isThreadNotFound, () => Effect.succeed(false)),
-    Effect.orElseSucceed(() => true),
   );
 
 /**
- * Whether another issue's run of the repo has `pull`: its ledger, read for every run written
- * since `sinceMs`, names the pull request or its head branch, or an unfinished run's worktree
- * holds it (`threadHolds`), which covers work not yet reported. A failed read has everything.
+ * Whether another issue's run of the repo has `pull`: its ledger, finished or not, names the pull
+ * request or its head branch, or an unfinished run's worktree holds it (`threadHolds`), which
+ * covers work not yet reported. A read that fails, or a ledger that cannot be read, fails: the
+ * pass asks again rather than end finished work as stuck.
  */
 const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
   ctx: BuildingContext,
   run: RunId,
   pull: PullRequest,
-  sinceMs: number,
-): Effect.fn.Return<boolean> {
+): Effect.fn.Return<boolean, LedgerError | SessionsError> {
   const others = yield* ledger(() =>
-    readRuns(ctx.dataDir, { skipFinishedBefore: sinceMs }).filter(
+    readRuns(ctx.dataDir).filter(
       ({ summary: { id } }) =>
         asciiLower(id.repo) === asciiLower(run.repo) && id.issue !== run.issue,
     ),
-  ).pipe(Effect.orElseSucceed(() => null));
-  if (others === null) return true;
+  );
   const live: Array<string> = [];
-  for (const { record, seen } of others) {
-    if (record === null || seen === null) return true;
+  for (const { summary, record, seen } of others) {
+    if (record === null || seen === null) {
+      return yield* new LedgerIoError({
+        path: runPath(ctx.dataDir, summary.id),
+        cause: "the run cannot be read",
+      });
+    }
     const named: Named = { branches: new Set(), prs: new Set() };
     addNamed(named, record.entries);
     // A planned resume is a step, not a line of its own.
@@ -661,7 +667,7 @@ const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
  * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
  * the claim, no other issue's run has it (`otherRunHas`), and the worktree has its head branch
  * checked out at its head commit. Runs of another machine's factory, and a person's pull request
- * opened during the run, are not seen. No worktree, or a failed read, is no proof.
+ * opened during the run, are not seen. No worktree, or a failed read of it, is no proof.
  */
 const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ctx: BuildingContext,
@@ -669,7 +675,7 @@ const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   pull: PullRequest,
   claimedMs: number | null,
   worktreePath: string | null,
-): Effect.fn.Return<boolean> {
+): Effect.fn.Return<boolean, LedgerError | SessionsError> {
   const createdMs = parseTs(pull.createdAt);
   if (
     !pull.open ||
@@ -683,11 +689,13 @@ const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ) {
     return false;
   }
-  const own = yield* ctx.sessions.worktreeCheckout(worktreePath).pipe(Effect.option);
-  if (own._tag === "None" || own.value.head !== pull.headSha || own.value.branch !== pull.headRef) {
+  const own = yield* ctx.sessions
+    .worktreeCheckout(worktreePath)
+    .pipe(Effect.orElseSucceed(() => null));
+  if (own === null || own.head !== pull.headSha || own.branch !== pull.headRef) {
     return false;
   }
-  return !(yield* otherRunHas(ctx, run, pull, claimedMs));
+  return !(yield* otherRunHas(ctx, run, pull));
 });
 
 const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
@@ -1040,10 +1048,10 @@ interface Named {
 }
 
 /**
- * Adds to `named` every branch and pull request a line of `entries` names, from the whole ledger
- * and not only its newest lines: a launch (its branch, the branch it resumed from, T3's launch
- * branch of its worktree), a stuck line, an interruption, a relaunch, a bound branch, and a pull
- * request it opened or left.
+ * Adds to `named` every branch and pull request any line of `entries` names: a launch (its branch,
+ * resumed-from branch and worktree's launch branch), a stuck line, an interruption, a relaunch, a
+ * bound branch, and a pull request opened or left. `runBranches` in `branchPrune.ts` reads the
+ * same events through `Seen`: a new event that names a branch goes in both.
  */
 const addNamed = (named: Named, entries: ReadonlyArray<Entry>): void => {
   const addBranch = (branch: unknown) => {

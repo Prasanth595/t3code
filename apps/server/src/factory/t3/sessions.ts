@@ -379,10 +379,10 @@ export class FactorySessions extends Context.Service<
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
      * What the worktree at absolute `path` has checked out: its HEAD commit, and the branch HEAD
-     * is on (null when detached). A read that fails, or a HEAD that is not a full commit id, is
-     * `worktree-head`.
+     * is on (null when detached). Null when `path` has no `.git`: no worktree is there. A read that
+     * fails, or a HEAD that is not a full commit id, is `worktree-head`.
      */
-    readonly worktreeCheckout: (path: string) => Effect.Effect<Checkout, SessionsError>;
+    readonly worktreeCheckout: (path: string) => Effect.Effect<Checkout | null, SessionsError>;
     /**
      * The unarchived threads whose worktree is gone or has no `.git`: T3's
      * pull request lookup and settlement run git there and fail every sweep.
@@ -717,6 +717,8 @@ const make = Effect.gen(function* () {
     if (!path.isAbsolute(worktreePath)) {
       return yield* failed(`the worktree path is not absolute: ${worktreePath}`);
     }
+    const there = yield* fs.exists(path.join(worktreePath, ".git")).pipe(Effect.mapError(failed));
+    if (!there) return null;
     const run = (args: ReadonlyArray<string>) =>
       git
         .execute({

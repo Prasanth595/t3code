@@ -90,7 +90,10 @@ export const decide = (branch: Branch, facts: Facts): Verdict => {
     : keep("unmerged and recent");
 };
 
-/** The branches a run's ledger names as where its work is or goes, or as its base. */
+/**
+ * The branches a run's ledger names as where its work is or goes, or as its base. `addNamed` in
+ * `runner/building.ts` reads the same events: a new event that names a branch goes in both.
+ */
 const runBranches = (seen: Seen): ReadonlyArray<string> =>
   [
     seen.base,
