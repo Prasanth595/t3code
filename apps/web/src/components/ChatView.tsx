@@ -2509,6 +2509,11 @@ export default function ChatView(props: ChatViewProps) {
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
+          failure: {
+            class: serverRuntime.lastErrorClass,
+            code: serverRuntime.lastErrorCode ?? null,
+            message: serverRuntime.lastError ?? "",
+          },
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
           onChange: async (limitRecovery) => {
