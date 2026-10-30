@@ -11,6 +11,15 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ failPage: false }));
 
+vi.mock("../../connection/catalog", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentCatalog: {
+      sessionGenerationAtom: Atom.family((_environmentId: string) => Atom.make(0)),
+    },
+  };
+});
+
 vi.mock("../../state/pull-requests", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const Effect = await import("effect/Effect");
