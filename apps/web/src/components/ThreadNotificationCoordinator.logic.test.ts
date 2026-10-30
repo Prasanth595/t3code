@@ -176,6 +176,17 @@ describe("createThreadNotificationGate", () => {
     expect(notify.mock.calls).toEqual([["thread", "completion"]]);
   });
 
+  it("drops a pending completion when the thread is snoozed during a runtime blip", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1));
+    vi.advanceTimersByTime(500);
+    observe({ ...working, snoozed: true }, { ...visible, snoozed: true });
+    observe(completed(1));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("restarts the grace when a newer completion replaces a pending one", () => {
     const { notify, observe } = harness();
     observe(working);

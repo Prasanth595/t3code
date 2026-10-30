@@ -41,6 +41,8 @@ export function createThreadNotificationGate<Key>(
       options: { readonly archived: boolean; readonly quiet: boolean; readonly snoozed: boolean },
     ): void {
       if (next.settled && next.completedAt !== null) lastSettled.set(key, next.completedAt);
+      // Snoozing drops a completion still waiting out its grace, so it cannot notify after wake.
+      if (options.snoozed) skip(key, pending.get(key)?.at ?? null);
       if (!next.settled || options.archived || options.quiet || options.snoozed) cancel(key);
       // The first sighting, archived threads, and stopped or silent runs never notify completion.
       if (!prior || options.archived || options.quiet || options.snoozed)
