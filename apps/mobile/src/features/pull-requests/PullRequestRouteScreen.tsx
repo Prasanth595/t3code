@@ -875,7 +875,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           <PullRequestIdentity pr={identity} params={params} />
                           {/* UIKit draws the tapped control's glass lens outside the hidden
                               tab's opacity, so only the visible tab mounts the control. */}
-                          {section === tab ? (
+                          {Platform.OS !== "ios" || section === tab ? (
                             <SegmentedControl
                               options={[
                                 { value: "overview", label: "Overview" },
@@ -890,7 +890,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               size="compact"
                             />
                           ) : (
-                            <View className="h-8" />
+                            <View style={{ height: 32 }} />
                           )}
                         </View>
                       ) : null}
