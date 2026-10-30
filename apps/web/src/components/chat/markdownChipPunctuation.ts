@@ -8,11 +8,7 @@ type HastNode = {
 
 const LEADING_PUNCTUATION = /^[.,:;!?…)\]}"'’”]+/;
 
-/**
- * Links and inline code can render as inline-flex chips, and browsers may wrap
- * after an atomic inline even before punctuation. Pairing them with the
- * punctuation that follows lets a rendered chip keep it on its line.
- */
+// Browsers allow a wrap after inline-flex chips even before punctuation.
 export function rehypeChipPunctuation() {
   const visit = (node: HastNode): void => {
     if (node.tagName === "pre" || !node.children) return;
@@ -34,7 +30,7 @@ export function rehypeChipPunctuation() {
         properties: { className: ["has-[>*>[data-slot=context-chip-label]]:whitespace-nowrap"] },
         children: [previous, { type: "text", value: punctuation }],
       };
-      const rest = child.value!.slice(punctuation.length);
+      const rest = (child.value ?? "").slice(punctuation.length);
       if (rest) children.push({ ...child, value: rest });
     }
     node.children = children;
