@@ -859,6 +859,7 @@ it.effect.each(["shutdown", "close"] as const)(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
       expect((yield* PubSub.take(updates)).sessions).toEqual([]);
+      yield* service.refreshHosts;
       expect((yield* service.state).sessions).toEqual([]);
       yield* Effect.sync(() => retiring.interruptUnsafe());
       yield* Deferred.succeed(pauseBind.proceed, undefined);
