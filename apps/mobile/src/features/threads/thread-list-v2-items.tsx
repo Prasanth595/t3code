@@ -76,7 +76,12 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
-import { shouldRecedeThreadRow } from "./thread-row-emphasis";
+import {
+  hasThreadRowAsyncQuestion,
+  shouldRecedeThreadRow,
+  threadRowAccessibilityLabel,
+  threadRowStatusText,
+} from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -88,6 +93,12 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
+const INPUT_STATUS_LABEL: StatusLabel = {
+  label: "Input",
+  icon: "questionmark.bubble",
+  className: "text-adaptive-indigo-600-300",
+  iconTintClassName: "accent-adaptive-indigo-600-300",
+};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -95,12 +106,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
-  input: {
-    label: "Input",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
+  input: INPUT_STATUS_LABEL,
   request: {
     label: "Request",
     icon: "person.crop.circle",
@@ -687,6 +693,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
+  const hasAsyncQuestion = hasThreadRowAsyncQuestion({
+    status,
+    hasPendingAsyncQuestion: thread.hasPendingAsyncQuestion,
+  });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
@@ -694,7 +704,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
-  const recede = shouldRecedeThreadRow({ status, selected });
+  const recede = shouldRecedeThreadRow({ status, selected, hasAsyncQuestion });
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1125,6 +1135,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Pressable>
           ) : statusLabel ? (
             <View className="flex-row items-center gap-1">
+              {hasAsyncQuestion ? (
+                <>
+                  <SymbolView
+                    name={INPUT_STATUS_LABEL.icon}
+                    size={13}
+                    tintColorClassName={
+                      selected
+                        ? selectedThreadRowColors.iconTintClassName
+                        : INPUT_STATUS_LABEL.iconTintClassName
+                    }
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                  <Text
+                    className={cn(
+                      "me-1.5 text-xs font-t3-bold",
+                      selected
+                        ? selectedThreadRowColors.foregroundClassName
+                        : INPUT_STATUS_LABEL.className,
+                    )}
+                  >
+                    {INPUT_STATUS_LABEL.label}
+                  </Text>
+                </>
+              ) : null}
               <SymbolView
                 name={statusLabel.icon}
                 size={13}
@@ -1143,7 +1178,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
-                {statusLabel.label}
+                {threadRowStatusText({ hasAsyncQuestion, label: statusLabel.label })}
                 {status === "working" ? (
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (
@@ -1291,6 +1326,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
+  const rowAccessibilityLabel = threadRowAccessibilityLabel({
+    title: thread.title,
+    hasAsyncQuestion,
+    statusLabel: statusLabel?.label ?? null,
+    hasQueuedMessages: props.hasQueuedMessages === true,
+  });
+
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <RowPressable
@@ -1299,9 +1341,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
@@ -1332,9 +1372,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}
