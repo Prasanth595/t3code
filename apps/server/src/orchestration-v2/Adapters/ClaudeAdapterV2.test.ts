@@ -9080,10 +9080,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const pending = (yield* Queue.take(harness.runtimeRequestReceipts)).runtimeRequest;
         assert.equal(pending.status, "pending");
 
+        // The turn can end right after the withdrawal, before the callback returns.
         withdrawal.abort();
-
-        assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
-        // Events arrive in order, so the turn's end follows anything the withdrawal emitted.
         yield* Queue.offer(
           harness.sdkMessages,
           claudeSdkFrame({
@@ -9092,8 +9090,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* harness.awaitTerminal(1);
+        assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
+        // The cancellation has to land before the turn's end finalizes the run.
+        const beforeTerminal = harness.events.slice(
+          0,
+          harness.events.findIndex((event) => event.type === "turn.terminal"),
+        );
         const statusOf = (type: "runtime_request.updated" | "node.updated" | "turn_item.updated") =>
-          harness.events
+          beforeTerminal
             .flatMap((event): Array<{ readonly type: string; readonly status: string }> =>
               event.type === "runtime_request.updated" && event.runtimeRequest.id === pending.id
                 ? [{ type: event.type, status: event.runtimeRequest.status }]
