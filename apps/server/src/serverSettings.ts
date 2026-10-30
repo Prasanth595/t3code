@@ -583,6 +583,12 @@ const make = Effect.gen(function* () {
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
+  // The file contents of our last save, set only once the save is published. The watcher skips
+  // a reload that reads exactly these bytes; any other contents are published as before.
+  const publishedSaveRef = yield* Ref.make(Option.none<string>());
+  // Settings from the last file that parsed, or from our last save.
+  const lastGoodSettingsRef = yield* Ref.make(Option.none<ServerSettings>());
+  const parseFailureLoggedRef = yield* Ref.make(false);
 
   const emitChange = (settings: ServerSettings) =>
     PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
@@ -614,13 +620,12 @@ const make = Effect.gen(function* () {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
       );
+      const contents = `${sparseSettingsJson}\n`;
 
-      return yield* writeFileStringAtomically({
-        filePath: settingsPath,
-        contents: `${sparseSettingsJson}\n`,
-      }).pipe(
+      return yield* writeFileStringAtomically({ filePath: settingsPath, contents }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathService),
+        Effect.as(contents),
       );
     },
     Effect.mapError(
@@ -668,9 +673,11 @@ const make = Effect.gen(function* () {
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     let parseFailure = Option.none<unknown>();
+    let fromPublishedSave = false;
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
+      fromPublishedSave = Option.contains(yield* Ref.get(publishedSaveRef), raw);
       const decoded = decodeServerSettingsJsonExit(raw);
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
@@ -686,15 +693,24 @@ const make = Effect.gen(function* () {
         settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
         if (failure._tag === "Failure") {
           parseFailure = Option.some(Cause.squash(failure.cause));
-          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-            path: settingsPath,
-            issues: Cause.pretty(failure.cause),
-            cause: failure.cause,
-          });
+          // An editor or agent can leave the file invalid across several reloads.
+          if (!(yield* Ref.getAndSet(parseFailureLoggedRef, true))) {
+            yield* Effect.logWarning(
+              "failed to parse settings.json, ignoring it until it is fixed",
+              {
+                path: settingsPath,
+                issues: Cause.pretty(failure.cause),
+                cause: failure.cause,
+              },
+            );
+          }
         }
       } else {
         settings = decoded.value;
       }
+    }
+    if (Option.isNone(parseFailure)) {
+      yield* Ref.set(parseFailureLoggedRef, false);
     }
     // Settings saved by a server that kept the mode in `compactIdleThreads` move
     // it to `idleCompaction`, so that switch goes to clients as a boolean. The
@@ -800,7 +816,19 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    return { settings: migrated, parseFailure };
+    if (Option.isNone(parseFailure)) {
+      yield* Ref.set(lastGoodSettingsRef, Option.some(migrated));
+    } else {
+      const lastGood = yield* Ref.get(lastGoodSettingsRef);
+      if (Option.isSome(lastGood)) {
+        return {
+          settings: { ...lastGood.value, continueThreadsAfterServerUpdate: false },
+          parseFailure,
+          fromPublishedSave,
+        };
+      }
+    }
+    return { settings: migrated, parseFailure, fromPublishedSave };
   });
 
   const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
@@ -811,6 +839,8 @@ const make = Effect.gen(function* () {
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey).pipe(
     Effect.map((loaded) => loaded.settings),
   );
+  // Readers that arrive during a reload wait for it, so they never pair the old settings with
+  // secrets the reload has already moved into the store.
   const reloadSettings = Cache.invalidate(settingsCache, cacheKey).pipe(
     Effect.andThen(Cache.get(settingsCache, cacheKey)),
   );
@@ -1051,7 +1081,7 @@ const make = Effect.gen(function* () {
         const updated = yield* update(current);
         const persisted = yield* persistSettingsSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
-        const materializedNext = yield* Effect.uninterruptibleMask(() =>
+        const { materializedNext, written } = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             yield* invalidateMaterialized;
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
@@ -1065,13 +1095,19 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
             }
-            return materializedExit.value;
+            return { materializedNext: materializedExit.value, written: writeExit.value };
           }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
+        yield* Cache.set(settingsCache, cacheKey, {
+          settings: next,
+          parseFailure: Option.none(),
+          fromPublishedSave: true,
+        });
+        yield* Ref.set(lastGoodSettingsRef, Option.some(next));
         const resolved = resolveTextGenerationProvider(materializedNext);
         materialized = { source: next, value: resolved };
         yield* emitChange(next);
+        yield* Ref.set(publishedSaveRef, Option.some(written));
         return resolved;
       }),
     );
@@ -1081,8 +1117,11 @@ const make = Effect.gen(function* () {
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const { settings } = yield* reloadSettings;
+      const { settings, parseFailure, fromPublishedSave } = yield* reloadSettings;
+      // Subscribers already have our own save, and keep what they have while the file is invalid.
+      if (fromPublishedSave || Option.isSome(parseFailure)) return;
       yield* emitChange(settings);
+      yield* Ref.set(publishedSaveRef, Option.none());
     }),
   );
 
@@ -1167,7 +1206,8 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* reloadSettings;
+      // A migration write here wakes the watcher, whose reload must not overlap this one.
+      yield* writeSemaphore.withPermits(1)(reloadSettings);
     });
 
     const startupExit = yield* Effect.exit(startup);
