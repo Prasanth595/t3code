@@ -6021,9 +6021,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
-                    ? yield* Ref.get(activeTurn)
-                    : yield* activeContext;
+                  const context = yield* Ref.get(activeTurn);
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
                   );
@@ -6037,7 +6035,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           : ({ outcome: { outcome: "selected", optionId } } as const),
                     };
                   }
-                  if (disposition === "deny") {
+                  // v1 agents can ask while configureSession runs; with no turn there is no one to ask.
+                  if (disposition === "deny" || (context === null && !followsAgentWorkState)) {
                     const optionId = selectPermissionOptionId(params, "decline");
                     return {
                       _tag: "Immediate" as const,
@@ -7934,6 +7933,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       loadingMessageId: null,
                       loadingIndex: 0,
                     });
+                    if (threadInput.runtimePolicy !== undefined) {
+                      latestRuntimePolicy = threadInput.runtimePolicy;
+                    }
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
