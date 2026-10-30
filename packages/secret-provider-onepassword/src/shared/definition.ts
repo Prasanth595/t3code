@@ -1,5 +1,27 @@
-import { OnePasswordSecretProviderConfig, SecretProviderKind } from "@t3tools/contracts";
+import { SecretProviderKind } from "@t3tools/contracts";
 import { defineSecretProvider } from "@t3tools/secret-provider-core/shared/definition";
+import * as Schema from "effect/Schema";
+
+const ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Any value `op --account` accepts: shorthand, sign-in address, account ID, or user ID.
+ * It is passed to the CLI as an argument, so it can never start with `-`.
+ */
+export const OnePasswordAccount = Schema.String.check(
+  Schema.isMaxLength(253),
+  Schema.makeFilter((value: string) =>
+    ACCOUNT_PATTERN.test(value)
+      ? true
+      : "1Password account must be a shorthand, sign-in address, or ID with no spaces.",
+  ),
+).pipe(Schema.brand("OnePasswordAccount"));
+export type OnePasswordAccount = typeof OnePasswordAccount.Type;
+
+export const OnePasswordSecretProviderConfig = Schema.Struct({
+  account: OnePasswordAccount,
+});
+export type OnePasswordSecretProviderConfig = typeof OnePasswordSecretProviderConfig.Type;
 
 // 1Password secret reference syntax: names outside this charset must be written as item ids.
 // It also keeps `{{`, `}}`, and line breaks out of the `op inject` template the server builds.

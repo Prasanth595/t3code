@@ -2,7 +2,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { assert, describe, it } from "@effect/vitest";
-import { OnePasswordAccount } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as NodeFS from "node:fs";
 
+import { OnePasswordAccount } from "../shared/definition.ts";
 import { driver } from "./driver.ts";
 
 const encoder = new TextEncoder();

@@ -1072,6 +1072,9 @@ importers:
       '@t3tools/secret-provider-definitions':
         specifier: workspace:*
         version: link:../../packages/secret-provider-definitions
+      '@t3tools/secret-provider-onepassword':
+        specifier: workspace:*
+        version: link:../../packages/secret-provider-onepassword
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -1,4 +1,3 @@
-import type { OnePasswordAccount } from "@t3tools/contracts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -9,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import { ChildProcess } from "effect/process";
 
-import { definition } from "../shared/definition.ts";
+import { definition, type OnePasswordAccount } from "../shared/definition.ts";
 
 const ONE_PASSWORD_BINARY = "op";
 // Bounds a read long enough to reach for a fingerprint reader, short enough not to wedge a rebuild.

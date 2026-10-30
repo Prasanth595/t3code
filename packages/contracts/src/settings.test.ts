@@ -166,16 +166,6 @@ describe("ServerSettings secret providers", () => {
     ).toThrow();
   });
 
-  it("rejects writes of an unknown kind or an account op could misread", () => {
-    const write = (entry: unknown) => () =>
-      decodeServerSettingsPatch({ secretProviders: { personal: entry } });
-    for (const account of ["", "my account", "--help"]) {
-      expect(write(onePassword(account))).toThrow();
-    }
-    expect(write({ kind: "one_password", label: "Personal" })).toThrow();
-    expect(write({ kind: "openbao", label: "Vault", config: { address: "https://x" } })).toThrow();
-  });
-
   it("stores a provider environment secret reference in a layout older builds still decode", () => {
     const providerInstances = (secret: unknown) => ({
       codex: {
