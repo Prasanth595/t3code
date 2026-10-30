@@ -243,18 +243,25 @@ const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(fu
 /**
  * Explains why Pi's active model cannot start a turn. On Pi versions with `auth check`, asks it
  * whether credentials are missing, without refreshing or printing them. That command cannot see
- * extension providers or a runtime --api-key, so it only refines Pi's own unavailable verdict.
+ * extension providers or a runtime --api-key, so it only refines Pi's own unavailable verdict,
+ * and is skipped when launch args supply the key.
  */
 const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailablePiModel")(
   function* (
     piSettings: PiSettings,
     environment: NodeJS.ProcessEnv,
     version: string,
+    launchArgs: ReadonlyArray<string>,
     model: { readonly provider: string; readonly id: string },
   ) {
     const label = `Pi default (${model.provider}/${model.id})`;
     const unavailable = `${label} is not among Pi's available models. Choose another model, or check that provider's setup in Pi.`;
-    if (compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0) return unavailable;
+    if (
+      compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0 ||
+      launchArgs.includes("--api-key")
+    ) {
+      return unavailable;
+    }
     const command = piSettings.binaryPath || "pi";
     const output = yield* resolveSpawnCommand(
       command,
@@ -502,6 +509,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
           piSettings,
           environment,
           version,
+          resolvedLaunchArgs.args,
           discovery.unavailableActiveModel,
         );
   return buildServerProvider({

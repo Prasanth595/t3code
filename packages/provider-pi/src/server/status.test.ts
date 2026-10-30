@@ -52,7 +52,7 @@ function piProbeSpawner(version: string) {
   });
 }
 
-/** An `authCheck` of undefined fails the test if status runs `pi auth check`. */
+/** Fails the test if status runs `pi auth check` without `authCheck` or with other arguments. */
 const piDiscoverySpawner = (
   inventory: unknown,
   options: {
@@ -97,8 +97,9 @@ const piDiscoverySpawner = (
         return Effect.succeed(processHandle({ stdout: `pi ${options.version ?? "0.84.3"}\n` }));
       }
       if (args[0] === "auth") {
-        return options.authCheck === undefined
-          ? Effect.die("Unexpected pi auth check")
+        const expected = ["auth", "check", "--provider", "openai", "--json", "--no-refresh"];
+        return options.authCheck === undefined || args.join(" ") !== expected.join(" ")
+          ? Effect.die(`Unexpected pi ${args.join(" ")}`)
           : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
       }
       return Effect.succeed(
@@ -171,6 +172,14 @@ describe("PiProvider", () => {
       message: "Pi default (openai/gpt-5) has no credentials configured for openai.",
     },
     {
+      label: "a pinned model with a runtime --api-key",
+      version: "1.4.0",
+      launchArgs: "--provider openai --model gpt-5 --api-key fake-key",
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: undefined,
+      message: "Pi default (openai/gpt-5) is not among Pi's available models.",
+    },
+    {
       label: "a pinned model on Pi without auth check",
       version: MINIMUM_PI_VERSION,
       activeModel: { provider: "openai", id: "gpt-5" },
@@ -195,9 +204,10 @@ describe("PiProvider", () => {
         },
         { version: row.version, state: { model: row.activeModel }, authCheck: row.authCheck },
       );
-      const snapshot = yield* checkPiProviderStatus(settings).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+      const snapshot = yield* checkPiProviderStatus({
+        ...settings,
+        launchArgs: row.launchArgs ?? "",
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       assert.equal(snapshot.status, "ready");
       assert.equal(snapshot.auth.status, "authenticated");
       if (row.message === undefined) assert.isUndefined(snapshot.message);
