@@ -1509,7 +1509,11 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const presentation = resolveUserMessagePresentation(message);
+    const resolvedPresentation = resolveUserMessagePresentation(message);
+    const presentation =
+      resolvedPresentation.attribution !== "guest" && isAttachmentOnlyBootstrapText(message.text)
+        ? { ...resolvedPresentation, text: message.text }
+        : resolvedPresentation;
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);

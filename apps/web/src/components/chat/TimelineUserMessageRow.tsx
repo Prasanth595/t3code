@@ -334,7 +334,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
-  const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
+  const resolvedContext = resolveUserMessageContext({
+    ...row.message,
+    text:
+      userMessage.attribution !== "guest" && isAttachmentOnlyBootstrapText(row.message.text)
+        ? row.message.text
+        : userMessage.text,
+  });
   const attachmentOnly =
     !folded &&
     (row.message.attachments?.length ?? 0) > 0 &&
