@@ -1,4 +1,8 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadNotificationKind = "input" | "completion";
 
@@ -11,6 +15,21 @@ export interface ThreadNotificationObservation {
   readonly completedAt: number | null;
   /** The thread is intentionally hidden until its snooze wake time. */
   readonly snoozed: boolean;
+}
+
+/**
+ * Whether completion notifications are suppressed by snooze. A completion that landed
+ * during the snooze stays suppressed even when its update is processed after the wake.
+ */
+export function isSnoozedForNotification(
+  thread: ThreadSnoozeShell,
+  completedAt: number | null,
+  now: number,
+): boolean {
+  if (effectiveSnoozed(thread, { now: new Date(now).toISOString() })) return true;
+  return (
+    completedAt !== null && effectiveSnoozed(thread, { now: new Date(completedAt).toISOString() })
+  );
 }
 
 /**
@@ -41,8 +60,8 @@ export function createThreadNotificationGate<Key>(
       options: { readonly archived: boolean; readonly quiet: boolean; readonly snoozed: boolean },
     ): void {
       if (next.settled && next.completedAt !== null) lastSettled.set(key, next.completedAt);
-      // Snoozing drops a completion still waiting out its grace, so it cannot notify after wake.
-      if (options.snoozed) skip(key, pending.get(key)?.at ?? null);
+      // Snoozing drops the newest completion not yet notified, so it cannot notify after wake.
+      if (options.snoozed) skip(key, lastSettled.get(key) ?? null);
       if (!next.settled || options.archived || options.quiet || options.snoozed) cancel(key);
       // The first sighting, archived threads, and stopped or silent runs never notify completion.
       if (!prior || options.archived || options.quiet || options.snoozed)
