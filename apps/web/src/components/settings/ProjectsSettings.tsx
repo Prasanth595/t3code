@@ -1,11 +1,14 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { LayersIcon } from "lucide-react";
+import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import { DownloadIcon, LayersIcon } from "lucide-react";
+import { useState } from "react";
 
+import { useEnvironmentsWithScope } from "../../state/session";
 import { Button } from "../ui/button";
+import { ImportProjectsDialog } from "./ImportProjectsDialog";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
-import { SettingsPageContainer } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
@@ -46,10 +49,48 @@ export function ProjectsSettings() {
       ) : unavailable ? (
         unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <SettingsPageContainer>
+          <ImportProjectsSection />
+          <SettingsScopeNotice inline target="project">
+            Choose a project to manage its name, icon, checkouts and actions.
+          </SettingsScopeNotice>
+        </SettingsPageContainer>
       )}
     </div>
+  );
+}
+
+function ImportProjectsSection() {
+  const { connectedEnvironments } = useSettingsScope();
+  const writableIds = useEnvironmentsWithScope(
+    connectedEnvironments,
+    AuthOrchestrationOperateScope,
+  );
+  const environmentIds = connectedEnvironments
+    .map((environment) => environment.environmentId)
+    .filter((environmentId) => writableIds.has(environmentId));
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingsSection title="Import">
+      <SettingsRow
+        id="import-projects"
+        title="Import from Claude Code and Codex"
+        description="Add projects and conversation history from Claude Code and Codex. Projects that are already in T3 Code pick up any new conversations."
+        control={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={environmentIds.length === 0}
+            onClick={() => setOpen(true)}
+          >
+            <DownloadIcon />
+            Import projects
+          </Button>
+        }
+      />
+      {open ? (
+        <ImportProjectsDialog environmentIds={environmentIds} onClose={() => setOpen(false)} />
+      ) : null}
+    </SettingsSection>
   );
 }

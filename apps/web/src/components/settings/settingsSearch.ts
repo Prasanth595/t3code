@@ -270,6 +270,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["name icon emoji image checkout remove delete"],
   },
   {
+    id: "import-projects",
+    title: "Import from Claude Code and Codex",
+    to: "/settings/projects",
+    searchTerms: ["import projects threads conversations history sessions transcripts"],
+  },
+  {
     id: "default-model",
     title: "Default model",
     to: "/settings/threads",
