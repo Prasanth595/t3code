@@ -20,6 +20,14 @@ function ProviderCustomColorPanel(props: {
   const [hsv, setHsv] = useState(() => hexToHsv(props.value));
   const currentColor = hsvToHex(hsv.h, hsv.s, hsv.v);
   const [hexDraft, setHexDraft] = useState<string | null>(null);
+  const [syncedValue, setSyncedValue] = useState(props.value);
+  if (syncedValue !== props.value) {
+    setSyncedValue(props.value);
+    if (currentColor !== props.value) {
+      setHsv(hexToHsv(props.value));
+      setHexDraft(null);
+    }
+  }
   // Pointer drags only preview and commit once on release, so a drag writes
   // settings once instead of on every pointer move. Keyboard steps commit
   // immediately because they have no release to wait for. Holds the latest
