@@ -98,7 +98,13 @@ export function ProviderProxySettings({
   const update = (patch: Partial<UnifiedSettings["providerProxy"]>) =>
     updateSettings({ providerProxy: patch });
   const host = providerProxyHost(proxy);
-  const managesAccounts = host === "managed" || (host === "external" && proxy.managementKey !== "");
+  // The server reads proxy state only for sessions that can manage providers.
+  const canManageProviders = useAtomValue(
+    providerProxyEnvironment.startLogin.permissionAtom(environmentId),
+  );
+  const managesAccounts =
+    canManageProviders &&
+    (host === "managed" || (host === "external" && proxy.managementKey !== ""));
 
   return (
     <SettingsSection {...searchableSetting("provider-proxy")}>

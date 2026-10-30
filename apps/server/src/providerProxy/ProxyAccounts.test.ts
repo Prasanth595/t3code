@@ -206,6 +206,9 @@ describe("ProxyAccounts", () => {
         const accounts = yield* ProxyAccounts.ProxyAccounts;
         const login = yield* accounts.startLogin("claude");
         expect(login).toEqual({ url: "https://claude.ai/oauth/authorize?x=1", state: "abc123" });
+        // Clients open this URL, so a proxy can't hand them a non-https link.
+        const unsafe = yield* accounts.startLogin("codex").pipe(Effect.flip);
+        expect(unsafe._tag).toBe("ProviderProxyError");
         expect(yield* accounts.getLoginStatus("abc123")).toEqual({ status: "wait" });
 
         const wrongLogin = yield* accounts
@@ -222,10 +225,11 @@ describe("ProxyAccounts", () => {
 
         expect(recorded.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET http://proxy.test:8317/v0/management/anthropic-auth-url",
+          "GET http://proxy.test:8317/v0/management/codex-auth-url",
           "GET http://proxy.test:8317/v0/management/get-auth-status?state=abc123",
           "POST http://proxy.test:8317/v0/management/oauth-callback",
         ]);
-        expect(JSON.parse(recorded[2]!.body)).toEqual({
+        expect(JSON.parse(recorded[3]!.body)).toEqual({
           redirect_url: "http://localhost:54545/callback?code=c&state=abc123",
         });
       }).pipe(
@@ -238,6 +242,9 @@ describe("ProxyAccounts", () => {
                   url: "https://claude.ai/oauth/authorize?x=1",
                   state: "abc123",
                 },
+              },
+              "GET codex-auth-url": {
+                body: { status: "ok", url: "file:///etc/passwd", state: "def456" },
               },
               "GET get-auth-status?state=abc123": { body: { status: "wait" } },
               "POST oauth-callback": { body: { status: "ok" } },

@@ -244,7 +244,10 @@ const make = Effect.gen(function* () {
     const path = LOGIN_PATHS[provider];
     // Not `is_webui`: its callback forwarder binds 0.0.0.0, so sign-in completes by paste-back.
     const body = yield* request(management, HttpClientRequest.get, path);
-    return yield* decodeLogin(body).pipe(Effect.mapError(malformed));
+    const login = yield* decodeLogin(body).pipe(Effect.mapError(malformed));
+    // Clients open this URL; an external proxy must not hand them a file: or app link.
+    if (URL.parse(login.url)?.protocol !== "https:") return yield* malformed();
+    return login;
   });
 
   const getLoginStatus = Effect.fn("ProxyAccounts.getLoginStatus")(function* (state: string) {
