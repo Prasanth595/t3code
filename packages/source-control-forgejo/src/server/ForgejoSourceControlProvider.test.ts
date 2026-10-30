@@ -32,6 +32,75 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+const mergeInput = {
+  cwd: "/repo",
+  repository: "maria/project",
+  host: "forgejo.test",
+  number: 42,
+  action: "merge" as const,
+};
+const mergeHeadRepository = {
+  full_name: "maria/project",
+  default_branch: "main",
+  permissions: { push: true, admin: false },
+};
+const mergePull = {
+  number: 42,
+  title: "Merge target",
+  body: "",
+  html_url: "https://forgejo.test/maria/project/pulls/42",
+  user: null,
+  state: "open",
+  merged: false,
+  head: { ref: "feature", sha: "head", repo: mergeHeadRepository },
+  base: { ref: "main", sha: "base", repo: mergeHeadRepository },
+  created_at: "2026-09-13T00:00:00Z",
+  updated_at: "2026-09-13T00:00:00Z",
+  closed_at: null,
+  merged_at: null,
+  labels: [],
+};
+
+it.effect("keeps non-deletable Forgejo heads but allows writable fork branches", () =>
+  Effect.gen(function* () {
+    const fork = { ...mergeHeadRepository, full_name: "contributor/project" };
+    for (const [repo, expectedDeletion] of [
+      [{ ...fork, permissions: { push: false, admin: false } }, false],
+      [{ ...fork, default_branch: "feature" }, false],
+      [{ ...fork, default_branch: undefined }, false],
+      [null, false],
+      [fork, true],
+    ] as const) {
+      const writes: ForgejoCli.ForgejoApiInput[] = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              if (input.method === "POST") {
+                writes.push(input);
+                return Effect.succeed(processOutput(""));
+              }
+              assert.include(["repos/maria/project", "repos/maria/project/pulls/42"], input.path);
+              return encodeJsonEffect(
+                input.path.endsWith("/42")
+                  ? { ...mergePull, head: { ...mergePull.head, repo } }
+                  : { ...mergeHeadRepository, default_delete_branch_after_merge: true },
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      );
+      yield* provider.runAction(mergeInput);
+      assert.strictEqual(writes.length, 1);
+      assert.strictEqual(writes[0]?.path, "repos/maria/project/pulls/42/merge");
+      assert.deepStrictEqual(writes[0]?.body, {
+        Do: "merge",
+        delete_branch_after_merge: expectedDeletion,
+      });
+    }
+  }),
+);
+
 const requiredChecksPullRequest = {
   number: 7,
   title: "Required checks",
@@ -189,7 +258,11 @@ const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.Forge
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
           if (input.method !== undefined && input.method !== "GET") writes.push(input);
-          return (input.path === "repos/reviewer/project" ? repository : Effect.succeed("")).pipe(
+          return (
+            input.path === "repos/reviewer/project"
+              ? repository
+              : Effect.succeed(input.method === "POST" ? "" : encodeJson(mergePull))
+          ).pipe(
             Effect.map((stdout) => ({
               exitCode: ChildProcessSpawner.ExitCode(0),
               stdout,
@@ -290,7 +363,7 @@ it.effect.each([
               case "repos/acme/web/pulls/7/merge":
                 return Effect.fail(refused);
               case "repos/acme/web/pulls/7":
-                return respond({ ...requiredChecksPullRequest, merged });
+                return respond({ ...requiredChecksPullRequest, merged, head: mergePull.head });
               default:
                 return Effect.die(`Unexpected Forgejo request: ${input.path}`);
             }

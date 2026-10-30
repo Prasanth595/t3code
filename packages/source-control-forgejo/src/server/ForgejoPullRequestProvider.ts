@@ -510,7 +510,28 @@ export const make = Effect.gen(function* () {
       switch (input.action) {
         case "merge":
           return Effect.gen(function* () {
-            const deleteBranch = (yield* getRepo(input)).default_delete_branch_after_merge ?? false;
+            const deleteBranch = yield* Effect.gen(function* () {
+              const repo = yield* getRepo(input);
+              if (!repo.default_delete_branch_after_merge) return false;
+              const pr = yield* getPull(input);
+              return (
+                pr.head.repo?.permissions?.push === true &&
+                pr.head.repo.default_branch !== undefined &&
+                pr.head.ref !== pr.head.repo.default_branch
+              );
+            }).pipe(
+              Effect.mapError(
+                (error) =>
+                  new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("forgejo"),
+                    operation: "merge",
+                    reason: error.reason,
+                    detail: `The pull request was not merged because its branch deletion setting could not be read. ${error.detail}`,
+                    ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                    cause: error,
+                  }),
+              ),
+            );
             yield* write({
               ...input,
               path: `${pullPath(input)}/merge`,
