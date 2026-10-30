@@ -1,4 +1,4 @@
-import { isRelayManagedConnection, type SavedRemoteConnection } from "../lib/connection";
+import type { SavedRemoteConnection } from "../lib/connection";
 
 export const FACTORY_RELAY_ONLY_MESSAGE =
   "Factory pages need a direct connection. Pair this phone with the server over the tailnet.";
@@ -17,7 +17,10 @@ export function factoryEnvironmentChoice(
 ): FactoryEnvironmentChoice {
   if (connections.length === 0) return { kind: "none" };
   const direct = connections
-    .filter((connection) => !isRelayManagedConnection(connection))
+    .filter(
+      (connection) =>
+        connection.relayManaged !== true && connection.authenticationMethod !== "dpop",
+    )
     .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
   if (direct.length === 0) return { kind: "relay-only" };
   if (direct.length === 1) return { kind: "one", connection: direct[0]! };

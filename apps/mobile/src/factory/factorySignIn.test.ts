@@ -400,7 +400,7 @@ describe("revokeFactorySessions", () => {
     const authorizations: string[] = [];
     const fetchFn: FactoryFetch = async (url, init) => {
       authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
-      if (url === `${BASE}/api/auth/clients`) return json(200, sessions);
+      if (url === `${BASE}/api/factory/auth/clients`) return json(200, sessions);
       if (url === `${BASE}/api/auth/clients/revoke`) {
         const body = JSON.parse(String(init?.body)) as { sessionId: string };
         revoked.push(body.sessionId);

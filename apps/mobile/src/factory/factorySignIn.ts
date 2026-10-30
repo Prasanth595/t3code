@@ -10,6 +10,7 @@ import {
   type RemoteEnvironmentRequestError,
 } from "@t3tools/client-runtime/rpc";
 import {
+  AuthClientSession,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -17,6 +18,8 @@ import {
   type AuthGrantScope,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { factoryExchangeScript } from "./factoryWebViewScripts";
 
@@ -241,14 +244,14 @@ export async function revokeFactorySessions(
 ): Promise<RevokeOutcome> {
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
   const headers = { authorization: `Bearer ${server.bearerToken}` };
+  const listed = await listClientSessions(server.httpBaseUrl, headers, fetchFn);
+  if (!listed.ok) return listed;
+  const factorySessions = listed.sessions.filter(
+    (session) =>
+      session.method === "browser-session-cookie" && session.client.label === FACTORY_SESSION_LABEL,
+  );
   const revoke = Effect.gen(function* () {
     const auth = yield* makeEnvironmentHttpApiGroupClient(server.httpBaseUrl, "auth");
-    const sessions = yield* auth.clients({ headers });
-    const factorySessions = sessions.filter(
-      (session) =>
-        session.method === "browser-session-cookie" &&
-        session.client.label === FACTORY_SESSION_LABEL,
-    );
     const results = yield* Effect.forEach(factorySessions, (session) =>
       auth.revokeClient({ headers, payload: { sessionId: session.sessionId } }).pipe(
         Effect.map((result) => result.revoked),
@@ -260,18 +263,42 @@ export async function revokeFactorySessions(
   });
   const timedFetch: typeof fetch = (input, init) =>
     request(fetchFn, input instanceof Request ? input.url : String(input), init ?? {});
-  return Effect.runPromise(
-    executeEnvironmentHttpRequest(
-      environmentEndpointUrl(server.httpBaseUrl, "/api/auth/clients"),
-      REQUEST_TIMEOUT_MS,
-      revoke,
-    ).pipe(
-      Effect.catch((error) =>
-        Effect.succeed({ ok: false, reason: mintFailureReason(error) } as const),
-      ),
-      Effect.provide(layerRemoteHttpClient(timedFetch)),
-    ),
-  );
+  return Effect.runPromise(revoke.pipe(Effect.provide(layerRemoteHttpClient(timedFetch))));
+}
+
+const decodeClientSessions = Schema.decodeUnknownOption(
+  Schema.toCodecJson(Schema.Array(AuthClientSession)),
+);
+
+/** The server's client sessions, from the factory's route: upstream lists them only over the WebSocket. */
+async function listClientSessions(
+  httpBaseUrl: string,
+  headers: { readonly authorization: string },
+  fetchFn: FactoryFetch,
+): Promise<FactoryResult<{ readonly sessions: ReadonlyArray<AuthClientSession> }>> {
+  let response: Response;
+  try {
+    response = await request(
+      fetchFn,
+      environmentEndpointUrl(httpBaseUrl, "/api/factory/auth/clients"),
+      { method: "GET", headers: { ...headers, accept: "application/json" } },
+    );
+  } catch {
+    return { ok: false, reason: UNREACHABLE };
+  }
+  if (response.status === 401) {
+    return { ok: false, reason: "The server no longer accepts this pairing." };
+  }
+  if (response.status === 403) {
+    return { ok: false, reason: "This pairing cannot list the server's sessions." };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: `The server returned an error (${response.status}).` };
+  }
+  const sessions = decodeClientSessions(await response.json().catch(() => undefined));
+  return Option.isSome(sessions)
+    ? { ok: true, sessions: sessions.value }
+    : { ok: false, reason: "The server returned an unexpected session list." };
 }
 
 /**
