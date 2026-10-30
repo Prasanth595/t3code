@@ -1,6 +1,6 @@
 import * as NodeOS from "node:os";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -48,7 +48,6 @@ export class DesktopBackendConfiguration extends Context.Service<
     readonly resolveWsl: (input: {
       readonly port: number;
       readonly distro: string | null;
-      readonly hostEnvironmentId?: EnvironmentId | undefined;
     }) => Effect.Effect<
       DesktopBackendManager.DesktopBackendStartConfig,
       PlatformError.PlatformError
@@ -838,7 +837,15 @@ export const make = Effect.gen(function* () {
     resolveWsl: Effect.fnUntraced(
       function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        // Ownership is optional; WSL must start even before the primary creates its identity.
+        const hostEnvironmentId = yield* fileSystem
+          .readFileString(environment.path.join(environment.stateDir, "environment-id"))
+          .pipe(
+            Effect.map((value) => value.trim()),
+            Effect.map((value) => (value ? EnvironmentId.make(value) : undefined)),
+            Effect.orElseSucceed(() => undefined),
+          );
+        return yield* resolveWslStartConfig({ ...shared, ...input, hostEnvironmentId }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),

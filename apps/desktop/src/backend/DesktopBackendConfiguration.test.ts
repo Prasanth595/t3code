@@ -329,11 +329,13 @@ describe("DesktopBackendConfiguration", () => {
       const observedDistros: Array<string | null> = [];
       const config = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        return yield* configuration.resolveWsl({
-          port: 5000,
-          distro: null,
-          hostEnvironmentId: EnvironmentId.make("windows-primary"),
-        });
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(environment.stateDir, "environment-id"),
+          "windows-primary\n",
+        );
+        return yield* configuration.resolveWsl({ port: 5000, distro: null });
       }).pipe(
         Effect.provide(
           layerBackendConfiguration().pipe(
@@ -769,6 +771,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrap.host, "0.0.0.0");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+          assert.deepEqual(config.bootstrap.desktopHost, {});
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");

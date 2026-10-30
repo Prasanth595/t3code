@@ -127,6 +127,9 @@ describe("collectServerUpdateTargets", () => {
     ]);
     expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
       ["nightly-service", "on the nightly channel"],
+      ["other-wsl", "update its owning desktop app"],
+      ["offline-wsl", "not connected"],
+      ["unattributed-wsl", "update its owning desktop app"],
       ["old-desktop", "needs a newer desktop app"],
       ["offline", "not connected"],
       ["never-connected", "not connected"],
@@ -134,6 +137,47 @@ describe("collectServerUpdateTargets", () => {
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
     ]);
+  });
+
+  it.each([
+    {
+      name: "updating",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed"),
+      covered: true,
+    },
+    { name: "absent", owner: undefined, covered: false },
+    {
+      name: "offline",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed", { connected: false }),
+      covered: false,
+    },
+    {
+      name: "denied",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed", { canMaintain: false }),
+      covered: false,
+    },
+    {
+      name: "current",
+      owner: machine("windows-primary", "0.0.50", "desktop-managed"),
+      covered: false,
+    },
+    {
+      name: "not a desktop",
+      owner: machine("windows-primary", "0.0.40", "boot-service"),
+      covered: false,
+    },
+  ])("only omits a secondary when its owner is updating: $name", ({ owner, covered }) => {
+    const { targets, skipped } = collectServerUpdateTargets(
+      [secondary("wsl"), ...(owner ? [owner] : [])],
+      "0.0.50",
+      true,
+    );
+    expect(targets.some((target) => target.environmentId === "wsl")).toBe(false);
+    expect(skipped.find((entry) => entry.environmentId === "wsl")).toEqual(
+      covered
+        ? undefined
+        : { environmentId: "wsl", label: "wsl", reason: "update its owning desktop app" },
+    );
   });
 
   it("waits for npm only for hosts that install from it or when the release may lack archives", () => {
@@ -307,8 +351,9 @@ describe("collectRestartingMachines", () => {
       withContinuation("opted-out", {}, false),
       machine("old", "0.0.40", "boot-service"),
       withContinuation("providers-only"),
+      secondary("wsl"),
     ];
-    const servers = ["alvin", "opted-out", "old"].map((id) => ({
+    const servers = ["alvin", "opted-out", "old", "windows-primary"].map((id) => ({
       environmentId: EnvironmentId.make(id),
     }));
 
@@ -317,10 +362,11 @@ describe("collectRestartingMachines", () => {
       { environmentId: "alvin", continuesThreads: true },
       { environmentId: "opted-out", continuesThreads: false },
       { environmentId: "old", continuesThreads: false },
+      { environmentId: "wsl", continuesThreads: false },
     ]);
     expect(
       collectRestartingMachines(machines, servers, false).map((entry) => entry.environmentId),
-    ).toEqual(["alvin", "opted-out", "old"]);
+    ).toEqual(["alvin", "opted-out", "old", "wsl"]);
   });
 });
 
