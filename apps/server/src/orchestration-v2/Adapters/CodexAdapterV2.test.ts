@@ -266,6 +266,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
       assert.notProperty(yield* build(undefined), "cyberAccessProgram");
       assert.notProperty(yield* build("default"), "cyberAccessProgram");
+      assert.notProperty(yield* build("standard"), "cyberAccessProgram");
       assert.notProperty(yield* build("daybreakPurple"), "cyberAccessProgram");
       assert.equal((yield* build("daybreakBlue")).cyberAccessProgram, "daybreakBlue");
       assert.equal((yield* build("daybreakRed")).cyberAccessProgram, "daybreakRed");

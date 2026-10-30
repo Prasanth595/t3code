@@ -151,6 +151,13 @@ export function buildTraitsTriggerDisplay(input: {
         continue;
       }
     }
+    if (
+      input.provider === "codex" &&
+      descriptor.id === "cyberAccessProgram" &&
+      getProviderOptionCurrentValue(descriptor) === "default"
+    ) {
+      continue;
+    }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
