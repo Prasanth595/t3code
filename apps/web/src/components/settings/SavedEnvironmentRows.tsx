@@ -20,6 +20,10 @@ import {
   connectionStatusText,
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -53,6 +57,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
+import { environmentReconnectActionLabel } from "~/connection/environmentReconnectAction";
 import { readEnvironmentScope } from "~/state/session";
 import {
   type EnvironmentPresentation,
@@ -172,6 +177,12 @@ export function SavedBackendListRow({
   const resumingServerUpdate =
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
   const status = savedBackendStatus(environment);
+  // Only the backoff wait gets a new control. Offline and failed connections
+  // keep the switch and their existing recovery.
+  const retryNowLabel =
+    environmentReconnectActionLabel(environment.connection.phase) === "Retry now"
+      ? "Retry now"
+      : null;
   const serverVersion = environment.serverConfig?.environment.serverVersion ?? null;
   // Discovery empties its map on every refresh, so hold the last descriptor
   // seen or the glyph would blink back to the generic one each time.
@@ -193,6 +204,22 @@ export function SavedBackendListRow({
     setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
   }
   const retryNow = useAtomCommand(environmentCatalog.retryNow);
+  const retrySavedBackend = useAtomCommand(environmentCatalog.retryNow, {
+    reportFailure: false,
+  });
+  const handleRetrySavedBackend = async () => {
+    const result = await retrySavedBackend(environmentId);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not reconnect environment",
+          description: error instanceof Error ? error.message : "Failed to reconnect.",
+        }),
+      );
+    }
+  };
   const {
     diagnosis: currentDiagnosis,
     state: connectionState,
@@ -379,6 +406,16 @@ export function SavedBackendListRow({
           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
           appearance="icon"
         />
+      ) : null}
+      {retryNowLabel !== null ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={isRemoving}
+          onClick={() => void handleRetrySavedBackend()}
+        >
+          {retryNowLabel}
+        </Button>
       ) : null}
       <Tooltip>
         <TooltipTrigger
