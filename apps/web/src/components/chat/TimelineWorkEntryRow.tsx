@@ -24,7 +24,7 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useDeferredValue, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -65,6 +65,7 @@ import {
   buildToolCallExpandedBody,
   workEntryIconName,
   remarkThoughtPreview,
+  thoughtPreviewSource,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -115,14 +116,20 @@ const toolCallExpandedBodyClassName =
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+const NO_REASONING_ENTRIES: ReadonlyArray<TimelineWorkEntry> = [];
+
 export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
+  // Long traces re-parse on every delta; deferring lets newer deltas interrupt a stale render.
+  // Defer the whole list so the commit that grows the text also reruns live-follow scrolling.
+  // The empty initial value moves the first full parse out of the expanding click's commit.
+  const deferredEntries = useDeferredValue(entries, NO_REASONING_ENTRIES);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
   return (
-    <WorkLogDetails followLive={entries.some(isStreaming)}>
-      {entries.map((entry) => (
+    <WorkLogDetails followLive={deferredEntries.some(isStreaming)}>
+      {deferredEntries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
           className="text-foreground"
@@ -417,7 +424,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {isReasoning && !expanded ? (
                 <ChatMarkdown
                   inline
-                  text={workEntry.detail ?? previewText}
+                  text={thoughtPreviewSource(workEntry.detail ?? previewText)}
                   cwd={ctx.markdownCwd}
                   parseRawHtml={false}
                   extraRemarkPlugins={[
