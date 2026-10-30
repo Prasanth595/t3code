@@ -100,6 +100,25 @@ describe("thread links", () => {
         title,
       ),
     ).toBe("[There](t3-thread://v2/there/t1) and [Here](t3-thread://v2/local/t1)");
+    const bare =
+      "One agent is working: t3-thread://v2/there/thread:delegated-task:command%3Amcp%3A1";
+    expect(threadLinkRefs(bare, local)).toEqual([
+      ref("there", "thread:delegated-task:command%3Amcp%3A1"),
+      ref("there", "thread:delegated-task:command:mcp:1"),
+    ]);
+    expect(relabelThreadLinks(bare, local, () => "Convert settings to TypeScript")).toBe(
+      "One agent is working: [Convert settings to TypeScript](t3-thread://v2/there/thread:delegated-task:command%3Amcp%3A1)",
+    );
+    expect(
+      relabelThreadLinks("See (t3-thread://v1/t1), then t3-thread://v2/there/t1.", local, title),
+    ).toBe("See ([Here](t3-thread://v1/t1)), then [There](t3-thread://v2/there/t1).");
+    for (const marker of ["*", "**", "_", "__", "~~", '"', "'"]) {
+      const emphasized = `${marker}t3-thread://v2/there/t1${marker}`;
+      expect(threadLinkRefs(emphasized, local)).toEqual([ref("there", "t1")]);
+      expect(relabelThreadLinks(emphasized, local, title)).toBe(
+        `${marker}[There](t3-thread://v2/there/t1)${marker}`,
+      );
+    }
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -113,6 +132,12 @@ describe("thread links", () => {
     expect(relabelThreadLinks("[Old](t3-thread://v1/t1)", local, () => undefined)).toBe(
       "[Old](t3-thread://v1/t1)",
     );
+    expect(relabelThreadLinks("t3-thread://v1/t1", local, () => undefined)).toBe(
+      "[t1](t3-thread://v1/t1)",
+    );
+    expect(relabelThreadLinks("t3-thread://v2/there/t1", local, () => undefined)).toBe(
+      "Thread on another machine",
+    );
   });
 
   it("leaves links inside code spans and fences as written", () => {
@@ -122,6 +147,14 @@ describe("thread links", () => {
       "<t3-thread://v2/local/t1>",
       "```",
       "After <t3-thread://v2/local/t1>",
+      "Literal `t3-thread://v2/local/t1`",
+      "Literal `first line\nt3-thread://v2/local/t1`",
+      "[open](https://example.com/?redirect=t3-thread://v1/t1)",
+      "https://example.com/?redirect=t3-thread://v1/t1",
+      "[Open][ref]",
+      "",
+      "[ref]: t3-thread://v2/local/t1",
+      "[two]: t3-thread://v2/local/t2",
     ].join("\n");
     expect(relabelThreadLinks(markdown, local, () => "New")).toBe(
       [
@@ -130,8 +163,26 @@ describe("thread links", () => {
         "<t3-thread://v2/local/t1>",
         "```",
         "After [New](t3-thread://v2/local/t1)",
+        "Literal `t3-thread://v2/local/t1`",
+        "Literal `first line\nt3-thread://v2/local/t1`",
+        "[open](https://example.com/?redirect=t3-thread://v1/t1)",
+        "https://example.com/?redirect=t3-thread://v1/t1",
+        "[Open][ref]",
+        "",
+        "[ref]: t3-thread://v2/local/t1",
+        "[two]: t3-thread://v2/local/t2",
       ].join("\n"),
     );
+    for (const live of [
+      "Stray `\n\n[old](t3-thread://v1/t1) `code`",
+      "Summary\n[Agent]: [old](t3-thread://v1/t1)",
+    ]) {
+      expect(threadLinkRefs(live, local)).toEqual([ref("local", "t1")]);
+    }
+    expect(threadLinkRefs("`first line\nt3-thread://v2/local/t1`", local)).toEqual([]);
+    expect(
+      threadLinkRefs("[open](https://example.com/?redirect=t3-thread://v1/t1)", local),
+    ).toEqual([]);
   });
 
   it("lists the threads a message's links can name, outside code", () => {
