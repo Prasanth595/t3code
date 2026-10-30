@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import { describe } from "vite-plus/test";
 
 import type { Attention, AttentionItem } from "./attention.ts";
-import type { HandPause, PendingDeploy } from "./claims.ts";
+import { PENDING_STALE_MS, type HandPause, type PendingDeploy } from "./claims.ts";
 import {
   timeLimitOnlyProjectConfig,
   type MachineConfig,
@@ -32,7 +32,6 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
-  PENDING_STALE_MS,
   PRUNE_EVERY_MS,
   STUCK_READ_EVERY_MS,
   UNSETTLED_READ_EVERY_MS,
@@ -173,6 +172,8 @@ class Fake implements PassWorld {
   pause: HandPause | null = null;
   /** The build autodeploy has waiting, if any. */
   pending: PendingDeploy | null = null;
+  /** The end of the snooze in `deploy-snoozed`, in epoch ms, if any. */
+  snooze: number | null = null;
   /** The machine's `deploy_wait_minutes` for the passes `pass` runs. */
   deployWaitMinutes = 120;
   /** The free bytes `freeSpace` reports; `"error"` is a probe that fails. */
@@ -559,6 +560,10 @@ class Fake implements PassWorld {
 
   pendingDeploy() {
     return this.pending;
+  }
+
+  deploySnooze() {
+    return this.snooze;
   }
 
   /** Each model's cooldown, kept from pass to pass as the live world keeps it. */
@@ -2747,6 +2752,46 @@ describe("draining for a deploy", () => {
       assert.deepEqual(drainLines(lines), []);
       assert.deepEqual(waitingItems(fake), []);
       assert.equal(report.claimed, 1);
+    }),
+  );
+
+  it.effect("an active snooze claims as normal and clears the deploy-waiting item", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.snooze = T0 + 40 * 60_000;
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(drainLines(lines), []);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("deploy snoozed")),
+        [
+          `deploy snoozed until ${formatTs(T0 + 40 * 60_000)}: build 7a70dadf1 is waiting; claiming as normal`,
+        ],
+      );
+      assert.deepEqual(waitingItems(fake), []);
+      assert.equal(report.claimed, 1);
+    }),
+  );
+
+  it.effect("an expired snooze holds claims again, the wait counted from its end", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      fake.snooze = T0 - 5 * 60_000;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("5m")]);
+      assert.deepEqual(waitingItems(fake), []);
+      fake.now += 115 * 60_000;
+      fake.pending = { sinceMs: T0 - 3 * 60 * 60_000, commit: SHA, writtenMs: fake.now };
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
     }),
   );
 });

@@ -69,7 +69,7 @@ const DEFAULT_KEEP_VERSIONS = 3;
 const DEFAULT_MIN_FREE_GIB = 10;
 
 /** Minutes a waiting autodeploy build may hold claims back; see {@link MachineConfig.deployWaitMinutes}. */
-const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
+export const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
 const DEFAULT_MAX_LOAD_PER_CORE = 1;
 const DEFAULT_PRUNE_BRANCHES_AFTER_DAYS = 14;
 

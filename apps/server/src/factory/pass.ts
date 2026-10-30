@@ -8,7 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
-import type { HandPause, PendingDeploy } from "./claims.ts";
+import { deployWait, PENDING_STALE_MS, type HandPause, type PendingDeploy } from "./claims.ts";
 import {
   ambiguousMessage,
   ambiguousRepos,
@@ -285,6 +285,8 @@ export interface PassWorld {
   readonly handPause: () => HandPause | null;
   /** The build autodeploy has waiting for the runs in progress to end, when there is one. */
   readonly pendingDeploy: () => PendingDeploy | null;
+  /** The end of the snooze in `deploy-snoozed`, in epoch ms, whether or not it has passed. */
+  readonly deploySnooze: () => number | null;
   /**
    * The free space of the fuller of the volumes that hold the sessions' worktrees and the gate's
    * checkouts; not read when `min_free_gib` is 0.
@@ -902,20 +904,13 @@ const highLoad = Effect.fn("Pass.highLoad")(function* (
   return true;
 });
 
-/**
- * Three ticks of the 10-minute autodeploy job: a marker not rewritten in that long belongs to an
- * autodeploy that is not asking about runs, so it holds nothing back.
- */
-export const PENDING_STALE_MS = 30 * 60_000;
-
 /** The machine's attention item while a build has waited past `deploy_wait_minutes`. */
 const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
 
 /**
- * Whether autodeploy has a build waiting, which a steady queue would starve: the pass claims
- * nothing until it is installed. Past `deploy_wait_minutes` autodeploy installs over the runs in
- * progress and an attention item says so. A marker older than {@link PENDING_STALE_MS} is nothing
- * pending. Relaunches of claimed runs are not held back.
+ * Whether a waiting autodeploy build holds claims back: yes until installed, unless the marker is
+ * stale or a person's snooze lasts; an ended snooze restarts the wait. Past `deploy_wait_minutes`
+ * an attention item says autodeploy installs over the runs in progress.
  */
 const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
   world: PassWorld,
@@ -928,7 +923,8 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     yield* clear;
     return false;
   }
-  const age = world.nowMs() - pending.writtenMs;
+  const now = world.nowMs();
+  const age = now - pending.writtenMs;
   if (age > PENDING_STALE_MS) {
     pass.line(
       `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting; delete it if autodeploy is off`,
@@ -936,8 +932,18 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     yield* clear;
     return false;
   }
-  const waited = Math.max(0, world.nowMs() - pending.sinceMs);
   const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
+  const wait = deployWait(pending, world.deploySnooze(), now);
+  // Null only for a missing or stale marker, which returned above.
+  if (wait === null) return false;
+  if (wait.snoozedUntilMs !== null) {
+    pass.line(
+      `deploy snoozed until ${formatTs(wait.snoozedUntilMs)}: ${build} is waiting; claiming as normal`,
+    );
+    yield* clear;
+    return false;
+  }
+  const waited = Math.max(0, now - wait.clockFromMs);
   pass.line(
     `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
   );

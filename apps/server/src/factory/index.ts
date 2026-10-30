@@ -22,7 +22,7 @@ import * as Stream from "effect/Stream";
 
 import * as AttentionService from "./attention.ts";
 import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./attention.ts";
-import { loadHandPause, loadPendingDeploy } from "./claims.ts";
+import { loadDeploySnooze, loadHandPause, loadPendingDeploy } from "./claims.ts";
 import {
   DEFAULT_POLL_SECONDS,
   factoryOptIn,
@@ -105,6 +105,7 @@ import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from 
 import { takeStopRequest } from "./runner/stop.ts";
 import { pruneBranches, unfinishedRunBranches } from "./t3/branchPrune.ts";
 import * as Events from "./t3/events.ts";
+import * as DeployKickService from "./t3/deployKick.ts";
 import * as ServerExitService from "./t3/exit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -786,6 +787,7 @@ export const liveWorld = (
     recordError,
     handPause: () => loadHandPause(dataDir),
     pendingDeploy: () => loadPendingDeploy(dataDir),
+    deploySnooze: () => loadDeploySnooze(dataDir),
     threadsOnBrokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(Effect.mapError(asPassError("t3"))),
     sessionRuns: () =>
@@ -1068,6 +1070,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
       settings: {
         pollSeconds: machine.pollSeconds,
         maxConcurrentRuns: machine.maxConcurrentRuns,
+        deployWaitMinutes: machine.deployWaitMinutes,
         repos: state.watched,
       },
     };
@@ -1202,6 +1205,7 @@ const FactoryRuntime = factoryRuntime();
 export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provideMerge(Paths.layer),
   Layer.provideMerge(ServerExitService.layer),
+  Layer.provideMerge(DeployKickService.layer),
   Layer.provide(Gate.layer),
   Layer.provide(Process.layer),
   Layer.provide(T3Sessions.layerLive),
