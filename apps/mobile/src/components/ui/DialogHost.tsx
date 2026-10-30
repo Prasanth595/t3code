@@ -70,6 +70,7 @@ function PromptDialog(props: {
       visible={visible}
       transparent
       animationType="fade"
+      supportedOrientations={["portrait", "portrait-upside-down", "landscape"]}
       onShow={() => inputRef.current?.focus()}
       onRequestClose={cancel}
       onDismiss={dismissed}
