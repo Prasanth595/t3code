@@ -53,9 +53,12 @@ export const MINIMUM_OPENCODE_VERSION = "1.14.19";
 // login's plugin would send requests around the proxy.
 const MINIMUM_PROXIED_OPENCODE_VERSION = "1.14.49";
 
-/** Set only by applyOpenCodeProxyEnvironment. */
-export const isOpenCodeProxied = (environment: NodeJS.ProcessEnv | undefined): boolean =>
-  environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS === "1";
+// T3's own marker: OpenCode's flags may already be set by the user without a proxy.
+const PROXIED_MARKER = "T3CODE_OPENCODE_PROXIED";
+
+/** True only for an environment built by applyOpenCodeProxyEnvironment. */
+const isOpenCodeProxied = (environment: NodeJS.ProcessEnv | undefined): boolean =>
+  environment?.[PROXIED_MARKER] === "1";
 
 /** The oldest server a spawn may accept, given its environment. */
 export const minimumOpenCodeVersionFor = (environment: NodeJS.ProcessEnv | undefined): string =>
@@ -128,6 +131,7 @@ export function applyOpenCodeProxyEnvironment(
     ...environment,
     OPENCODE_CONFIG_CONTENT: content,
     OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+    [PROXIED_MARKER]: "1",
     OPENCODE_PURE: "1",
   };
 }

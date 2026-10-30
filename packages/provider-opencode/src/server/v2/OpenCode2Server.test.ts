@@ -103,6 +103,7 @@ describe("OpenCode2Server error details", () => {
         serverPassword: "secret",
         directory: "/project",
         environment: {},
+        proxied: false,
       });
       const error = yield* server.withConnection(() => Effect.void).pipe(Effect.flip);
       return error.detail;
@@ -200,7 +201,13 @@ describe("OpenCode2Server spawned server", () => {
         serverUrl: "",
         serverPassword: "",
         directory,
-        environment: { ...(yield* HostProcess.Environment), OPENCODE_SERVER_PASSWORD: "ambient" },
+        // OpenCode's own flag may be set without a proxy; only `proxied` refuses OpenCode 2.
+        environment: {
+          ...(yield* HostProcess.Environment),
+          OPENCODE_SERVER_PASSWORD: "ambient",
+          OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+        },
+        proxied: false,
       });
       const first = yield* server.withConnection((connection) => Effect.succeed(connection));
       const second = yield* server.withConnection((connection) => Effect.succeed(connection));
@@ -217,6 +224,7 @@ describe("OpenCode2Server spawned server", () => {
           url: "http://proxy:8317",
           apiKey: "sk",
         }),
+        proxied: true,
       });
       const refused = yield* proxied
         .withConnection((connection) => Effect.succeed(connection))

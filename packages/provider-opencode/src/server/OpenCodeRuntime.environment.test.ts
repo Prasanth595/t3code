@@ -124,7 +124,9 @@ describe("verifyOpenCodeServerVersion", () => {
         OpenCodeRuntime.minimumOpenCodeVersionFor(proxied),
       ).pipe(Effect.flip);
       expect(error.detail).toBe("OpenCode v1.14.48 is too old. Upgrade to v1.14.49 or newer.");
-      expect(OpenCodeRuntime.minimumOpenCodeVersionFor({})).toBe("1.14.19");
+      expect(
+        OpenCodeRuntime.minimumOpenCodeVersionFor({ OPENCODE_DISABLE_DEFAULT_PLUGINS: "1" }),
+      ).toBe("1.14.19");
     }),
   );
 });

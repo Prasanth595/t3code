@@ -289,6 +289,7 @@ export const OpenCodeDriver: ProviderDriver<
       serverPassword: effectiveConfig.serverPassword,
       directory: host.paths.cwd,
       environment: processEnv,
+      proxied: proxy !== undefined,
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       Effect.provideService(
