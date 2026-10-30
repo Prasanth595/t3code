@@ -24,6 +24,8 @@ describe("applyOpenCodeProxyEnvironment", () => {
     // Plugins such as Codex's ChatGPT login replace fetch and would bypass the proxy.
     expect(environment.OPENCODE_DISABLE_DEFAULT_PLUGINS).toBe("1");
     expect(environment.OPENCODE_PURE).toBe("1");
+    // OpenCode treats empty content as unset.
+    expect(OpenCodeRuntime.isPlainJsonOpenCodeConfig({ OPENCODE_CONFIG_CONTENT: "" })).toBe(true);
     expect(
       OpenCodeRuntime.isPlainJsonOpenCodeConfig({
         OPENCODE_CONFIG_CONTENT: '{ "theme": "t3", // comment\n }',
@@ -64,6 +66,12 @@ describe("verifyOpenCodeProxyRouting", () => {
         environment,
       ).pipe(Effect.flip);
       expect(error.detail).toContain("openai provider points somewhere other than the proxy");
+
+      const widened = yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(
+        clientWith({ ...requested, enabled_providers: ["anthropic", "openai", "openrouter"] }),
+        environment,
+      ).pipe(Effect.flip);
+      expect(widened.detail).toContain("enables providers the proxy does not route");
     }),
   );
 });

@@ -85,6 +85,13 @@ function resolveOpenCodeConfigContent(
 const decodeOpenCodeConfigObject = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
+// OpenCode treats empty content as unset.
+const decodeRequestedOpenCodeConfig = (environment: NodeJS.ProcessEnv | undefined) => {
+  const content = resolveOpenCodeConfigContent(environment, {});
+  return decodeOpenCodeConfigObject(
+    content.trim() === "" ? OPENCODE_EMPTY_CONFIG_CONTENT : content,
+  );
+};
 const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -92,7 +99,7 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
 
 /** OpenCode accepts JSONC here, but the proxy override can only merge into plain JSON. */
 export const isPlainJsonOpenCodeConfig = (environment: NodeJS.ProcessEnv): boolean =>
-  Option.isSome(decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})));
+  Option.isSome(decodeRequestedOpenCodeConfig(environment));
 
 /**
  * Points OpenCode's built-in Anthropic and OpenAI providers at the proxy. Their model catalogs
@@ -104,7 +111,7 @@ export function applyOpenCodeProxyEnvironment(
 ): NodeJS.ProcessEnv {
   if (proxy === undefined) return environment;
   const base: Readonly<Record<string, unknown>> = Option.getOrElse(
-    decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})),
+    decodeRequestedOpenCodeConfig(environment),
     () => ({}),
   );
   const providers = asRecord(base.provider);
@@ -284,13 +291,22 @@ export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting"
   environment: NodeJS.ProcessEnv | undefined,
 ) {
   if (!isOpenCodeProxied(environment)) return;
-  const requested = Option.getOrElse(
-    decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})),
-    () => ({}),
-  );
+  const requested = Option.getOrElse(decodeRequestedOpenCodeConfig(environment), () => ({}));
   const effective = yield* runOpenCodeSdk("config.get", (signal) =>
     client.config.get(undefined, { signal }),
   );
+  const enabled = asRecord(effective.data).enabled_providers;
+  const routedOnly =
+    Array.isArray(enabled) &&
+    enabled.length > 0 &&
+    enabled.every((id) => (PROXY_ROUTED_OPENCODE_PROVIDERS as ReadonlyArray<unknown>).includes(id));
+  if (!routedOnly) {
+    return yield* new OpenCodeRuntimeError({
+      operation: "config.get",
+      detail:
+        "OpenCode enables providers the proxy does not route, likely from an organization or managed config. Remove that override or turn off Use proxy.",
+    });
+  }
   for (const providerId of PROXY_ROUTED_OPENCODE_PROVIDERS) {
     if (providerBaseUrl(effective.data, providerId) !== providerBaseUrl(requested, providerId)) {
       return yield* new OpenCodeRuntimeError({
