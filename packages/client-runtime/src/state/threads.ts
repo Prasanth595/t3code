@@ -641,10 +641,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   // Items received before the server's completion marker apply together when it
-  // arrives, so a replayed resume renders its final state once. A restarted
-  // attempt keeps them: its replay repeats them from the unmoved cursor, and
-  // already applied sequences are skipped.
+  // arrives, so a replayed resume renders its final state once. A new attempt
+  // drops them: they were never applied, so its cursor replays them.
   let catchUp: OrchestrationV2ThreadStreamItem[] = [];
+  const startAttempt = applyLock.withPermits(1)(
+    Effect.sync(() => {
+      catchUp = [];
+    }),
+  );
   const receiveItems = Effect.fn("EnvironmentThreadState.receiveItems")(function* (
     received: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
   ) {
@@ -962,6 +966,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        yield* startAttempt;
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
