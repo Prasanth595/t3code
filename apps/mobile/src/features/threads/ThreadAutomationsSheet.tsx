@@ -9,7 +9,12 @@ import {
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useFocusEffect,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { ScreenStack } from "react-native-screens";
@@ -86,7 +91,8 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
 
   const edit = (task: ScheduledTask) => {
     startScheduledTaskEditor({ environmentId, environmentLabel, draft: editDraft(task) });
-    openSettings(navigation, "SettingsScheduledTaskEdit");
+    // Replacing the leaf sheet keeps the editor a detail of this thread, so Back and Save return here.
+    navigation.dispatch(StackActions.replace("SettingsScheduledTaskEdit"));
   };
   const act = async (task: ScheduledTask, action: "run" | "toggle") => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
