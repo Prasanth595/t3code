@@ -9954,6 +9954,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
+          const resolvedTurnCwd = yield* fileSystem
+            .realPath(turnInput.runtimePolicy.cwd ?? ".")
+            .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
           const querySession = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
@@ -10006,9 +10009,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
-              yield* fileSystem
-                .realPath(turnInput.runtimePolicy.cwd ?? ".")
-                .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd)),
+              resolvedTurnCwd,
               hostPlatform,
             ),
           };
