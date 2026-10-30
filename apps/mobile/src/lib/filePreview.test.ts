@@ -1,3 +1,5 @@
+import { RegistryProvider } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   act,
   createElement,
@@ -19,6 +21,8 @@ import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
+
+const guestDetails = vi.hoisted(() => ({ read: vi.fn() }));
 
 const audio = vi.hoisted(() => ({
   status: {
@@ -166,11 +170,18 @@ vi.mock("../state/projects", () => ({
 }));
 vi.mock("../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../state/session", () => ({
+  useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: {},
+  threadEnvironment: {},
+  environmentThreadDetails: {
+    threadAtom: (ref: unknown) => guestDetails.read(ref) ?? Atom.make(null),
+  },
+}));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
@@ -269,7 +280,6 @@ vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({}));
-vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
 vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => null }));
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
@@ -1418,4 +1428,61 @@ describe("ThreadFeed previews", () => {
       await act(async () => root.unmount());
     }
   });
+});
+
+it("does not read a newly created feed's guest details until creation completes", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const reads: string[] = [];
+  const threadAtom = Atom.family((id: string) =>
+    Atom.make(() => {
+      reads.push(id);
+      return null;
+    }),
+  );
+  guestDetails.read.mockImplementation((ref: { threadId: string }) => threadAtom(ref.threadId));
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const props: Parameters<typeof ThreadFeed>[0] = {
+    detailRef: null,
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("pending-thread"),
+    threadTitle: "pending",
+    feed: [],
+    queuedMessages: [],
+    dispatchingMessageId: null,
+    onEditPendingMessage: null,
+    contentPresentation: { kind: "ready" },
+    latestRun: null,
+    activeWorkStartedAt: null,
+    listRef: { current: null },
+    freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+    contentInsetEndAdjustment: { value: 0 } as Parameters<
+      typeof ThreadFeed
+    >[0]["contentInsetEndAdjustment"],
+    anchorMessageId: null,
+    keyboardOffset: 0,
+  };
+  try {
+    await act(async () =>
+      root.render(createElement(RegistryProvider, null, createElement(ThreadFeed, props))),
+    );
+    expect(reads).toEqual([]);
+    await act(async () =>
+      root.render(
+        createElement(
+          RegistryProvider,
+          null,
+          createElement(ThreadFeed, {
+            ...props,
+            detailRef: { environmentId: props.environmentId, threadId: props.threadId },
+          }),
+        ),
+      ),
+    );
+    expect(reads).toEqual(["pending-thread"]);
+  } finally {
+    await act(async () => root.unmount());
+    guestDetails.read.mockReset();
+    vi.unstubAllGlobals();
+  }
 });
