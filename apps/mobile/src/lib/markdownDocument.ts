@@ -417,9 +417,9 @@ export function markdownWithBlockImages(markdown: string): string {
       .replace(/\[[ xX]\]\s*$/, "")
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
-    const afterImage = new RegExp(
-      `^[ \\t]*(?:\\\\?\\r?\\n(?:[ \\t]*>){${markers.split(">").length - 1}}[ \\t]*)?`,
-    );
+    const separator = `[ \\t]*(?:\\\\?\\r?\\n(?:[ \\t]*>){0,${markers.split(">").length - 1}}[ \\t]*)?`;
+    const beforeImage = new RegExp(`(?:^|[^ \\t])(${separator})$`);
+    const afterImage = new RegExp(`^${separator}`);
     const editCount = edits.length;
     let previousEnd = start;
     for (const [index, child] of node.children.entries()) {
@@ -436,9 +436,7 @@ export function markdownWithBlockImages(markdown: string): string {
         return;
       }
       // Each break replaces the spaces, hard break and line prefix it lands on.
-      const before = /(?:^|[^ \t])([ \t]*(?:\\?\r?\n[ \t>]*)?)$/.exec(
-        markdown.slice(start, imageStart),
-      )![1]!;
+      const before = beforeImage.exec(markdown.slice(start, imageStart))![1]!;
       if (imageStart > previousEnd)
         edits.push({ start: imageStart - before.length, end: imageStart, content: paragraphBreak });
       if (imageEnd < end) {
