@@ -42,7 +42,7 @@ default_project:
   limits: { gate_retries: 2 }
 ```
 
-`instructors` is required, with at least one login. `limits` takes the same keys as a repo's ([Add a repo](/guide/add-a-repo#_1-commit-the-factory-block)), and `gate_retries` defaults to `2` here. Any other key in the block is an error. A repo on the default uses its default branch as `base`, `pr` autonomy and no required checks, and the factory infers its `provision` and `gate` from the manifests on that branch each pass, so a script you add there shows up without a restart. A repo with a `factory` block, in its checkout or on its default branch on GitHub, uses that block and nothing from here.
+`instructors` is required, with at least one login. `limits` takes the same keys as a repo's ([Add a repo](/guide/add-a-repo#_1-commit-the-factory-block)), and `gate_retries` defaults to `2` here. Any other key in the block is an error. A repo on the default uses its default branch as `base`, `pr` autonomy and no required checks, and the factory infers its `provision` and `gate` from the manifests on that branch each pass, so a script you add there shows up on the next pass once the checkout has fetched it. Each watched repo costs a few GitHub API calls per pass, so a machine with many GitHub projects spends more of the login's hourly limit. A repo with a `factory` block, in its checkout or on its default branch on GitHub, uses that block and nothing from here.
 
 Without `default_project`, only repos with a `factory` block are watched.
 

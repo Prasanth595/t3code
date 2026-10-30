@@ -78,9 +78,9 @@ With the machine config's `default_project` set, a T3 project whose GitHub-origi
 
 A repo with both manifests gets both: composer first in `provision` and in `gate`. With more than one lockfile, the first row that matches wins. A `package.json` with no lockfile infers nothing.
 
-Each pass reads `.dw/config.yml` on the default branch on GitHub first: if it has a `factory` block, that block is used as for any repo, even though the checkout showed none.
+Each pass reads `.dw/config.yml` on the default branch on GitHub first, as for any watched repo (three API calls per repo per pass): if it has a `factory` block, that block is used, even though the checkout showed none, and Settings does not mark the repo "default config". The files are read from the checkout's `origin/HEAD`, so they are as fresh as its last fetch.
 
-No gate inferred (no manifest, or no matching script): the repo is watched, its reading is one error saying no gate could be inferred and a `factory` block in `.dw/config.yml` is needed, and its issues are not claimed. A clone with no `origin/HEAD` is watched with one error saying to run `git remote set-head origin --auto`. A `git` that times out leaves the checkout unresolved for that pass. A checkout T3 cannot name (no remote) is not watched. When another project of the same repo has its own `factory` block, the defaulted checkout is dropped, so the repo is not ambiguous.
+No gate inferred (no manifest, or no matching script): the repo is watched, its reading is one error saying no gate could be inferred and a `factory` block in `.dw/config.yml` is needed, and its issues are not claimed. A clone with no `origin/HEAD`, or one whose `origin/HEAD` names another branch than the default branch on GitHub, is watched with one error saying to run `git remote set-head origin --auto`. A `git` that times out reading the files leaves the checkout unresolved for that pass. A checkout T3 cannot name (no remote, or a timeout) is not watched that pass. When another project of the same repo has its own `factory` block, the defaulted checkout is dropped, so the repo is not ambiguous.
 
 ## Gate
 
