@@ -142,6 +142,27 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Move a worktree thread to the project folder
+
+A thread that works in a worktree can move into the project folder itself. Open the
+**Worktree** control under the composer and choose **Move to local checkout**; the
+confirmation shows which branch the project folder switches to, every change that comes along,
+and anything that stops the move. The project
+folder switches to the thread's branch and the worktree's uncommitted changes come with it,
+staged changes still staged. The agent continues there from its next message. Agents can do
+the same with the `t3_worktree_move_to_local` tool.
+
+The project folder needs no uncommitted changes of its own, and no other thread can be working
+in it. The move also stops when another thread shares the worktree, when a file would land on one
+already in the project folder, when a submodule has uncommitted work, or when files are hidden from
+git with assume-unchanged or skip-worktree. If a step fails, both folders go back to how they were.
+The rollback never deletes anything: whatever it takes out of the project folder goes to a
+recovery folder named in the error. If T3 Code stops in the middle of a move, the next move of
+that thread undoes what was left half done before it starts.
+
+The move never deletes the worktree folder. It stays on a detached HEAD with its own copy of the
+changes; delete it yourself once you no longer need it.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

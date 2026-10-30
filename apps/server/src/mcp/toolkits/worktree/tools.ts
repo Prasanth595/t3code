@@ -6,6 +6,8 @@ import {
   VcsListRefsResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
+  WorktreeMcpMoveToLocalInput,
+  WorktreeMcpMoveToLocalResult,
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
@@ -36,6 +38,21 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   dependencies,
 })
   .annotate(Tool.Title, "Hand off thread to a git worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+const WorktreeMoveToLocalTool = Tool.make("t3_worktree_move_to_local", {
+  description:
+    "Move THIS thread from its worktree into the project's local checkout, with its branch and uncommitted changes. Says why when it can't. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn.",
+  parameters: WorktreeMcpMoveToLocalInput,
+  success: WorktreeMcpMoveToLocalResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Move thread to the local checkout")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
@@ -85,6 +102,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Destructive, false);
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
+  WorktreeMoveToLocalTool,
   WorktreeStatusTool,
   WorktreeListTool,
 );
