@@ -4,6 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import {
+  PI_T3_LIFECYCLE_EXTENSION_FILENAME,
+  PI_T3_LIFECYCLE_EXTENSION_SOURCE,
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
@@ -220,21 +222,36 @@ function withoutToolSelectionArgs(args: ReadonlyArray<string>): ReadonlyArray<st
   return filtered;
 }
 
-function piT3McpExtensionDestPath(cacheDir: string): string {
-  return `${cacheDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
-}
+const materializePiExtension = Effect.fnUntraced(function* (
+  cacheDir: string,
+  filename: string,
+  source: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.makeDirectory(cacheDir, { recursive: true });
+  const dest = `${cacheDir.replace(/\\/g, "/")}/${filename}`;
+  const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
+  if (existing !== source) {
+    yield* fs.writeFileString(dest, source);
+  }
+  return dest;
+});
 
 export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtension")(function* (
   cacheDir: string,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  yield* fs.makeDirectory(cacheDir, { recursive: true });
-  const dest = piT3McpExtensionDestPath(cacheDir);
-  const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
-  if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_T3_MCP_EXTENSION_SOURCE);
-  }
-  return dest;
+  return {
+    extensionPath: yield* materializePiExtension(
+      cacheDir,
+      PI_T3_MCP_EXTENSION_FILENAME,
+      PI_T3_MCP_EXTENSION_SOURCE,
+    ),
+    lifecycleExtensionPath: yield* materializePiExtension(
+      cacheDir,
+      PI_T3_LIFECYCLE_EXTENSION_FILENAME,
+      PI_T3_LIFECYCLE_EXTENSION_SOURCE,
+    ),
+  };
 });
 
 export function buildPiRpcLaunch(input: {
@@ -242,6 +259,7 @@ export function buildPiRpcLaunch(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly mcpSession: McpProviderSessionConfig | undefined;
   readonly extensionPath: string | undefined;
+  readonly lifecycleExtensionPath?: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
@@ -267,6 +285,9 @@ export function buildPiRpcLaunch(input: {
       : input.sessionPath !== undefined
         ? ["--session", input.sessionPath]
         : []),
+    ...(hasT3Extension && input.lifecycleExtensionPath !== undefined
+      ? ["--extension", input.lifecycleExtensionPath]
+      : []),
     ...launchArgs,
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
     ...(input.disableExtensions === true ? ["--no-extensions"] : []),
