@@ -926,61 +926,74 @@ it.effect("retains a Bitbucket host summary when the provider rejects saved cred
   }),
 );
 
-it.effect("identifies every SSH worktree behind an unavailable refined Forgejo authority", () =>
-  Effect.gen(function* () {
-    const service = yield* makeService({
-      projects: ["ssh", "ssh-worktree"].map((id) =>
-        project({
-          id,
-          title: id,
-          workspaceRoot: `/${id}`,
-          repository: "team/repo",
-          provider: "forgejo",
-          host: "ssh.forge.example",
-          remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
-        }),
-      ),
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("forgejo"), {
-          getViewer: ({ host }) => {
-            assert.strictEqual(host, "forge.example:3000");
-            return Effect.fail(
-              unusable(SourceControlProviderKind.make("forgejo"), "unauthenticated"),
-            );
-          },
-          listChangeRequests: () => Effect.die("An unauthenticated host must not be queried"),
-        }),
-      ],
-      resolveHandle: ({ context }) =>
-        Effect.succeed({
-          context: {
-            ...context!,
-            provider: {
-              kind: SourceControlProviderKind.make("forgejo"),
-              name: "Forgejo",
-              baseUrl: "http://forge.example:3000",
+it.effect.each([
+  {
+    provider: "forgejo",
+    host: "ssh.forge.example",
+    remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+  },
+  {
+    provider: "unknown",
+    host: "forge.example",
+    remoteUrl: "http://forge.example:3000/team/repo.git",
+  },
+])(
+  "identifies every worktree behind an unavailable refined Forgejo authority",
+  ({ provider, host, remoteUrl }) =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: ["ssh", "ssh-worktree"].map((id) =>
+          project({
+            id,
+            title: id,
+            workspaceRoot: `/${id}`,
+            repository: "team/repo",
+            provider,
+            host,
+            remoteUrl,
+          }),
+        ),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("forgejo"), {
+            getViewer: ({ host }) => {
+              assert.strictEqual(host, "forge.example:3000");
+              return Effect.fail(
+                unusable(SourceControlProviderKind.make("forgejo"), "unauthenticated"),
+              );
             },
-          },
-          provider: undefined as never,
-        }),
-    });
-    const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
-    assert.isDefined(error.listResult);
-    const result = error.listResult!;
-    assert.deepStrictEqual(
-      result.providers.map(({ host, configured, projectIds }) => ({
-        host,
-        configured,
-        projectIds: projectIds?.map(String),
-      })),
-      [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
-    );
-    assert.deepStrictEqual(result.entries, []);
-    assert.deepStrictEqual(
-      result.errors.map(({ projectId }) => projectId),
-      ["ssh"],
-    );
-  }),
+            listChangeRequests: () => Effect.die("An unauthenticated host must not be queried"),
+          }),
+        ],
+        resolveHandle: ({ context }) =>
+          Effect.succeed({
+            context: {
+              ...context!,
+              provider: {
+                kind: SourceControlProviderKind.make("forgejo"),
+                name: "Forgejo",
+                baseUrl: "http://forge.example:3000",
+              },
+            },
+            provider: undefined as never,
+          }),
+      });
+      const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+      assert.isDefined(error.listResult);
+      const result = error.listResult!;
+      assert.deepStrictEqual(
+        result.providers.map(({ host, configured, projectIds }) => ({
+          host,
+          configured,
+          projectIds: projectIds?.map(String),
+        })),
+        [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
+      );
+      assert.deepStrictEqual(result.entries, []);
+      assert.deepStrictEqual(
+        result.errors.map(({ projectId }) => projectId),
+        ["ssh"],
+      );
+    }),
 );
 
 it.effect("reads a repository once when several worktrees share it", () =>
