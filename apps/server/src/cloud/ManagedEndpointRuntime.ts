@@ -214,6 +214,7 @@ export const make = Effect.gen(function* () {
         filePath: relayClientLogPath,
         maxBytes: 1024 * 1024,
         maxFiles: 2,
+        throwOnError: true,
       }),
   ).pipe(
     Effect.map((sink) =>

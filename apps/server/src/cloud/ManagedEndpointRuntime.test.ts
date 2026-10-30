@@ -336,45 +336,56 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect("keeps the connector's log lines in a file with the token redacted", () =>
+  it.effect("keeps redacted connector logs bounded even when rotation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-log-" });
-      const fixture = yield* makeTransportSpawner();
-      yield* Effect.gen(function* () {
-        const context = yield* Layer.build(
-          ManagedEndpointRuntime.layer.pipe(
-            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-            Layer.provide(runtimeDependencies(fixture.spawner)),
-          ),
-        );
-        const runtime = yield* Effect.service(
-          ManagedEndpointRuntime.CloudManagedEndpointRuntime,
-        ).pipe(Effect.provide(context));
-        yield* runtime.applyConfig({ ...tunnelConfig, connectorToken: "connector-secret" });
-        yield* fixture.observe(
-          runtime,
-          0,
-          '2026-10-16T20:29:40Z ERR Failed to serve tunnel connection error="rejected connector-secret" connIndex=0\n',
-        );
-      }).pipe(Effect.scoped);
+      for (const rotationBlocked of [false, true]) {
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-log-" });
+        const logPath = path.join(baseDir, "userdata", "logs", "relay-client.ndjson");
+        const existingLog = "x".repeat(1024 * 1024);
+        if (rotationBlocked) {
+          yield* fs.makeDirectory(`${logPath}.2`, { recursive: true });
+          yield* fs.writeFileString(`${logPath}.2/blocked`, "blocks rotation");
+          yield* fs.writeFileString(logPath, existingLog);
+        }
+        const fixture = yield* makeTransportSpawner();
+        yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            ManagedEndpointRuntime.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+              Layer.provide(runtimeDependencies(fixture.spawner)),
+            ),
+          );
+          const runtime = yield* Effect.service(
+            ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+          ).pipe(Effect.provide(context));
+          yield* runtime.applyConfig({ ...tunnelConfig, connectorToken: "connector-secret" });
+          yield* fixture.observe(
+            runtime,
+            0,
+            '2026-10-16T20:29:40Z ERR Failed to serve tunnel connection error="rejected connector-secret" connIndex=0\n',
+          );
+        }).pipe(Effect.scoped);
 
-      const log = yield* fs.readFileString(
-        path.join(baseDir, "userdata", "logs", "relay-client.ndjson"),
-      );
-      const entries = log
-        .trim()
-        .split("\n")
-        .map((line) => decodeLogEntry(line));
-      expect(entries.map((entry) => [entry.level, entry.message[0]])).toEqual([
-        ["INFO", "Relay client process started; waiting for tunnel connection"],
-        ["WARN", "Relay client reported a transport warning"],
-        ["INFO", "Relay client tunnel connection registered"],
-        ["INFO", "Relay client stopped"],
-      ]);
-      expect(log).toContain("rejected <redacted>");
-      expect(log).not.toContain("connector-secret");
+        const log = yield* fs.readFileString(logPath);
+        if (rotationBlocked) {
+          expect(log.length).toBe(existingLog.length);
+          continue;
+        }
+        const entries = log
+          .trim()
+          .split("\n")
+          .map((line) => decodeLogEntry(line));
+        expect(entries.map((entry) => [entry.level, entry.message[0]])).toEqual([
+          ["INFO", "Relay client process started; waiting for tunnel connection"],
+          ["WARN", "Relay client reported a transport warning"],
+          ["INFO", "Relay client tunnel connection registered"],
+          ["INFO", "Relay client stopped"],
+        ]);
+        expect(log).toContain("rejected <redacted>");
+        expect(log).not.toContain("connector-secret");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
