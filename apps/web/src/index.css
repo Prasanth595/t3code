@@ -2225,6 +2225,11 @@ code {
   padding-inline-end: 0;
 }
 
+/* Inline code sits slightly below its surrounding text, as it does in prose. */
+.chat-markdown table :not(pre) > code {
+  font-size: 0.875em;
+}
+
 .chat-markdown thead th {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
