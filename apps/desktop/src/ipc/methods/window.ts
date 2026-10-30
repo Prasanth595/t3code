@@ -16,6 +16,7 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -72,13 +73,29 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-    return isRelayTracingEnabled(yield* HostProcess.Environment);
-  }),
-});
+/**
+ * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem.
+ */
+export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
+    const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
+    const enabled =
+      isRelayTracingEnabled(yield* HostProcess.Environment) &&
+      (yield* readManagedPolicy(platform).pipe(
+        Effect.map((found) => found?.document.limits?.telemetry !== false),
+        Effect.orElseSucceed(() => false),
+      ));
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+        result: Schema.Boolean,
+        handler: () => Effect.succeed(enabled),
+      }),
+    );
+  },
+);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,

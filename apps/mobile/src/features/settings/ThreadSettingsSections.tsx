@@ -20,7 +20,11 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import {
+  managedSettingReason,
+  resolveMobileSettingsTargets,
+  uniformMobileSetting,
+} from "./settings-scoped-server";
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -98,6 +102,8 @@ export function AutoSettleSettingsRows(props: {
   );
 
   const disabled = !canWriteSettings || props.pending;
+  const disabledFor = (...keys: string[]) =>
+    disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (
@@ -108,14 +114,14 @@ export function AutoSettleSettingsRows(props: {
             icon="clock"
             label="Resume after usage limits"
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("autoResumeLimitedThreads")}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
             icon="clock"
             label="Snooze until limits reset"
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
@@ -125,14 +131,14 @@ export function AutoSettleSettingsRows(props: {
           icon="arrow.triangle.branch"
           label="Auto-settle merged threads"
           value={referenceSettings.sidebarAutoSettleOnMerge}
-          disabled={disabled}
+          disabled={disabledFor("sidebarAutoSettleOnMerge")}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
           label="Auto-settle inactive threads"
           value={afterDays !== null}
-          disabled={disabled}
+          disabled={disabledFor("sidebarAutoSettleAfterDays")}
           onValueChange={(value) =>
             writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
           }
@@ -143,7 +149,7 @@ export function AutoSettleSettingsRows(props: {
             <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
             <AutoSettleDaysField
               value={afterDays}
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleAfterDays")}
               onValueChange={(value) => writeToAll({ sidebarAutoSettleAfterDays: value })}
             />
           </View>
@@ -159,7 +165,7 @@ export function AutoSettleSettingsRows(props: {
             <Button
               label="Apply auto-settle defaults"
               tone="secondary"
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleOnMerge", "sidebarAutoSettleAfterDays")}
               onPress={() => writeToAll(autoSettlePatch)}
             />
           </View>

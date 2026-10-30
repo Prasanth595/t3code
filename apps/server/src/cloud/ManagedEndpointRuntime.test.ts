@@ -18,6 +18,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -42,6 +43,7 @@ const runtimeDependencies = (
   httpClient = unusedHttpClient,
 ) =>
   Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,

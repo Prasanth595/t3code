@@ -331,6 +331,10 @@
       "types": "./src/AgentScope.ts",
       "import": "./src/AgentScope.ts"
     },
+    "./managedPolicyFile": {
+      "types": "./src/managedPolicyFile.ts",
+      "import": "./src/managedPolicyFile.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"

@@ -311,6 +311,8 @@ interface ProviderSettingsFormProps {
   readonly idPrefix: string;
   readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
+  /** Config keys an administrator's policy pins, shown inert with the reason. */
+  readonly managed?: { readonly keys: ReadonlySet<string>; readonly reason: string } | undefined;
 }
 
 function ProviderSettingsSelect({
@@ -370,6 +372,7 @@ interface ProviderSettingsFieldRowProps {
   readonly idPrefix: string;
   readonly variant: ProviderSettingsFormProps["variant"];
   readonly onChange: ProviderSettingsFormProps["onChange"];
+  readonly managedReason?: string | undefined;
 }
 
 function ProviderSettingsFieldRow({
@@ -378,6 +381,7 @@ function ProviderSettingsFieldRow({
   idPrefix,
   variant,
   onChange,
+  managedReason,
 }: ProviderSettingsFieldRowProps) {
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
@@ -473,6 +477,7 @@ function ProviderSettingsFieldRow({
           field.description ? <span id={descriptionId}>{field.description}</span> : undefined
         }
         control={control}
+        managed={managedReason}
       />
     );
   }
@@ -581,6 +586,7 @@ export function ProviderSettingsForm({
   idPrefix,
   variant,
   onChange,
+  managed,
 }: ProviderSettingsFormProps) {
   const fields = deriveProviderSettingsFields(definition, value);
   const isLocalAcp =
@@ -601,6 +607,7 @@ export function ProviderSettingsForm({
           idPrefix={idPrefix}
           variant={variant}
           onChange={onChange}
+          managedReason={managed?.keys.has(field.key) ? managed.reason : undefined}
         />
       ))}
       {isLocalAcp ? <ProviderCommandArguments value={value} onChange={onChange} /> : null}

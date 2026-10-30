@@ -38,9 +38,11 @@ export function useScheduledTaskEditor() {
               member.project.environmentId === environmentId && member.project.id === project.id,
           ),
         ) ?? environmentProjects[0];
+      const config = configs.get(environmentId) ?? null;
       return createDraft(
         project?.id ?? null,
-        scheduledTaskDefaultModel(configs.get(environmentId) ?? null, project ?? null),
+        scheduledTaskDefaultModel(config, project ?? null),
+        config?.managedPolicy?.limits?.maxRuntimeMode,
       );
     },
     [configs, projects, selectedGroup],

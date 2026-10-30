@@ -57,6 +57,7 @@ import {
 } from "./thread-outbox";
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
+  managedRuntimeModeRefusal,
   isQueuedThreadCreationSendable,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
@@ -782,6 +783,14 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
+    const runtimeModeRefusal = managedRuntimeModeRefusal(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+      true,
+    );
+    if (runtimeModeRefusal !== null) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeRefusal);
+    }
 
     if (settings.runtimeMode !== thread.runtimeMode) {
       if (!hasAccess()) return true;
@@ -948,6 +957,14 @@ export function createThreadOutboxDelivery(): {
         creation.projectId,
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    const runtimeModeRefusal = managedRuntimeModeRefusal(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+      false,
+    );
+    if (runtimeModeRefusal !== null) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeRefusal);
     }
     let prepared: PreparedTurnAttachments;
     let persistedMessage: QueuedThreadMessage;

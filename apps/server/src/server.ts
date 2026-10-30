@@ -93,6 +93,8 @@ import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ManagedLimits from "./policy/managedLimits.ts";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -148,6 +150,7 @@ import {
   RELAY_URL_SECRET,
 } from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
@@ -243,6 +246,7 @@ const layerPtyAdapter = NodePtyAdapter.layer;
 
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
+  Layer.provideMerge(ManagedPolicy.layer),
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
@@ -297,13 +301,39 @@ const layerResourceDiagnostics = Layer.mergeAll(
 const layerRelayClient = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return RelayClient.layerCloudflared({ baseDir: config.baseDir });
+    const policy = yield* ManagedPolicy.ManagedPolicy;
+    const layerCloudflared = RelayClient.layerCloudflared({ baseDir: config.baseDir });
+    if (ManagedLimits.allowsConnect(policy)) return layerCloudflared;
+    // The connector only carries T3 Connect, so a policy without Connect never installs one.
+    const refused = Effect.fn("RelayClient.installRefusedByPolicy")(function* () {
+      return yield* new RelayClient.RelayClientInstallError({
+        reason: "managed_by_policy",
+        message: ManagedLimits.refuseConnect(policy).message,
+      });
+    });
+    return Layer.effect(
+      RelayClient.RelayClient,
+      Effect.gen(function* () {
+        const relayClient = yield* RelayClient.RelayClient;
+        return RelayClient.RelayClient.of({
+          ...relayClient,
+          install: refused(),
+          installWithProgress: refused,
+        });
+      }),
+    ).pipe(Layer.provide(layerCloudflared));
   }),
-);
+).pipe(Layer.provide(ManagedPolicy.layer));
 
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    // Before binding: a host the policy does not allow must never listen, not even briefly.
+    yield* ManagedLimits.checkServerReachability(yield* ManagedPolicy.ManagedPolicy, {
+      authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
+      host: config.host,
+      tailscaleServeEnabled: config.tailscaleServeEnabled,
+    });
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
@@ -330,7 +360,7 @@ const layerHttpServer = Layer.unwrap(
       },
     );
   }),
-);
+).pipe(Layer.provide(ManagedPolicy.layer));
 
 const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -699,7 +729,8 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
-  Layer.provideMerge(AnalyticsService.layer),
+  // Layers memoize by reference, so this is the same policy the settings layer reads.
+  Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
@@ -880,6 +911,11 @@ const layerMakeServer = Layer.unwrap(
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {
         const cloudLink = yield* CloudLink.CloudLink;
+        // CloudLink unlinks on startup when the policy turns Connect off; nothing to restore.
+        if (!ManagedLimits.allowsConnect(yield* ManagedPolicy.ManagedPolicy)) {
+          yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
+          return;
+        }
         const releaseManagedTunnel = cloudLink.releaseManagedTunnelOnShutdown().pipe(
           Effect.timeout("10 seconds"),
           Effect.tap((released) =>
@@ -1097,7 +1133,9 @@ const layerMakeServer = Layer.unwrap(
         ),
       ),
       Layer.provide(layerActivation),
-      Layer.provideMerge(RelayTracing.layerServerRelayBroker),
+      Layer.provideMerge(
+        RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
+      ),
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),

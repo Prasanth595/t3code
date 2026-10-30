@@ -23,6 +23,8 @@ import {
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
+  managedPolicyDeniedMessage,
+  managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -49,6 +51,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -144,6 +147,7 @@ export type WebhookDeliveryOutcome =
   | "expired"
   | "filtered"
   | "not_found"
+  | "blocked_by_policy"
   | "error";
 
 export type WebhookTriggerResult =
@@ -155,6 +159,7 @@ export type WebhookTriggerResult =
   | { readonly _tag: "not_found" }
   | { readonly _tag: "rejected_signature" }
   | { readonly _tag: "disabled" }
+  | { readonly _tag: "blocked_by_policy" }
   | {
       readonly _tag: "rate_limited";
       readonly outcome: "rate_limited" | "queue_full";
@@ -436,6 +441,17 @@ export const layer = Layer.effect(
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
+    const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
+    // Existing webhook tasks stay stored but report why they do not run.
+    const webhookPolicyBlock =
+      webhookPolicyOrganization === undefined
+        ? undefined
+        : managedPolicyDeniedMessage(webhookPolicyOrganization, "webhook tasks");
+    const withPolicy = (task: ScheduledTask): ScheduledTask =>
+      webhookPolicyBlock !== undefined && task.schedule.type === "webhook"
+        ? { ...task, blockedByPolicy: webhookPolicyBlock }
+        : task;
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
@@ -497,7 +513,11 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       const origin = yield* readWebhookOrigin;
-      return yield* Effect.forEach(rows, (row) => decodeRow(row, origin), { concurrency: 1 });
+      return yield* Effect.forEach(
+        rows,
+        (row) => decodeRow(row, origin).pipe(Effect.map(withPolicy)),
+        { concurrency: 1 },
+      );
     });
 
     const getRows = (id: ScheduledTaskId) =>
@@ -537,7 +557,7 @@ export const layer = Layer.effect(
       );
       const row = rows[0];
       if (row === undefined) return null;
-      return yield* decodeRow(row, yield* readWebhookOrigin);
+      return withPolicy(yield* decodeRow(row, yield* readWebhookOrigin));
     });
 
     const findWebhookCredentials = (id: ScheduledTaskId) =>
@@ -816,9 +836,11 @@ export const layer = Layer.effect(
               ? "The task was replaced before this delivery ran."
               : active.schedule.type !== "webhook"
                 ? "The task's trigger changed before this delivery ran."
-                : !active.enabled
-                  ? "The task was paused before this delivery ran."
-                  : null;
+                : webhookPolicyBlock !== undefined
+                  ? webhookPolicyBlock
+                  : !active.enabled
+                    ? "The task was paused before this delivery ran."
+                    : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
@@ -1127,6 +1149,20 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
+      if (input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
+        return yield* taskError(
+          webhookPolicyBlock,
+          input.id === undefined ? {} : { taskId: input.id },
+        );
+      }
+      // Refused on save rather than at run time; a disabled task can still be saved, so one
+      // stored above the ceiling can be turned off before its mode is lowered.
+      const modeDenial = input.enabled
+        ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
+        : undefined;
+      if (modeDenial !== undefined) {
+        return yield* taskError(modeDenial, input.id === undefined ? {} : { taskId: input.id });
+      }
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1258,6 +1294,12 @@ export const layer = Layer.effect(
     )(function* (input) {
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
+      const modeDenial = input.enabled
+        ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
+        : undefined;
+      if (modeDenial !== undefined) {
+        return yield* taskError(modeDenial, { taskId: input.id });
+      }
       const now = yield* localNow;
       const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
@@ -1768,6 +1810,12 @@ export const layer = Layer.effect(
 
     // triggerWebhook owns the operation span and its task-id annotation.
     const triggerWebhookUnobserved = Effect.fnUntraced(function* (request: WebhookTriggerRequest) {
+      // Refused before any lookup or log, so a blocked hook neither runs nor records a delivery.
+      if (webhookPolicyBlock !== undefined) {
+        return yield* observeDelivery(request, "blocked_by_policy", undefined, undefined).pipe(
+          Effect.as({ _tag: "blocked_by_policy" as const }),
+        );
+      }
       const taskId = decodeTaskId(request.hookId);
       const notFound = observeDelivery(request, "not_found", undefined, undefined).pipe(
         Effect.as({ _tag: "not_found" as const }),

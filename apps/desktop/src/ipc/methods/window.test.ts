@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
@@ -21,11 +22,14 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as IpcChannels from "../channels.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getRelayTelemetryEnabled,
+  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -177,21 +181,54 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
-describe("getRelayTelemetryEnabled", () => {
-  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+describe("installRelayTelemetryEnabled", () => {
+  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
+  const relayTelemetryEnabled = (env: NodeJS.ProcessEnv, policyFile?: string) =>
     Effect.gen(function* () {
-      assert.isFalse(
-        yield* getRelayTelemetryEnabled.handler().pipe(
-          Effect.provideService(HostProcess.Environment, {
-            T3CODE_TELEMETRY_ENABLED: "false",
-          }),
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      yield* installRelayTelemetryEnabled().pipe(
+        Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+          platform: "linux",
+        } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        Effect.provide(
+          Layer.mergeAll(
+            DesktopIpc.layer(ipcMain),
+            // Linux has no platform policy source, so nothing is spawned.
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({}),
+            FileSystem.layerNoop({
+              exists: () => Effect.promise(() => Promise.resolve(policyFile !== undefined)),
+              readFileString: () => Effect.promise(() => Promise.resolve(policyFile ?? "")),
+            }),
+          ),
         ),
       );
-      assert.isTrue(
-        yield* getRelayTelemetryEnabled
-          .handler()
-          .pipe(Effect.provideService(HostProcess.Environment, {})),
-      );
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
+
+  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
+      assert.isTrue(yield* relayTelemetryEnabled({}));
+    }),
+  );
+
+  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
+    Effect.gen(function* () {
+      const policy = (limits: object) =>
+        JSON.stringify({ schemaVersion: 1, organization: "Example Corp", limits });
+      assert.isFalse(yield* relayTelemetryEnabled({}, policy({ telemetry: false })));
+      assert.isTrue(yield* relayTelemetryEnabled({}, policy({ webhookTasks: false })));
+      // A policy that cannot be read fails closed.
+      assert.isFalse(yield* relayTelemetryEnabled({}, "{"));
     }),
   );
 });
