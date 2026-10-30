@@ -182,7 +182,15 @@ const make = Effect.gen(function* () {
           ? undefined
           : {
               ...input.directAlert,
-              eventId: input.directAlert.eventId ?? (yield* crypto.randomUUIDv4()),
+              eventId:
+                input.directAlert.eventId ??
+                (yield* crypto
+                  .randomUUIDv4()
+                  .pipe(
+                    Effect.mapError(
+                      (cause) => new FcmDeliveryError({ operation: "enqueue", cause }),
+                    ),
+                  )),
             };
       yield* sender
         .send({

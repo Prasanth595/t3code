@@ -1369,12 +1369,6 @@ export const layerServerApi = HttpApiBuilder.group(
             });
           },
           mapErrorTags({
-            EnvironmentPublishPublicKeyMissing: (_error, traceId) =>
-              new RelayAuthInvalidError({
-                code: "auth_invalid",
-                reason: "not_authorized",
-                traceId,
-              }),
             EnvironmentPublishSignatureExpired: (_error, traceId) =>
               new RelayAgentActivityPublishProofExpiredError({
                 code: "agent_activity_publish_proof_expired",
