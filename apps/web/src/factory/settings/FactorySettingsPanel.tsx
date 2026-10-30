@@ -167,6 +167,7 @@ function MachineConfigForm({
   };
   // The connection object is replaced when a credential renews; a reload then would drop edits.
   const fetchOnMount = useEffectEvent(fetchConfig);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the factory config from the server once per mount
   useEffect(() => {
     fetchOnMount();
   }, []);

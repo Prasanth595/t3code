@@ -133,6 +133,7 @@ function FactoryPage(props: {
   // Bumped on every open and on unmount, so a mint that outlives its open is dropped.
   const generationRef = useRef(0);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the factory over HTTP for this connection and drops a late reply after unmount
   useEffect(() => {
     let cancelled = false;
     const generation = ++generationRef.current;
