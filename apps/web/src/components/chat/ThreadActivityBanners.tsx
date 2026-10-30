@@ -183,7 +183,6 @@ export function backgroundWorkNowItem(input: {
   const kinds = rows.map((row) => row.task.kind);
   // Monitors describe themselves in prose; commands are code.
   const isCode = (kind: (typeof kinds)[number]) => kind !== "subagent" && kind !== "monitor";
-  const verb = presentation.waiting ? "Waiting on" : "Running";
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
@@ -195,30 +194,31 @@ export function backgroundWorkNowItem(input: {
     ) : (
       <TerminalIcon />
     ),
-    title: only ? (
-      // The presenter titles a task that reads as its own sentence with just its label.
-      presentation.title === only.task.label ? (
-        <span className="text-foreground">{only.task.label}</span>
-      ) : (
-        <>
-          {verb}{" "}
-          <span className={cn("text-foreground", isCode(only.task.kind) && "font-mono text-2xs")}>
-            {only.task.label}
-          </span>
-        </>
-      )
+    title: presentation.subject ? (
+      <>
+        {presentation.subject.verb === null ? null : `${presentation.subject.verb} `}
+        <span
+          className={cn(
+            "text-foreground",
+            isCode(presentation.subject.item.kind) && "font-mono text-2xs",
+          )}
+        >
+          {presentation.subject.item.label}
+        </span>
+      </>
     ) : (
       presentation.title
     ),
-    description: only ? (
-      only.activity
-    ) : newest ? (
-      `${newest.task.label}: ${newest.activity}`
-    ) : kinds.every(isCode) ? (
-      <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
-    ) : (
-      rows.map((row) => row.task.label).join(", ")
-    ),
+    description: only
+      ? only.activity
+      : newest
+        ? `${newest.task.label}: ${newest.activity}`
+        : rows.map((row, index) => (
+            <Fragment key={row.task.taskId}>
+              {index > 0 ? ", " : null}
+              <span className={cn(isCode(row.task.kind) && "font-mono")}>{row.task.label}</span>
+            </Fragment>
+          )),
     actions: (
       <>
         {startedAtMs === null ? null : (

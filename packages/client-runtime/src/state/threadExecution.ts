@@ -352,6 +352,11 @@ export interface PendingBackgroundWorkItem {
 
 export interface PendingBackgroundWorkPresentation {
   readonly title: string;
+  /** The one named task, for a line that styles its label apart from the verb. */
+  readonly subject: {
+    readonly verb: "Waiting on" | "Running" | null;
+    readonly item: PendingBackgroundWorkItem;
+  } | null;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   readonly waiting: boolean;
 }
@@ -403,7 +408,10 @@ export function presentPendingBackgroundWork(
           : named
             ? `Running: ${only.label}`
             : `Running a ${noun}`;
-    return { title, items, waiting };
+    const subject: PendingBackgroundWorkPresentation["subject"] = named
+      ? { verb: only.kind === "monitor" ? null : waiting ? "Waiting on" : "Running", item: only }
+      : null;
+    return { title, subject, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -411,7 +419,12 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  return {
+    title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`,
+    subject: null,
+    items,
+    waiting,
+  };
 }
 
 export interface ProviderGoalPresentation {
