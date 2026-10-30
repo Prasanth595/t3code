@@ -32,6 +32,11 @@ const fakeGit = Layer.mergeAll(
       run: (input) =>
         Effect.sync(() => {
           gitCalls.push(input.args);
+          expect(input.args.join(" ")).not.toContain("token");
+          if (input.operation === "cascadeRebaseStack")
+            expect(input.env?.GIT_CONFIG_VALUE_0).toBe(
+              "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9rZW4=",
+            );
           const stdout =
             input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
           return {
@@ -71,9 +76,14 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
       Layer.mergeAll(
         fakeGit,
         Layer.mock(GitHubRest.GitHubRest)({
-          credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
-          rest: (request) =>
-            send(words(request.path, request.body), "rest").pipe(
+          credential: (host, repository) => {
+            expect(host).toBe(input.host);
+            expect(repository).toBe(input.repository);
+            return Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" });
+          },
+          rest: (request) => {
+            expect(request.repository).toBe(input.repository);
+            return send(words(request.path, request.body), "rest").pipe(
               Effect.map((body) => ({
                 status: 200,
                 headers: {},
@@ -81,19 +91,22 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
                 truncated: false,
                 invalidUtf8: false,
               })),
-            ),
+            );
+          },
         }),
         GitHubRequestPolicy.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(GitHubCredentials.GitHubCredentials, {
-                get: (host) =>
-                  Effect.succeed({
+                get: (host, repository) => {
+                  expect(repository).toBe(input.repository);
+                  return Effect.succeed({
                     host,
                     token: Redacted.make("token"),
                     source: "gh" as const,
                     fingerprint: "fp",
-                  }),
+                  });
+                },
                 saved: () => Effect.succeedNone,
                 fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
                 invalidate: () => Effect.void,

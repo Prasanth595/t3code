@@ -382,7 +382,7 @@ export const PullRequestListProjectError = Schema.Struct({
 export type PullRequestListProjectError = typeof PullRequestListProjectError.Type;
 
 export const PullRequestListResult = Schema.Struct({
-  /** Unreadable hosts are absent; JSON codecs reject optional record values. */
+  /** Unreadable hosts are absent; repository logins also use `host owner/repo` keys, repository lowercased. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),
   /** Re-sort after appending: one repository's older slice may outrank another's existing rows. */

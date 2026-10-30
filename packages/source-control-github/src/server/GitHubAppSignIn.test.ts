@@ -21,6 +21,7 @@ import * as GitHubClient from "../shared/definition.ts";
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 
 type Reply = { readonly status?: number; readonly body: unknown };
 interface Sent {
@@ -49,6 +50,8 @@ function harness(options: {
   readonly tokens?: Record<string, string>;
   /** Without one, the server has no `gh` login to fall back to. */
   readonly ghSignedIn?: boolean;
+  readonly git?: "match" | "miss" | "failure";
+  readonly disabledHost?: boolean;
   /** Makes every settings write fail, as a full disk would. */
   readonly settingsWritesFail?: boolean;
   /** Holds a request open until it completes, to interleave other work with it. */
@@ -79,18 +82,35 @@ function harness(options: {
       }),
     );
   });
-  const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = () =>
-    Effect.succeed({
-      exitCode: ChildProcessSpawner.ExitCode(0),
-      stdout: options.ghSignedIn === false ? "" : "gh-token\n",
-      stderr: "",
-      stdoutTruncated: false,
-      stderrTruncated: false,
+  const processCalls: Array<string> = [];
+  const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
+    Effect.sync(() => {
+      processCalls.push(input.command);
+      return {
+        exitCode: ChildProcessSpawner.ExitCode(
+          input.command === "git" && options.git === "failure" ? 1 : 0,
+        ),
+        stdout:
+          input.command === "git"
+            ? options.git === "match"
+              ? "protocol=https\nhost=github.com\nusername=test\npassword=helper-token\n"
+              : ""
+            : options.ghSignedIn === false
+              ? ""
+              : "gh-token\n",
+        stderr: input.command === "git" && options.git === "failure" ? "helper failed\n" : "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
     });
   const host = TestSourceControlHost.layer({
     settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       sourceControlHosts: {
-        github: { signIns: options.signIns ?? {}, tokens: options.tokens ?? {} },
+        github: {
+          signIns: options.signIns ?? {},
+          tokens: options.tokens ?? {},
+          hosts: options.disabledHost ? { "github.com": { enabled: false } } : {},
+        },
       },
     }),
     process: { run },
@@ -115,7 +135,7 @@ function harness(options: {
     Layer.provide(NodeCrypto.layer),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
-  return { layer, requests };
+  return { layer, requests, processCalls };
 }
 
 const savedSignIns = Effect.gen(function* () {
@@ -504,6 +524,129 @@ describe("GitHub requests with the app sign-in", () => {
 });
 
 describe("GitHubAppAccess", () => {
+  it.effect.each(["match", "miss", "failure"] as const)(
+    "keeps repository helper %s distinct from the app-only credential",
+    (git) => {
+      vi.stubEnv("T3CODE_GITHUB_USE_GIT_CREDENTIALS", "1");
+      vi.stubEnv("GH_TOKEN", "env-token");
+      const { layer, requests, processCalls } = harness({
+        git,
+        signIns: { "github.com": session() },
+        handle: installedOn,
+      });
+      return Effect.gen(function* () {
+        const access = yield* GitHubAppAccess.GitHubAppAccess;
+        const selected = yield* Effect.result(access.credentialFor("github.com", "Acme/One"));
+        if (git === "failure") {
+          expect(selected._tag).toBe("Failure");
+          expect(requests).toHaveLength(0);
+          expect(processCalls).toEqual(["git"]);
+          return;
+        }
+        expect(selected._tag).toBe("Success");
+        if (selected._tag !== "Success") return;
+        expect(Redacted.value(selected.success.token)).toBe(
+          git === "match" ? "helper-token" : "ghu_current",
+        );
+        expect(selected.success.repository).toBe("acme/one");
+        expect(selected.success.credentialRepository).toBe(
+          git === "match" ? "acme/one" : undefined,
+        );
+        if (git === "match") {
+          expect(yield* access.reach("github.com", "Acme/One")).toBe("covered");
+          expect(requests).toHaveLength(0);
+          expect(processCalls).toEqual(["git"]);
+        } else {
+          expect(new Set(requests.map((sent) => sent.token))).toEqual(new Set(["ghu_current"]));
+        }
+        const app = yield* (yield* GitHubRest.GitHubRest).appCredential("github.com");
+        expect(Option.isSome(app) && Redacted.value(app.value.token)).toBe("ghu_current");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect.each([401, 403, 404])(
+    "never hands a selected helper to the app after HTTP %s",
+    (status) => {
+      vi.stubEnv("T3CODE_GITHUB_USE_GIT_CREDENTIALS", "1");
+      const { layer, requests, processCalls } = harness({
+        git: "match",
+        signIns: { "github.com": session() },
+        tokens: { "github.com": "saved-pat" },
+        handle: () => ({ status, body: { message: "Resource not accessible by integration" } }),
+      });
+      return Effect.gen(function* () {
+        const api = yield* GitHubRest.GitHubRest;
+        yield* Effect.result(
+          api.rest({
+            host: "github.com",
+            repository: "Acme/One",
+            operation: "test",
+            path: "repos/Acme/One",
+          }),
+        );
+        expect(requests.map((sent) => sent.token)).toEqual(["helper-token"]);
+        expect(processCalls).toEqual(["git"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not probe app coverage or retry another token under an explicit app pin", () => {
+    const { layer, requests, processCalls } = harness({
+      signIns: { "github.com": session() },
+      handle: () => ({ status: 404, body: {} }),
+    });
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      const held = yield* (yield* GitHubAppAccess.GitHubAppAccess).credentialFor(
+        "github.com",
+        "acme/one",
+      );
+      expect(Redacted.value(held.token)).toBe("ghu_current");
+      yield* Effect.result(
+        api.rest({
+          host: "github.com",
+          repository: "acme/one",
+          operation: "test",
+          path: "repos/acme/one",
+        }),
+      );
+      expect(requests.map((sent) => sent.token)).toEqual(["ghu_current"]);
+      expect(processCalls).toHaveLength(0);
+    }).pipe(
+      Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+        host: "github.com",
+        token: Redacted.make("ghu_current"),
+        credentialFingerprint: "pinned",
+        fromApp: true,
+      }),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect.each(["disabled", "invalid"])(
+    "rejects %s hosts before app or helper access",
+    (kind) => {
+      vi.stubEnv("T3CODE_GITHUB_USE_GIT_CREDENTIALS", "1");
+      const { layer, requests, processCalls } = harness({
+        git: "match",
+        disabledHost: kind === "disabled",
+        signIns: { "github.com": session() },
+        handle: installedOn,
+      });
+      return Effect.gen(function* () {
+        const api = yield* GitHubRest.GitHubRest;
+        const host = kind === "disabled" ? "github.com" : "evil.com#.ghe.com";
+        expect(
+          (yield* api.credential(host, { repository: "Acme/One" }).pipe(Effect.flip))._tag,
+        ).toBe(kind === "disabled" ? "GitHubHostDisabledError" : "GitHubNotSignedInError");
+        yield* api.appCredential(host).pipe(Effect.flip);
+        expect(requests).toHaveLength(0);
+        expect(processCalls).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("reads the installations as the app, even with a saved token", () => {
     const { layer, requests } = harness({
       signIns: { "github.com": session() },

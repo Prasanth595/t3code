@@ -23,6 +23,7 @@ import * as GitHubQuota from "./GitHubQuota.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 
 const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
   enabled: false,
@@ -245,7 +246,7 @@ function harness(input: {
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
   );
-  return { layer, git, graphqlCalls };
+  return { layer: GitHubAppAccess.layer.pipe(Layer.provideMerge(layer)), git, graphqlCalls };
 }
 
 const makeProvider = (api: Partial<GitHubRest.GitHubRest["Service"]>) =>

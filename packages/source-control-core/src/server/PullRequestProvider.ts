@@ -270,7 +270,12 @@ export interface ProviderRepositoryRef {
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
     /** `repository` lets a host pick the credential that can reach it. */
-    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository?: string;
+      readonly allowPaused?: boolean;
+    },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;
@@ -280,6 +285,7 @@ export interface PullRequestProviderApi {
   readonly getRoutingIdentity?: (input: {
     readonly cwd: string;
     readonly host: string;
+    readonly repository?: string;
   }) => Effect.Effect<
     { readonly accountId: string; readonly viewer: string },
     PullRequestProviderError
@@ -306,6 +312,7 @@ export interface PullRequestProviderApi {
   readonly getViewer: (input: {
     readonly cwd: string;
     readonly host?: string;
+    readonly repository?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (

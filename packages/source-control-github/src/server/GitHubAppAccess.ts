@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -85,6 +86,8 @@ function ownerAndName(repository: string): string {
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+  const useGitCredentials =
+    (yield* HostProcess.Environment).T3CODE_GITHUB_USE_GIT_CREDENTIALS === "1";
 
   /** Reads `path` as the app sign-in, whatever credential outranks it elsewhere. */
   const readAsApp = Effect.fn("GitHubAppAccess.readAsApp")(function* <A>(
@@ -100,6 +103,7 @@ export const make = Effect.gen(function* () {
         host,
         token: app.value.token,
         credentialFingerprint: app.value.fingerprint,
+        fromApp: true,
       }),
     );
     return Option.some(yield* Schema.decodeEffect(schema)(response.body));
@@ -175,10 +179,19 @@ export const make = Effect.gen(function* () {
       : ("not-covered" as const);
   });
 
-  const reach: GitHubAppAccess["Service"]["reach"] = (host, repository) =>
-    coverageFor(host, repository).pipe(
-      Effect.map((answer) => (answer === "unknown" ? "covered" : answer)),
-    );
+  const reach: GitHubAppAccess["Service"]["reach"] = Effect.fn("GitHubAppAccess.reach")(
+    function* (host, repository) {
+      // Installation guidance must not probe a foreign credential during repository-pinned work.
+      if ((yield* GitHubRequestPolicy.PinnedGitHubCredential) !== null) return "covered";
+      if (useGitCredentials && host.trim().toLowerCase() === "github.com") {
+        const selected = yield* api.credential(host, { repository }).pipe(Effect.option);
+        if (Option.isNone(selected) || selected.value.credentialRepository !== undefined)
+          return "covered";
+      }
+      const answer = yield* coverageFor(host, repository);
+      return answer === "unknown" ? "covered" : answer;
+    },
+  );
 
   const viewer: GitHubAppAccess["Service"]["viewer"] = Effect.fn("GitHubAppAccess.viewer")(
     function* (rawHost) {
@@ -203,11 +216,18 @@ export const make = Effect.gen(function* () {
   const credentialFor: GitHubAppAccess["Service"]["credentialFor"] = Effect.fn(
     "GitHubAppAccess.credentialFor",
   )(function* (host, repository) {
+    const selected = yield* api.credential(host, { repository });
+    if ((yield* GitHubRequestPolicy.PinnedGitHubCredential) !== null || !selected.fromApp)
+      return selected;
     // Pinned work cannot be handed on, so only confirmed app access keeps the app credential.
-    if ((yield* coverageFor(host, repository)) === "covered") return yield* api.credential(host);
-    return yield* api
-      .credential(host, { personal: true })
-      .pipe(Effect.catch(() => api.credential(host)));
+    if ((yield* coverageFor(host, repository)) === "covered") return selected;
+    return yield* api.credential(host, { personal: true, repository }).pipe(
+      Effect.catchTags({
+        GitHubCliMissingError: () => Effect.succeed(selected),
+        GitHubNotSignedInError: () => Effect.succeed(selected),
+        GitHubCliFailedError: () => Effect.succeed(selected),
+      }),
+    );
   });
 
   return GitHubAppAccess.of({ reach, viewer, credentialFor });

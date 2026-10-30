@@ -26,13 +26,21 @@ export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
   readonly host: string;
+  readonly preserveRepositoryCase?: boolean;
 }): { readonly owner: string; readonly name: string } | null {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
-    repositories.set(remote.name, { owner, name });
+    const original =
+      input.preserveRepositoryCase && host === "github.com"
+        ? parseGitHubRemoteRepositorySelector(remote.url, host)
+        : null;
+    repositories.set(remote.name, {
+      owner: original?.owner ?? owner,
+      name: original?.name ?? name,
+    });
   }
   const marks = input.resolved
     .split("\n")
@@ -42,7 +50,9 @@ export function selectGitHubBaseRepository(input: {
   const [mark] = marks;
   if (mark) {
     if (mark[2] === "base") return repositories.get(mark[1]!) ?? null;
-    const [owner, name, ...rest] = mark[2]!.toLowerCase().split("/");
+    const [owner, name, ...rest] = (
+      input.preserveRepositoryCase && host === "github.com" ? mark[2]! : mark[2]!.toLowerCase()
+    ).split("/");
     return owner && name && rest.length === 0 ? { owner, name } : null;
   }
   // gh ranks these names case-insensitively; a top-ranked tie has no defined winner.
@@ -63,6 +73,7 @@ export function resolveGitHubRepository(input: {
   readonly resolved: string;
   readonly hostHint: string | undefined;
   readonly defaultHost: string;
+  readonly preserveRepositoryCase?: boolean;
 }): { readonly host: string; readonly locator: GitHubRepositoryLocator | null } {
   const fetchRemotes = parseFetchRemotes(input.remotes).map((remote) => ({
     ...remote,
@@ -77,6 +88,9 @@ export function resolveGitHubRepository(input: {
     remotes: input.remotes,
     resolved: input.resolved,
     host,
+    ...(input.preserveRepositoryCase === undefined
+      ? {}
+      : { preserveRepositoryCase: input.preserveRepositoryCase }),
   });
   if (selected !== null) return { host, locator: { host, ...selected } };
   // Match gh's host-filtered priority: upstream, github, origin, then the first remote.
@@ -92,7 +106,16 @@ export function resolveGitHubRepository(input: {
     });
   for (const remote of candidates) {
     const [owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/").slice(1);
-    if (owner && name && rest.length === 0) return { host, locator: { host, owner, name } };
+    if (owner && name && rest.length === 0) {
+      const original =
+        input.preserveRepositoryCase && host === "github.com"
+          ? parseGitHubRemoteRepositorySelector(remote.url, host)
+          : null;
+      return {
+        host,
+        locator: { host, owner: original?.owner ?? owner, name: original?.name ?? name },
+      };
+    }
   }
   return { host, locator: null };
 }
@@ -119,6 +142,22 @@ export function parseGitHubRepositorySelector(
   if (parts.length === 3 && host !== undefined && isGitHubHost(host))
     return { host, owner: parts[1]!, name: parts[2]! };
   return null;
+}
+
+/** Keep credential path matching case-sensitive while the chosen API host stays canonical. */
+export function parseGitHubRemoteRepositorySelector(
+  remoteUrl: string,
+  host: string,
+): GitHubRepositoryLocator | null {
+  const remote = remoteUrl.trim().replace(/\/+$/g, "");
+  const url = URL.parse(remote);
+  const selector =
+    url !== null
+      ? `https://${host}${url.pathname}`
+      : isSshRemoteUrl(remote)
+        ? remote.slice(remote.indexOf(":") + 1)
+        : remote;
+  return parseGitHubRepositorySelector(selector, host);
 }
 
 export function parsePullRequestReference(

@@ -29,6 +29,7 @@ export interface GitHubRestResponse {
 
 export interface GitHubRestInput {
   readonly host: string;
+  readonly repository?: string | undefined;
   readonly operation: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** Relative to the API root, including query string. */
@@ -118,6 +119,7 @@ export const make = Effect.gen(function* () {
 
   const send = Effect.fn("GitHubRest.send")(function* (input: {
     readonly host: string;
+    readonly repository?: string | undefined;
     readonly operation: string;
     readonly request: HttpClientRequest.HttpClientRequest;
     readonly maxResponseBytes: number;
@@ -135,6 +137,7 @@ export const make = Effect.gen(function* () {
     return yield* policy.request(
       {
         host,
+        repository: input.repository,
         operation: input.operation,
         // All current paths spend `core`; search would need a different resource.
         resource: "core",
@@ -197,6 +200,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((interactive) =>
         send({
           host: input.host,
+          repository: input.repository,
           operation: input.operation,
           request,
           maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
