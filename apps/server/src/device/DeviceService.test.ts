@@ -26,6 +26,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
@@ -63,6 +64,7 @@ const fixture = Effect.fn("fixture")(function* (
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
   const http = HttpClient.make((request) =>
@@ -93,6 +95,10 @@ const fixture = Effect.fn("fixture")(function* (
       }
       if (request.url.endsWith("/grid/api/start")) {
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+      }
+      if (listing.hangs) {
+        yield* Deferred.succeed(listing.requested, undefined);
+        return yield* Effect.never;
       }
       return HttpClientResponse.fromWeb(
         request,
@@ -237,6 +243,7 @@ const fixture = Effect.fn("fixture")(function* (
     discoveryErrors,
     androidAvailable,
     endDevice,
+    listing,
   };
 });
 
@@ -549,6 +556,55 @@ it.effect("hides Android discovery failures when the host has no Android SDK", (
   }).pipe(Effect.scoped),
 );
 
+const simulator = {
+  id: "iphone",
+  name: "iPhone",
+  platform: "ios",
+  version: "iOS 26",
+  booted: true,
+  physical: false,
+} as const;
+const androidPhone = { ...simulator, id: "pixel", name: "Pixel", platform: "android" } as const;
+
+it.effect.each([
+  "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
+  "[apple-utils] `xcrun simctl list devices --json` did not respond within 30 s",
+])("keeps the last simulators after %s while Android still refreshes", (message) =>
+  Effect.gen(function* () {
+    const { service, devices, discoveryErrors } = yield* fixture();
+    devices.push(simulator, androidPhone);
+    yield* service.configure({ enabled: true });
+    devices.length = 0;
+    yield* Ref.set(discoveryErrors, [{ message }]);
+    const failed = yield* service.list;
+    expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
+    expect(failed.hostStatuses.local).toEqual({ status: "ready", detail: message });
+
+    yield* Ref.set(discoveryErrors, []);
+    const emptied = yield* service.list;
+    expect(emptied.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+    expect(emptied.hostStatuses.local).toEqual({ status: "ready" });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps every device when the hub does not answer the listing within 40 seconds", () =>
+  Effect.gen(function* () {
+    const { service, devices, listing } = yield* fixture();
+    devices.push(simulator);
+    const before = yield* service.configure({ enabled: true });
+    listing.hangs = true;
+    const listed = yield* service.list.pipe(Effect.forkScoped);
+    yield* Deferred.await(listing.requested);
+    yield* TestClock.adjust("40 seconds");
+    const timedOut = yield* Fiber.join(listed);
+    expect(timedOut.devices).toEqual(before.devices);
+    expect(timedOut.hostStatuses.local).toEqual({
+      status: "ready",
+      detail: "The device hub did not answer within 40 seconds.",
+    });
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -557,6 +613,12 @@ it.effect.each([
   },
   {
     diagnostic: "Timed out spawning /private/user/command",
+    reason: "timeout",
+    message: "did not become ready in time",
+  },
+  {
+    diagnostic:
+      "[apple-utils] `xcrun simctl boot iphone` did not respond within 120 s; CoreSimulatorService may need restarting",
     reason: "timeout",
     message: "did not become ready in time",
   },
