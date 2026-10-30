@@ -15,7 +15,6 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
-import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -203,30 +202,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        const defaultedRuntimeMode =
+        let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
-        // As for delegate_task: the provider runs a mode it does not offer as
-        // Supervised, so a requested one is refused and an inherited one steps down.
-        const startedRuntimeMode = replaying
-          ? defaultedRuntimeMode
-          : yield* ProviderRegistry.ProviderRegistry.pipe(
-              Effect.flatMap((registry) => registry.getProviders),
-              Effect.map(
-                (providers) =>
-                  providers.find((provider) => provider.instanceId === modelSelection.instanceId)
-                    ?.supportedRuntimeModes,
-              ),
-              Effect.flatMap((supportedRuntimeModes) =>
-                resolveRuntimeMode(defaultedRuntimeMode, input.runtimeMode, {
-                  modelSelection,
-                  supportedRuntimeModes,
-                }),
-              ),
-            );
+        if (!replaying) {
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
+            modelSelection,
+            supportedRuntimeModes: providers.find(
+              (provider) => provider.instanceId === modelSelection.instanceId,
+            )?.supportedRuntimeModes,
+          });
+        }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,

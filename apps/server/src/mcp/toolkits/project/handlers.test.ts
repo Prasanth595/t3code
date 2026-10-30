@@ -10,7 +10,6 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -30,7 +29,6 @@ import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
-import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
@@ -49,7 +47,6 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
-  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly webOrigin?: string;
 }) => {
   const projectId = ProjectId.make("project:client-target");
@@ -142,9 +139,6 @@ const clientLaunchHarness = (input: {
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-    Layer.mock(ProviderRegistry.ProviderRegistry)({
-      getProviders: Effect.succeed(input.providers ?? []),
-    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -261,8 +255,18 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
         providers: [
           {
             instanceId: pi,
+            driver: ProviderDriverKind.make("pi"),
+            enabled: true,
+            installed: true,
+            status: "ready",
+            version: null,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-01-01T00:00:00Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
             supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
-          } as unknown as ServerProvider,
+          },
         ],
       });
       const toolkit = yield* ProjectToolkit.pipe(
