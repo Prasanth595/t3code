@@ -164,9 +164,7 @@ export const make = Effect.gen(function* () {
   });
 
   yield* settingsChanges.pipe(
-    Stream.runForEach((next) =>
-      next.telemetryEnabled ? Effect.void : flushLock.withPermit(discardBufferedEvents),
-    ),
+    Stream.runForEach((next) => (next.telemetryEnabled ? Effect.void : discardBufferedEvents)),
     Effect.forkScoped,
   );
 
@@ -211,8 +209,10 @@ export const make = Effect.gen(function* () {
 
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
+    delivery: DeliveryState,
   ) {
     if (!(yield* isEnabled)) return yield* discardBufferedEvents;
+    if ((yield* Ref.get(deliveryRef)) !== delivery) return;
     const { distinctId, installId } = yield* identity;
     if (!telemetryConfig.enabled || !distinctId) return;
 
@@ -265,7 +265,9 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const sent = yield* Effect.result(sendBatch(batch));
+      const sent = yield* Effect.result(sendBatch(batch, delivery));
+      // Opt-out replaces delivery state; an in-flight request must not restore its batch.
+      if ((yield* Ref.get(deliveryRef)) !== delivery) return;
       if (Result.isSuccess(sent)) {
         yield* Ref.set(deliveryRef, {
           failedBatch: [],
@@ -288,13 +290,17 @@ export const make = Effect.gen(function* () {
         error.reason._tag === "StatusCodeError" &&
         REJECTED_BATCH_STATUSES.has(error.reason.response.status);
       if (!rejected && now - firstFailedAt < MAX_BATCH_RETRY_MS) {
-        yield* Ref.set(deliveryRef, {
-          failedBatch: batch,
-          batchAttempts,
-          firstFailedAt,
-          failures,
-          retryAt,
-        });
+        yield* Ref.update(deliveryRef, (current) =>
+          current !== delivery
+            ? current
+            : {
+                failedBatch: batch,
+                batchAttempts,
+                firstFailedAt,
+                failures,
+                retryAt,
+              },
+        );
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
           cause: error,

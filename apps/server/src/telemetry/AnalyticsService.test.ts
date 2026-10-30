@@ -232,36 +232,45 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       );
     }),
   );
-  it.effect("can save an opt-out while an analytics request is in flight", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const batches = yield* sendFor(
-        0,
-        (request) =>
+  it.effect.each([{ status: 204 }, { status: 503 }])(
+    "discards old batches after off/on during an in-flight $status response",
+    ({ status }) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let attempts = 0;
+        const batches = yield* sendFor(
+          0,
+          (request) =>
+            Effect.gen(function* () {
+              if (attempts++ === 0) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+                return yield* respondWithStatus(status)(request);
+              }
+              return yield* respondWithStatus(204)(request);
+            }),
           Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
-            yield* Deferred.await(release);
-            return yield* respondWithStatus(204)(request);
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            const settings = yield* ServerSettings.ServerSettingsService;
+            for (let index = 0; index < 21; index += 1) {
+              yield* analytics.record(`before-opt-out-${index}`);
+            }
+            const flushing = yield* analytics.flush.pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            yield* settings.updateSettings({ telemetryEnabled: false });
+            yield* settings.updateSettings({ telemetryEnabled: true });
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(flushing);
+            yield* analytics.record("after-opt-in");
+            yield* analytics.flush;
           }),
-        Effect.gen(function* () {
-          const analytics = yield* AnalyticsService.AnalyticsService;
-          const settings = yield* ServerSettings.ServerSettingsService;
-          yield* analytics.record("in-flight");
-          const flushing = yield* analytics.flush.pipe(Effect.forkChild);
-          yield* Deferred.await(started);
-          yield* settings.updateSettings({ telemetryEnabled: false });
-          yield* analytics.record("after-opt-out");
-          yield* Deferred.succeed(release, undefined);
-          yield* Fiber.join(flushing);
-          yield* analytics.flush;
-        }),
-      );
-      assert.deepEqual(
-        batches.flatMap((batch) => batch.map((event) => event.event)),
-        ["in-flight"],
-      );
-    }),
+        );
+        assert.deepEqual(
+          batches.flatMap((batch) => batch.map((event) => event.event)),
+          [...Array.from({ length: 20 }, (_, index) => `before-opt-out-${index}`), "after-opt-in"],
+        );
+      }),
   );
 
   it.effect("client owner reports cannot use up the server's owner cap", () =>
