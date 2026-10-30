@@ -151,7 +151,12 @@ describe("Linux Chromium secrets", () => {
     let captured: CapturedCommand | undefined;
     return Effect.gen(function* () {
       const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "vivaldi")!;
-      const keys = yield* resolveChromiumKeys({ ...source, platform: "linux" });
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: source.keychainService,
+        keychainAccount: source.keychainAccount,
+        linuxSecretApplication: source.linuxSecretApplication,
+      });
       expect(captured?.args).toEqual(["chrome"]);
       expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
     }).pipe(
