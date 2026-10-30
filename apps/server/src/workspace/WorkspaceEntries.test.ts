@@ -510,6 +510,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("keeps a lone constraint-like query as text when exclusions apply", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-token-", git: true });
+        yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n");
+        const line = "see src/ and *.ts and !important\n";
+        yield* writeTextFile(cwd, "lib/notes.txt", line);
+        yield* writeTextFile(cwd, ".worktrees/copy/lib/notes.txt", line);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const { query, useRegex } of [
+          { query: "src/", useRegex: false },
+          { query: "*.ts", useRegex: false },
+          { query: "!important", useRegex: false },
+          { query: "src/", useRegex: true },
+          { query: "!important", useRegex: true },
+        ]) {
+          const result = yield* workspaceEntries.searchContents({
+            cwd,
+            query,
+            limit: 10,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex,
+          });
+          expect(
+            result.matches.map((match) => match.path),
+            `${query} (regex: ${useRegex})`,
+          ).toEqual(["lib/notes.txt"]);
+        }
+      }),
+    );
+
     it.effect("finds later whole-word matches in a file after rejected raw matches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-late-whole-word-" });

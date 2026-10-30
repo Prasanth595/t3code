@@ -6,6 +6,7 @@ import type {
   FileItem,
   FileFinder as FileFinderType,
   GrepCursor,
+  GrepResult,
   MixedItem,
   MixedSearchResult,
   Result,
@@ -298,13 +299,13 @@ const QUERY_SAFE_DIRECTORY = /^[^\s*?[\]{}!\\]+\/$/;
 /**
  * fff applies `.gitignore` files but not `.git/info/exclude` or `core.excludesFile`, where tools
  * commonly hide nested worktrees. Directories git excludes through those sources become
- * root-anchored `!dir/**` constraints appended to every query.
+ * root-anchored `!dir/**` query constraints.
  */
-const loadExclusionConstraints = Effect.fn("WorkspaceSearchIndex.loadExclusionConstraints")(
+const loadExcludedDirectories = Effect.fn("WorkspaceSearchIndex.loadExcludedDirectories")(
   function* (vcsProcess: VcsProcess.VcsProcess["Service"], cwd: string) {
     const runGit = (args: ReadonlyArray<string>, stdin?: string) =>
       vcsProcess.run({
-        operation: "WorkspaceSearchIndex.loadExclusionConstraints",
+        operation: "WorkspaceSearchIndex.loadExcludedDirectories",
         command: "git",
         args: ["-c", "core.fsmonitor=false", ...args],
         cwd,
@@ -323,27 +324,27 @@ const loadExclusionConstraints = Effect.fn("WorkspaceSearchIndex.loadExclusionCo
       "--no-empty-directory",
       "-z",
     ]);
-    if (listed.exitCode !== 0) return "";
+    if (listed.exitCode !== 0) return [];
     const directories = listed.stdout
       .split("\0")
       .filter((entry) => QUERY_SAFE_DIRECTORY.test(entry));
-    if (directories.length === 0) return "";
+    if (directories.length === 0) return [];
     const classified = yield* runGit(
       ["check-ignore", "--verbose", "-z", "--stdin"],
       `${directories.join("\0")}\0`,
     );
-    if (classified.exitCode !== 0) return "";
+    if (classified.exitCode !== 0) return [];
     // Records are `source NUL line NUL pattern NUL path NUL`.
     const fields = classified.stdout.split("\0");
-    const constraints: string[] = [];
+    const excluded: string[] = [];
     for (let index = 0; index + 3 < fields.length; index += 4) {
       if (!GITIGNORE_SOURCE.test(fields[index]!)) {
-        constraints.push(`!${fields[index + 3]}**`);
+        excluded.push(fields[index + 3]!);
       }
     }
-    return constraints.join(" ");
+    return excluded;
   },
-  Effect.orElseSucceed(() => ""),
+  Effect.orElseSucceed((): ReadonlyArray<string> => []),
 );
 
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
@@ -433,14 +434,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let exclusionConstraints = yield* loadExclusionConstraints(vcsProcess, cwd);
+  let excludedDirectories = yield* loadExcludedDirectories(vcsProcess, cwd);
+  const exclusionConstraints = () =>
+    [GITLINK_CONSTRAINT, ...excludedDirectories.map((directory) => `!${directory}**`)].join(" ");
   const withExclusions = (query: string) =>
-    [query, GITLINK_CONSTRAINT, exclusionConstraints].filter(Boolean).join(" ");
+    [query, exclusionConstraints()].filter(Boolean).join(" ");
+  const isExcludedPath = (path: string) =>
+    path === ".git" ||
+    path.endsWith("/.git") ||
+    excludedDirectories.some((directory) => path.startsWith(directory));
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
-    operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
+    operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch" | "multiGrep",
     execute: () => Result<A>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
     const result = yield* Effect.try({
@@ -493,7 +500,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     );
-    exclusionConstraints = yield* loadExclusionConstraints(vcsProcess, cwd);
+    excludedDirectories = yield* loadExcludedDirectories(vcsProcess, cwd);
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -546,6 +553,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
     const { searchQuery, regexMode } = buildContentSearchQuery(input);
+    // fff reads a lone token as the pattern but parses constraint syntax (`src/`, `*.ts`, `!x`)
+    // once other tokens follow, so exclusions must not share a single-token query.
+    const pattern = searchQuery.trim();
+    const singleToken = !/\s/.test(pattern);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -557,18 +568,33 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
-      const result = yield* runSearch(input.query, input.limit, "grep", () =>
-        finder.grep(withExclusions(searchQuery), {
-          mode: regexMode ? "regex" : "plain",
-          smartCase: !input.caseSensitive && !regexMode,
-          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
-          pageSize: rawPageSize,
-          cursor: nextCursor,
-          timeBudgetMs: remainingTimeBudgetMs,
-        }),
-      );
+      const options = {
+        smartCase: !input.caseSensitive && !regexMode,
+        maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
+        pageSize: rawPageSize,
+        cursor: nextCursor,
+        timeBudgetMs: remainingTimeBudgetMs,
+      };
+      // Plain tokens keep exclusions native via multiGrep's separate constraints; regex has no such
+      // API, so a lone regex token runs unconstrained and excluded paths are dropped below.
+      const result: GrepResult =
+        singleToken && !regexMode
+          ? yield* runSearch(input.query, input.limit, "multiGrep", () =>
+              finder.multiGrep({
+                ...options,
+                patterns: [pattern],
+                constraints: exclusionConstraints(),
+              }),
+            )
+          : yield* runSearch(input.query, input.limit, "grep", () =>
+              finder.grep(singleToken ? searchQuery : withExclusions(searchQuery), {
+                ...options,
+                mode: regexMode ? "regex" : "plain",
+              }),
+            );
 
       for (const match of result.items) {
+        if (isExcludedPath(toPosixPath(match.relativePath))) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
