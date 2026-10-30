@@ -9734,19 +9734,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
   it.effect.each([
     {
+      label: "stopping the successor preserves earlier billed usage",
+      before: earlierWake,
+      after: [wakeTurnInit],
+      beforeCheck: [wakeAssistant],
+      live: [],
+      texts: ["Earlier A.", WAKE_ASSISTANT_TEXT],
+      inputTokens: 10,
+      outputTokens: 20,
+      notices: [],
+      openOnAttach: true,
+      stop: true,
+    },
+    {
       label: "older results preserve the active successor and its approval",
       before: [wakeTurnInit, emptyWakeSuccess, ...earlierWake, ...earlierErrorWake],
       after: [wakeTurnInit],
       beforeCheck: [wakeAssistant],
       live: [wakeResult],
       texts: ["Earlier A.", "Earlier A.", WAKE_ASSISTANT_TEXT],
-      status: "completed",
       inputTokens: 21,
       outputTokens: 41,
       notices: ["Tool execution failed: EACCES"],
       openOnAttach: true,
-      terminalCount: 2,
-      usageStatus: "complete",
     },
     {
       label: "fully buffered successor without assistant text uses its own result",
@@ -9771,13 +9781,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       beforeCheck: [],
       live: [],
       texts: ["Successor text."],
-      status: "completed",
       inputTokens: 11,
       outputTokens: 21,
       notices: [],
       openOnAttach: false,
-      terminalCount: 3,
-      usageStatus: "complete",
     },
     {
       label: "two older results and latest empty successes keep base text fallback",
@@ -9812,18 +9819,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       beforeCheck: [],
       live: [],
       texts: ["Earlier A."],
-      status: "completed",
       inputTokens: 110,
       outputTokens: 220,
       notices: [],
       openOnAttach: false,
-      terminalCount: 3,
-      usageStatus: "complete",
     },
   ])("replays wakes: $label", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
         const now = yield* DateTime.now;
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "approval-required",
@@ -9931,6 +9937,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal((yield* Fiber.join(permission))?.behavior, "allow");
         }
         for (const frame of scenario.live) yield* harness.offerAndWait(frame);
+        if ("stop" in scenario && scenario.stop) {
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${wakeAttempt}`,
+            }),
+          });
+        }
         yield* harness.awaitTerminal(3);
         const completed = harness.events.findLast(
           (event) => event.type === "provider_turn.updated",
@@ -9957,12 +9972,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           },
           {
-            terminalCountOnAttach: scenario.terminalCount,
+            terminalCountOnAttach: scenario.openOnAttach ? 2 : 3,
             texts: scenario.texts,
-            status: scenario.status,
+            status: "stop" in scenario ? "interrupted" : "completed",
             usage: {
               usageScope: "main_agent",
-              usageStatus: scenario.usageStatus,
+              usageStatus: "stop" in scenario ? "partial" : "complete",
               hasSubagents: false,
               inputTokens: scenario.inputTokens,
               outputTokens: scenario.outputTokens,

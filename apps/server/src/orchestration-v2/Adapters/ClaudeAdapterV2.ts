@@ -7574,48 +7574,46 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
-        // A later root init owns settlement. This per-frame helper keeps only
-        // billing and errors; assistant frames already carry the wake's text.
-        const recordEarlierWakeResult = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          result: SDKResultMessage,
-        ) {
-          if (isClaudeEmptyTaskNotificationSuccess(result)) return;
-          context.earlierSegmentUsage.push(result.usage);
-          const now = yield* DateTime.now;
-          const failure = providerFailureFromResult(result, now);
-          if (failure !== null) {
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId: result.uuid,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: result.uuid,
-                  strength: "strong",
+        // Assistant frames carry the earlier wake's text; its result only adds usage and errors.
+        const recordEarlierWakeResult = Effect.fn("ClaudeAdapter.recordEarlierWakeResult")(
+          function* (context: ActiveClaudeTurnContext, result: SDKResultMessage) {
+            if (isClaudeEmptyTaskNotificationSuccess(result)) return;
+            context.earlierSegmentUsage.push(result.usage);
+            const now = yield* DateTime.now;
+            const failure = providerFailureFromResult(result, now);
+            if (failure !== null) {
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId: result.uuid,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: result.uuid,
+                    strength: "strong",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, result.uuid),
+                  type: "system_notice",
+                  status: "completed",
+                  title: failure.message,
+                  message: failure.message,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
                 },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, result.uuid),
-                type: "system_notice",
-                status: "completed",
-                title: failure.message,
-                message: failure.message,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-              },
-            });
-          }
-        });
+              });
+            }
+          },
+        );
 
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
