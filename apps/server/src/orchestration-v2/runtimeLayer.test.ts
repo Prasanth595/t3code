@@ -7550,24 +7550,29 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         const candidate = Effect.fnUntraced(function* (autoResume = true) {
           const options = { now: yield* DateTime.now, autoResume, snooze: false };
-          const fresh = yield* ProjectionStore.ProjectionStoreV2.pipe(
-            Effect.provide(ProjectionStore.layer),
-          );
-          const replay = yield* ProjectionStore.ProjectionStoreV2.pipe(
-            Effect.provide(
-              ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-            ),
-          );
-          yield* eventStore
-            .readAgentEvents({ threadId })
-            .pipe(Stream.runForEach((stored) => replay.apply(stored.event)));
+          const before = yield* projections.getThreadProjection(threadId);
           const current = (yield* projections.getLimitRecoveryCandidates(options)).find(
             (row) => row.id === threadId,
           );
-          for (const store of [fresh, replay]) {
-            const other = (yield* store.getLimitRecoveryCandidates(options)).find(
-              (row) => row.id === threadId,
-            );
+          const fresh = yield* Effect.gen(function* () {
+            const store = yield* ProjectionStore.ProjectionStoreV2;
+            return yield* store.getLimitRecoveryCandidates(options);
+          }).pipe(Effect.provide(Layer.fresh(ProjectionStore.layer)));
+          const replayed = yield* Effect.gen(function* () {
+            const replay = yield* ProjectionStore.ProjectionStoreV2;
+            assert.lengthOf((yield* replay.getShellSnapshot()).threads, 0);
+            yield* eventStore
+              .readAgentEvents({ threadId })
+              .pipe(Stream.runForEach((stored) => replay.apply(stored.event)));
+            return yield* replay.getLimitRecoveryCandidates(options);
+          }).pipe(
+            Effect.provide(
+              Layer.fresh(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+            ),
+          );
+          assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+          for (const candidates of [fresh, replayed]) {
+            const other = candidates.find((row) => row.id === threadId);
             assert.equal(other?.id, current?.id);
             if (current) assert.containSubset(other, current);
           }
