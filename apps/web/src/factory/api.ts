@@ -59,6 +59,11 @@ export interface FactoryStatus {
   }>;
   readonly attention: ReadonlyArray<FactoryAttentionItem>;
   readonly slots: { readonly used: number; readonly max: number | null };
+  /**
+   * Threads with an agent at work, a person's or the factory's, which an update interrupts; null
+   * when T3 could not say; absent from older servers.
+   */
+  readonly threads?: { readonly running: number | null };
   /** The pass loop, as far as the page reads it. */
   readonly passes: {
     /** When the last pass ended, or null before one. */
@@ -127,6 +132,19 @@ export interface FactoryDismissResult {
   readonly dismissed: ReadonlyArray<string>;
 }
 
+export interface FactorySnoozeResult {
+  /** ISO time the snooze ends. */
+  readonly snoozed_until: string;
+}
+
+export interface FactoryDeployNowResult {
+  /** The build asked for: the server answers 409, not 202, when no build is waiting. */
+  readonly commit: string;
+  /** Autodeploy started now; false when it starts on its next tick. */
+  readonly kicked: boolean;
+  readonly message: string;
+}
+
 export interface FactoryResumeResult {
   readonly paused: false;
   readonly already: boolean;
@@ -156,6 +174,8 @@ export interface FactoryApi {
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
+  readonly snoozeDeploy: (environmentId: EnvironmentId) => Promise<FactorySnoozeResult>;
+  readonly deployNow: (environmentId: EnvironmentId) => Promise<FactoryDeployNowResult>;
   readonly dismissAttention: (
     environmentId: EnvironmentId,
     ids: ReadonlyArray<string>,
@@ -276,6 +296,8 @@ const httpApi: FactoryApi = {
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
+  snoozeDeploy: (environmentId) => post(environmentId, "/api/factory/deploy/snooze"),
+  deployNow: (environmentId) => post(environmentId, "/api/factory/deploy/now"),
   dismissAttention: (environmentId, ids) =>
     post(environmentId, "/api/factory/attention/dismiss", { ids }),
 };
@@ -295,6 +317,8 @@ export const factoryApi: FactoryApi = {
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),
+  snoozeDeploy: (environmentId) => (override ?? httpApi).snoozeDeploy(environmentId),
+  deployNow: (environmentId) => (override ?? httpApi).deployNow(environmentId),
   dismissAttention: (environmentId, ids) =>
     (override ?? httpApi).dismissAttention(environmentId, ids),
 };

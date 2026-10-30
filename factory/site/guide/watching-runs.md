@@ -17,6 +17,8 @@ With several environments, pick one in the belt's Environment control. Its tiles
 
 Turn the claims switch off to pause claims in the picked environment. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Turn the switch back on to start claiming again.
 
+Claims also stop while autodeploy has a new build waiting to install. The belt then shows an **Update waiting** banner naming the build and when it installs at the latest, and the Claimed post says `claims held for update`. **Snooze 1 hour** lets claims go on for an hour and holds the install; **Update now** installs it at once, over the runs in progress. Snoozing needs the `orchestration:operate` scope and Update now the `environment:maintain` scope. See [Follow main](/guide/install#follow-main).
+
 ## A run's page
 
 <img class="screenshot light-only" src="/screenshots/run-page-light.png" alt="A pr-open run's page: its state and step, the links to its thread, issue and pull request, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
@@ -37,7 +39,7 @@ Under the belt, the Factory page lists what needs a person in three bins: Needs 
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
 - the machine config failed to load,
 - free disk space is below `min_free_gib`, so nothing is claimed or gated until there is room,
-- a build autodeploy has waiting has waited longer than `deploy_wait_minutes`, while the factory claims nothing; it clears once the build is installed,
+- a build autodeploy has waiting has waited longer than `deploy_wait_minutes`, while the factory claims nothing; it clears once the build is installed, which the belt's update banner can start at once,
 - three passes in a row failed,
 - a stopped session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
 
