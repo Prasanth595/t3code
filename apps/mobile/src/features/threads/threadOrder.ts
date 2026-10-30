@@ -377,7 +377,7 @@ export function recordThreadMove(
     if (shell === previous) return;
     const patch: Record<string, unknown> = { ...next.get(rowId(shell)) };
     for (const field of ARRANGEMENT_FIELDS)
-      if (shell[field] !== previous[field]) patch[field] = shell[field];
+      if (shell[field] !== previous[field] || field in patch) patch[field] = shell[field];
     next.set(rowId(shell), patch);
   });
   return next;

@@ -132,6 +132,7 @@ vi.mock("../../state/threads", () => ({
       "pin",
       "unpin",
       "reorderPin",
+      "reorderActive",
       "updateMetadata",
     ].map((action) => [
       action,
@@ -205,7 +206,7 @@ afterEach(() => {
 
 describe("thread arrangement save recovery", () => {
   it("keeps a return to Active after a drafted pin is auto-settled", async () => {
-    const thread = makeThread();
+    const thread = makeThread({ pinnedAt: null, pinOrderKey: null });
     state.shells = [thread];
     const actions = useThreadListActions();
     const pinned = actions.previewThreadMove(new Map(), thread, {
