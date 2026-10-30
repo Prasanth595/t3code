@@ -3846,24 +3846,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held");
         // The first deletes fail the way Windows fails them while an exiting
-        // provider process still has files in the worktree open.
+        // provider process still has files in the worktree open. The last one
+        // deletes the folder anyway, so the next attempt finds nothing left.
         let heldAttempts = 2;
         const driver = yield* makeGitVcsDriverCore().pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fileSystem,
             remove: (target, options) =>
-              Effect.suspend(() =>
-                target === worktreePath && heldAttempts-- > 0
-                  ? Effect.fail(
-                      PlatformError.systemError({
-                        _tag: "Busy",
-                        module: "FileSystem",
-                        method: "remove",
-                        pathOrDescriptor: target,
-                      }),
-                    )
-                  : fileSystem.remove(target, options),
-              ),
+              Effect.suspend(() => {
+                if (target !== worktreePath || heldAttempts === 0) {
+                  return fileSystem.remove(target, options);
+                }
+                heldAttempts--;
+                const held = Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Busy",
+                    module: "FileSystem",
+                    method: "remove",
+                    pathOrDescriptor: target,
+                  }),
+                );
+                return heldAttempts === 0
+                  ? fileSystem.remove(target, options).pipe(Effect.andThen(held))
+                  : held;
+              }),
           }),
           Effect.provide(layerServerConfig),
         );

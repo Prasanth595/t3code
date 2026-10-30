@@ -146,20 +146,19 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       );
   }
 
-  // A file held open can stop the delete partway. A deleted thread's provider
-  // processes keep files open for a few seconds while they exit, so the delete
-  // retries. Putting `.git` back after the last attempt leaves a worktree that a
-  // later retry can remove.
+  // A file held open can stop the delete partway, e.g. while a deleted thread's
+  // provider exits. Only a forced delete retries, since it already discards
+  // edits. Putting `.git` back after a failure or interruption leaves a
+  // worktree that a later retry can remove.
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
-  yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
+  yield* fileSystem.remove(worktreePath, { recursive: true, force: true }).pipe(
     Effect.retry({
-      while: (error) => error.reason._tag !== "NotFound",
-      times: OPEN_FILE_RETRIES,
+      times: input.force ? OPEN_FILE_RETRIES : 0,
       schedule: Schedule.spaced(OPEN_FILE_RETRY_DELAY),
     }),
-    Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
+    Effect.onError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
     Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
   );
   // The folder is gone, so Git only drops the worktree's metadata.
