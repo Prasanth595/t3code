@@ -1,10 +1,13 @@
 import {
+  DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_PROMPT_FONT_SIZE,
+  MAX_CHAT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
+  MIN_CHAT_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
@@ -62,13 +65,15 @@ export interface AppearanceFontPreferences {
   readonly sans: string;
   readonly code: string;
   readonly composer: string;
+  readonly chat: string;
   readonly sizeInterface: number;
   readonly sizePrompt: number;
+  readonly sizeChat: number;
   readonly sizeCode: number;
   readonly smoothing: boolean;
 }
 
-/** Always writes sizes: interface size sets the root; prompt and code use pixels to avoid double scaling. */
+/** Always writes sizes: interface size sets the root; prompt, chat and code use pixels to avoid double scaling. */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
@@ -77,6 +82,7 @@ export function applyAppearanceFontVariables(
     ["--font-sans", preferences.sans, DEFAULT_SANS_FONT_STACK],
     ["--font-mono", preferences.code, DEFAULT_CODE_FONT_STACK],
     ["--font-composer", preferences.composer, "var(--font-sans)"],
+    ["--font-chat", preferences.chat, "var(--font-sans)"],
   ];
   for (const [variable, custom, fallback] of families) {
     const list = cssFontFamilies(custom);
@@ -89,6 +95,7 @@ export function applyAppearanceFontVariables(
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
+  root.style.setProperty("--font-size-chat", `${clampChatFontSize(preferences.sizeChat)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
   root.style.setProperty("--diffs-font-size", `${code}px`);
@@ -116,6 +123,10 @@ function clampInterfaceFontSize(value: number): number {
 
 function clampPromptFontSize(value: number): number {
   return clampFontSize(value, MIN_PROMPT_FONT_SIZE, MAX_PROMPT_FONT_SIZE, DEFAULT_PROMPT_FONT_SIZE);
+}
+
+function clampChatFontSize(value: number): number {
+  return clampFontSize(value, MIN_CHAT_FONT_SIZE, MAX_CHAT_FONT_SIZE, DEFAULT_CHAT_FONT_SIZE);
 }
 
 function clampCodeFontSize(value: number): number {

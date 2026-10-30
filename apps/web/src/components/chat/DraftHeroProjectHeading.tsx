@@ -30,7 +30,11 @@ export function DraftHeroProjectHeading({
   }, []);
 
   return (
-    <div ref={containerRef} className="group/draft-hero relative w-full" data-inline={fitsInline}>
+    <div
+      ref={containerRef}
+      className="group/draft-hero relative w-full font-chat"
+      data-inline={fitsInline}
+    >
       <span
         aria-hidden="true"
         className="pointer-events-none invisible absolute inset-x-0 top-0 h-0 overflow-hidden"

@@ -76,10 +76,12 @@ type TypographySettings = Pick<
   UnifiedSettings,
   | "fontFamilySans"
   | "fontFamilyComposer"
+  | "fontFamilyChat"
   | "fontFamilyCode"
   | "fontFamilyTerminal"
   | "fontSizeInterface"
   | "fontSizePrompt"
+  | "fontSizeChat"
   | "fontSizeCode"
   | "fontSizeTerminal"
 >;
@@ -89,6 +91,10 @@ export function getChangedTypographySettingLabels(settings: TypographySettings):
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
       ? ["Interface font"]
+      : []),
+    ...(settings.fontFamilyChat !== DEFAULT_UNIFIED_SETTINGS.fontFamilyChat ||
+    settings.fontSizeChat !== DEFAULT_UNIFIED_SETTINGS.fontSizeChat
+      ? ["Chat font"]
       : []),
     ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
     settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
