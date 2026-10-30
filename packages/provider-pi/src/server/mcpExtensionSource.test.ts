@@ -25,7 +25,10 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  argv: ReadonlyArray<string> = [],
+) {
   const handlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
@@ -34,7 +37,7 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env: {}, argv },
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -79,25 +82,31 @@ describe("Pi orchestration prompt section", () => {
 
 describe("Pi project trust", () => {
   it.each([
-    { name: "no protected resources or an explicit launch decision", asked: false, trusted: false },
-    { name: "a trusted folder", asked: true, trusted: true },
-    { name: "an untrusted folder", asked: true, trusted: false },
-  ])("defers to Pi and explains skipped resources once for $name", async ({ asked, trusted }) => {
-    const handlers = (await loadHooks()) as Map<string, (event: unknown, ctx: unknown) => unknown>;
-    if (asked) {
-      assert.deepEqual(await handlers.get("project_trust")!({ cwd: "/repo" }, {}), {
-        trusted: "undecided",
-      });
-    }
-    const notices: string[] = [];
-    const ctx = {
-      isProjectTrusted: () => trusted,
-      ui: { notify: (message: string) => notices.push(message) },
-    };
-    for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
-    assert.equal(notices.length, asked && !trusted ? 1 : 0);
-    if (notices[0] !== undefined) assert.include(notices[0], "not trusted");
-  });
+    { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
+    { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
+    { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
+  ])(
+    "explains skipped resources once per session for $name",
+    async ({ trusted, argv, notices }) => {
+      const sent: string[] = [];
+      const ctx = {
+        cwd: "/repo",
+        isProjectTrusted: () => trusted,
+        ui: { notify: (message: string) => sent.push(message) },
+      };
+      // Pi reruns extension factories on session replacement without asking about trust again.
+      for (const _session of [1, 2]) {
+        const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+          string,
+          (event: unknown, ctx: unknown) => unknown
+        >;
+        for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+      }
+      assert.equal(sent.length, notices * 2);
+      for (const message of sent)
+        assert.include(message, "in /repo because the folder is not trusted");
+    },
+  );
 });
 
 describe("Pi MCP tool results", () => {

@@ -47,7 +47,7 @@ reporting while a response streams and after it settles.
 Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
 loads for the current workspace; selecting one uses Pi's native skill expansion.
 
-Pi loads its normal user and project extensions. Blocking `select`, `confirm`, `input`, and `editor`
+Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi. Blocking `select`, `confirm`, `input`, and `editor`
 dialogs work in T3 Code. Notifications appear in the work log. Pi terminal decoration such as
 titles, status lines, and widgets does not have a T3 Code equivalent.
 
@@ -79,7 +79,9 @@ threads.
 - If no models appear, open Pi directly and confirm its authentication and model configuration.
 - If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
   thread to let the interactive Pi session handle any startup prompt.
-- If a project extension is missing, approve the project in Pi, then start a fresh provider session.
-- If a project skill is missing from the `$` menu, approve the project in Pi and refresh the provider.
+- If Pi skipped a project's settings, extensions, skills, prompts, or MCP servers because the folder
+  is not trusted, the thread shows a warning on its first turn. Run `pi` in that folder on the server
+  machine, trust the folder or its parent with `/trust`, then start a new thread. Refresh the
+  provider to update the `$` menu.
 - The context meter appears once Pi reports usage for the thread. Some model providers only
   report usage when a response completes, so the meter can wait for the first reply.
