@@ -185,6 +185,7 @@ export const OpenCodeDriver: ProviderDriver<
     environment,
     enabled,
     config,
+    proxy,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -194,7 +195,18 @@ export const OpenCodeDriver: ProviderDriver<
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const crypto = yield* Crypto.Crypto;
     const host = yield* ProviderHost.ProviderHost;
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    // An external server owns its own provider config, so the proxy cannot apply there.
+    if (proxy !== undefined && config.serverUrl.trim() !== "") {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail: "An external OpenCode server cannot route through this environment's proxy.",
+      });
+    }
+    const processEnv = OpenCodeRuntime.applyOpenCodeProxyEnvironment(
+      yield* mergeProviderInstanceEnvironment(environment),
+      proxy,
+    );
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -252,6 +264,7 @@ export const OpenCodeDriver: ProviderDriver<
       environment,
       enabled,
       config,
+      proxy,
     }).pipe(
       Effect.mapError(
         (cause) =>

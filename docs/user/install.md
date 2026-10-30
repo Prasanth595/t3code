@@ -194,6 +194,19 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
 
+### Route providers through a proxy
+
+A [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) server can serve Claude, Codex,
+and OpenCode from accounts it holds, and spread requests across several accounts. To use one,
+open **Settings → Providers → Proxy** on the environment that runs the agents. Enter the proxy's
+URL and one of its API keys. Add its management key to see its accounts under **Usage → Limits**.
+Then turn on **Use proxy** for each Claude, Codex, or OpenCode provider that should use it.
+
+A provider with **Use proxy** on never falls back to its own login. If the proxy is removed, the
+provider shows as unavailable until you add a proxy again or turn the switch off. Codex threads
+started through the proxy need it to continue. T3-managed ChatGPT sign-in and external OpenCode
+servers cannot use a proxy.
+
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md),

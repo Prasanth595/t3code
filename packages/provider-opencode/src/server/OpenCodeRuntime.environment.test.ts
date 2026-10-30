@@ -5,6 +5,33 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
+describe("applyOpenCodeProxyEnvironment", () => {
+  it("points the built-in Anthropic and OpenAI providers at the proxy and keeps user config", () => {
+    const environment = OpenCodeRuntime.applyOpenCodeProxyEnvironment(
+      {
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          theme: "t3",
+          provider: {
+            anthropic: { options: { timeout: 60_000, apiKey: "sk-ant-direct" } },
+            openrouter: { options: { apiKey: "or" } },
+          },
+        }),
+      },
+      { url: "http://proxy:8317", apiKey: "" },
+    );
+
+    const proxied = { baseURL: "http://proxy:8317/v1", apiKey: "t3-proxy" };
+    expect(JSON.parse(environment.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
+      theme: "t3",
+      provider: {
+        anthropic: { options: { timeout: 60_000, ...proxied } },
+        openai: { options: proxied },
+        openrouter: { options: { apiKey: "or" } },
+      },
+    });
+  });
+});
+
 describe("resolveOpenCodeServerPassword", () => {
   it("uses the settings password when local settings and environment differ", () => {
     expect(

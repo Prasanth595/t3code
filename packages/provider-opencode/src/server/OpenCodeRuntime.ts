@@ -31,6 +31,10 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import {
+  providerProxyApiUrl,
+  type ProviderProxyRoute,
+} from "@t3tools/provider-core/server/providerProxy";
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
@@ -60,6 +64,49 @@ function resolveOpenCodeConfigContent(
     inheritedEnvironment.OPENCODE_CONFIG_CONTENT ??
     OPENCODE_EMPTY_CONFIG_CONTENT
   );
+}
+
+const decodeOpenCodeConfigObject = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+/**
+ * Points OpenCode's built-in Anthropic and OpenAI providers at the proxy. Their model catalogs
+ * stay intact, and the user's own config content survives around the override.
+ */
+export function applyOpenCodeProxyEnvironment(
+  environment: NodeJS.ProcessEnv,
+  proxy: ProviderProxyRoute | undefined,
+): NodeJS.ProcessEnv {
+  if (proxy === undefined) return environment;
+  const base: Readonly<Record<string, unknown>> = Option.getOrElse(
+    decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})),
+    () => ({}),
+  );
+  const providers = asRecord(base.provider);
+  const routed = (id: string) => {
+    const provider = asRecord(providers[id]);
+    return {
+      ...provider,
+      options: {
+        ...asRecord(provider.options),
+        baseURL: providerProxyApiUrl(proxy),
+        // OpenCode treats a provider without a key as disconnected; a keyless proxy ignores it.
+        apiKey: proxy.apiKey === "" ? "t3-proxy" : proxy.apiKey,
+      },
+    };
+  };
+  const content = encodeUnknownJsonStringExit({
+    ...base,
+    provider: { ...providers, anthropic: routed("anthropic"), openai: routed("openai") },
+  });
+  return Exit.isSuccess(content)
+    ? { ...environment, OPENCODE_CONFIG_CONTENT: content.value }
+    : environment;
 }
 
 export function resolveOpenCodeServerPassword(
