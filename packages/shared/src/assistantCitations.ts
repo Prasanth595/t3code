@@ -131,6 +131,23 @@ export function assistantCitationsToPlainText(prompt: string): string {
   });
 }
 
+// Claude 5.1+ writes some user-facing updates as thinking blocks, which the adapter shows as
+// assistant messages whose percent-encoded item id ends in `:thinking:<n>`. The API rejects
+// that text coming back in a prompt as reasoning extraction, so only the comment goes out.
+const THINKING_DERIVED_MESSAGE_ID = /%3Athinking%3A\d+$/u;
+
+export function withholdThinkingCitationText(prompt: string): string {
+  let text = "";
+  let cursor = 0;
+  for (const { citation, start, end } of collectAssistantCitations(prompt)) {
+    if (!THINKING_DERIVED_MESSAGE_ID.test(citation.messageId)) continue;
+    const comment = citation.comment === undefined ? "" : ` User comment: ${citation.comment}`;
+    text += `${prompt.slice(cursor, start)}[Quote of one of your earlier updates, text withheld.${comment}]`;
+    cursor = end;
+  }
+  return text + prompt.slice(cursor);
+}
+
 export function expandAssistantCitationsForProvider(prompt: string): string {
   const matches = collectAssistantCitations(prompt);
   if (matches.length === 0) return prompt;
