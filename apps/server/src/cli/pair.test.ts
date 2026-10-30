@@ -20,6 +20,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
@@ -506,10 +507,7 @@ describe("auth scope options", () => {
 
 class AuthRoutesApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
-// Serves the auth routes with their own session store, as a separate server
-// process would, and watches that store for the event that closes a session's
-// open WebSockets. Watching the event rather than awaitInvalidation matters:
-// its database read could see the CLI's write and finish without the event.
+// A separate store must receive the removal event; a database read alone cannot wake open sockets.
 const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
   Effect.gen(function* () {
     const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
@@ -554,13 +552,10 @@ const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
   });
 
 describe("auth session revoke", () => {
-  // Open WebSockets wait on the running server's in-memory revocation signal,
-  // which a database-only revoke from the CLI never reaches.
-  it.effect("ends the running server's open connections for the revoked session", () =>
+  it.effect("signals the running server and cleans up its helper session", () =>
     Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-revoke-test-"),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-revoke-test-" });
       const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
       yield* server.persistRunningServer;
 
@@ -570,14 +565,19 @@ describe("auth session revoke", () => {
 
       assert.include(output, `Revoked session ${server.session.sessionId}.`);
       assert.isTrue(yield* Deferred.isDone(server.removed));
+      const listed = yield* captureStdout(
+        runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
+      );
+      assert.deepEqual(JSON.parse(listed), []);
     }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
   );
 
-  it.effect("ends open connections when retried after a database-only revoke", () =>
+  it.effect("signals the running server when retried after a database-only revoke", () =>
     Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-revoke-retry-test-"),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-auth-revoke-retry-test-",
+      });
       const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
       const revoke = provideCliTestLayers(
         runCli(["auth", "session", "revoke", server.session.sessionId, "--base-dir", baseDir]),
@@ -598,9 +598,10 @@ describe("auth session revoke", () => {
 
   it.effect("still revokes in the database when the running server cannot be reached", () =>
     Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-revoke-unreachable-test-"),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-auth-revoke-unreachable-test-",
+      });
       const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
       yield* persistServerRuntimeState({
         path: config.serverRuntimeStatePath,
@@ -627,7 +628,7 @@ describe("auth session revoke", () => {
         listed.map((entry) => entry.sessionId),
         issued.sessionId,
       );
-    }).pipe(Effect.provide(layerCliRuntime)),
+    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
   );
 });
 

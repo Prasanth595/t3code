@@ -234,12 +234,7 @@ const LIVE_SERVER_TIMEOUT = Duration.seconds(10);
 // Bounds how long the helper session outlives a CLI killed before it can revoke it.
 const LIVE_SERVER_SESSION_TTL = Duration.minutes(1);
 
-/**
- * Open WebSockets end when the running server's in-memory revocation signal
- * fires. A revoke written only to the database never reaches it, so those
- * sockets keep their scopes until the session expires. Revoke through the
- * running server when there is one.
- */
+// Database-only revocation cannot signal the running server's open sockets.
 const revokeSession = Effect.fn("auth.revokeSession")(function* (
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   sessionId: AuthSessionId,
