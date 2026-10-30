@@ -3831,6 +3831,7 @@ export default function ChatView(props: ChatViewProps) {
               <div className="mr-px flex items-center gap-1">
                 <RightPanelMaximizeControl
                   maximized={rightPanelMaximized}
+                  shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
                   onToggle={toggleRightPanelMaximizedStable}
                 />
                 {panelToggleControls}
