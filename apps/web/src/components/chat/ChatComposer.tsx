@@ -134,6 +134,11 @@ import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
+  getClientSettings,
+  isClientSettingsHydrated,
+  updateClientSettings,
+} from "../../hooks/useSettings";
+import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
@@ -305,6 +310,7 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
+  toggleRichText: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
@@ -2853,6 +2859,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           openModelPickerStable();
         }
       },
+      toggleRichText: () => {
+        if (!isClientSettingsHydrated()) return;
+        void updateClientSettings({
+          composerRichTextEnabled: !getClientSettings().composerRichTextEnabled,
+        });
+      },
       openControl: (command) => {
         if (composerBlurFrameRef.current !== null) {
           window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -3434,7 +3446,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <div className="me-2 flex items-center gap-0.5">
                     {composerAttachButton}
                     {isLiteralPendingAnswer ? null : (
-                      <ComposerRichTextToggle richTextEnabled={settings.composerRichTextEnabled} />
+                      <ComposerRichTextToggle
+                        richTextEnabled={settings.composerRichTextEnabled}
+                        shortcutLabel={shortcutLabelForCommand(
+                          keybindings,
+                          "composer.toggleRichText",
+                          {
+                            context: { terminalFocus: false, terminalOpen, modelPickerOpen: false },
+                          },
+                        )}
+                      />
                     )}
                   </div>
                 ) : null}

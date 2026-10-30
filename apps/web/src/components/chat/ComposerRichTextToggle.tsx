@@ -6,7 +6,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 // Same setting as Settings → Chat → Rich text composer. Flipping it remounts the
 // editor; pointer-down is swallowed so a focused editor keeps its caret across that.
-export function ComposerRichTextToggle({ richTextEnabled }: { readonly richTextEnabled: boolean }) {
+export function ComposerRichTextToggle({
+  richTextEnabled,
+  shortcutLabel,
+}: {
+  readonly richTextEnabled: boolean;
+  readonly shortcutLabel: string | null;
+}) {
   const showingSource = !richTextEnabled;
   return (
     <Tooltip>
@@ -26,7 +32,10 @@ export function ComposerRichTextToggle({ richTextEnabled }: { readonly richTextE
       >
         <FeatherIcon />
       </TooltipTrigger>
-      <TooltipPopup>{showingSource ? "Show formatting" : "Show Markdown source"}</TooltipPopup>
+      <TooltipPopup>
+        {showingSource ? "Show formatting" : "Show Markdown source"}
+        {shortcutLabel ? ` · ${shortcutLabel}` : null}
+      </TooltipPopup>
     </Tooltip>
   );
 }

@@ -18,6 +18,9 @@ export function composerShortcutCommands(
     "modelPicker.toggle": ({ event }) => {
       if (!event.repeat) composerRef.current?.toggleModelPicker();
     },
+    "composer.toggleRichText": ({ event }) => {
+      if (!event.repeat) composerRef.current?.toggleRichText();
+    },
     "composer.increaseEffort": ({ event }) => {
       if (!event.repeat) composerRef.current?.stepReasoningEffort(1);
     },
