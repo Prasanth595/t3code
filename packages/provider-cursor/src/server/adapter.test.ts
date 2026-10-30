@@ -1715,6 +1715,8 @@ describe("CursorAdapterV2", () => {
           "mcpServers": {
             "repro": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"] },
             "plain": { "command": "node", "args": ["server.mjs"] },
+            "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
+            "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
             "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
             "typed": { "type": "\${env:MCP_TYPE}", "command": "node", "args": ["server.mjs"] },
             "plugin-docs-search": { "command": "node", "args": ["\${workspaceFolder}/search.mjs"] },
@@ -1755,7 +1757,6 @@ describe("CursorAdapterV2", () => {
         let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          settings: yield* decodeCursorSettings({}),
           environment: {
             HOME: path.join(scratch, "override"),
             CURSOR_DATA_DIR: path.join(scratch, "override"),

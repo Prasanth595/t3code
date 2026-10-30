@@ -1,4 +1,4 @@
-// The SDK leaves editor variables literal; agent-level stdio servers take precedence.
+// The SDK leaves editor variables literal; agent-level stdio clients take precedence.
 import type { McpServerConfig } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -135,7 +135,9 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     // Like the SDK, expand before validating, so `"type": "${env:TYPE}"` is valid.
     const config = decodeCursorMcpFile(expand(contents, resolve));
     if (Option.isNone(config)) continue;
-    const rawServers = (contents as { readonly mcpServers: Record<string, unknown> }).mcpServers;
+    const rawServers = (
+      contents as { readonly mcpServers: Record<string, { command?: unknown; args?: unknown }> }
+    ).mcpServers;
     for (const [name, server] of Object.entries(config.value.mcpServers)) {
       if (seen.has(name)) continue;
       seen.add(name);
@@ -146,7 +148,10 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       if (
         "command" in server &&
         !name.startsWith("plugin-") &&
-        someString(rawServers[name], (text) => WORKSPACE_VARIABLE_PATTERN.test(text))
+        // File clients start before SDK deduplication; leave env/cwd-only servers alone.
+        someString([rawServers[name]?.command, rawServers[name]?.args], (text) =>
+          WORKSPACE_VARIABLE_PATTERN.test(text),
+        )
       ) {
         servers[name] = server as McpServerConfig;
       }
