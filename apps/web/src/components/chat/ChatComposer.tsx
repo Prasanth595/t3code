@@ -133,11 +133,7 @@ import {
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
-import {
-  getClientSettings,
-  isClientSettingsHydrated,
-  updateClientSettings,
-} from "../../hooks/useSettings";
+import { persistClientSettingsUpdate } from "../../hooks/useSettings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -2860,10 +2856,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       },
       toggleRichText: () => {
-        if (isLiteralPendingAnswer || !isClientSettingsHydrated()) return;
-        void updateClientSettings({
-          composerRichTextEnabled: !getClientSettings().composerRichTextEnabled,
-        });
+        if (isLiteralPendingAnswer) return;
+        persistClientSettingsUpdate((current) => ({
+          ...current,
+          composerRichTextEnabled: !current.composerRichTextEnabled,
+        })).catch(console.error);
       },
       openControl: (command) => {
         if (composerBlurFrameRef.current !== null) {
