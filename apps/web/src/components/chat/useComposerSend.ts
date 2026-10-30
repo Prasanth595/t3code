@@ -1,3 +1,4 @@
+import { offlineMessages, deliverOfflineMessages } from "../../state/offlineMessages";
 import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -17,6 +18,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -139,8 +141,6 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
-
-const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
 const selectPlanModeEnabled = (settings: UnifiedSettings) => settings.planModeEnabled;
 
@@ -381,7 +381,6 @@ export function useComposerSend(input: ComposerSendInput) {
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
-  const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
@@ -430,12 +429,13 @@ export function useComposerSend(input: ComposerSendInput) {
       );
     };
     if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      (!activeEnvironmentUnavailable &&
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
       !activeThread ||
       (isSendBusy && !sendQueuesBehindSetup) ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
-      threadDetailLoading ||
+      (threadDetailLoading && !activeEnvironmentUnavailable) ||
       readPendingEnvironmentChange() !== null ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
@@ -457,22 +457,12 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    if (activeEnvironmentUnavailable) {
-      const toastSlot = environmentUnavailableSendToastSlotRef.current;
-      environmentUnavailableSendToastSlotRef.current =
-        (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
-      toastManager.add({
-        ...stackedThreadToast({
-          type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
-        }),
-        id: `chat-send-environment-unavailable:${toastSlot}`,
-      });
-      return;
-    }
     const sendCtx = composerRef.current?.getSendContext();
-    if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
+    if (
+      !activeEnvironmentUnavailable &&
+      activePendingProgress &&
+      sendCtx?.answeringPendingUserInput !== false
+    ) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -480,11 +470,22 @@ export function useComposerSend(input: ComposerSendInput) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    if (!sendCtx?.providerAvailable) {
+    if (!sendCtx || (!activeEnvironmentUnavailable && !sendCtx.providerAvailable)) {
       notifyDirectAnnotationAttached();
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
+    if (
+      activeEnvironmentUnavailable &&
+      (queuedRunEdit.isEditing || sendCtx.multipleModelSelections !== null || activePendingProgress)
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "Reconnect to edit a queued run, answer a request, or send to multiple models.",
+      });
+      return;
+    }
+
     const approvalFeedbackTarget = pendingApprovalsRef.current.find(
       (approval) =>
         approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
@@ -609,7 +610,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerEnvironmentContexts.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
-    if (feedbackCommand && multipleModelSelections === null) {
+    if (!activeEnvironmentUnavailable && feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
         toastManager.add(
           stackedThreadToast({
@@ -656,6 +657,7 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (
+      !activeEnvironmentUnavailable &&
       !directAnnotation &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
@@ -847,6 +849,95 @@ export function useComposerSend(input: ComposerSendInput) {
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
+      return;
+    }
+
+    const hasOfflineMessages = offlineMessages
+      .getSnapshot()
+      .some(
+        (message) =>
+          message.environmentId === environmentId && message.input.threadId === threadIdForSend,
+      );
+    if (activeEnvironmentUnavailable || hasOfflineMessages) {
+      sendInFlightRef.current = true;
+      const queuedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      try {
+        await offlineMessages.enqueue({
+          environmentId,
+          input: {
+            commandId: CommandId.make(messageIdForSend),
+            threadId: threadIdForSend,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              attachments: [],
+              ...(outgoingMessageContext ? { context: outgoingMessageContext } : {}),
+            },
+            modelSelection: ctxSelectedModelSelection,
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+            dispatchMode: "queue",
+            createdAt: messageCreatedAt,
+            ...(isLocalDraftThread || baseBranchForWorktree
+              ? {
+                  bootstrap: {
+                    ...(isLocalDraftThread
+                      ? {
+                          createThread: {
+                            projectId: activeProject.id,
+                            title: deriveThreadTitleSeed({
+                              text: messageTextForSend,
+                              attachments: composerAttachmentsSnapshot,
+                              fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
+                            }),
+                            modelSelection: ctxSelectedModelSelection,
+                            runtimeMode,
+                            interactionMode: sendInteractionMode,
+                            branch: activeThreadBranch,
+                            worktreePath: activeThread.worktreePath,
+                            createdAt: activeThread.createdAt,
+                          },
+                        }
+                      : {}),
+                    ...(baseBranchForWorktree
+                      ? {
+                          prepareWorktree: {
+                            projectCwd: activeProject.workspaceRoot,
+                            baseBranch: baseBranchForWorktree,
+                            ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                          },
+                          runSetupScript: true,
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+          attachments: composerAttachmentsSnapshot,
+        });
+        if (
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) === queuedDraft &&
+          promptRef.current === promptForSend &&
+          currentRouteThreadKeyRef.current === routeThreadKey
+        ) {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        }
+        toastManager.add({
+          type: "info",
+          title: "Queued offline",
+          description: "Sends automatically when this environment reconnects.",
+        });
+        void deliverOfflineMessages();
+      } catch (error) {
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Could not save the offline message.",
+        );
+      }
+      sendInFlightRef.current = false;
       return;
     }
 
