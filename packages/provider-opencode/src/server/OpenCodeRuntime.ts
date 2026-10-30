@@ -33,6 +33,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   providerProxyApiUrl,
+  providerProxyToken,
   type ProviderProxyRoute,
 } from "@t3tools/provider-core/server/providerProxy";
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
@@ -44,6 +45,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
@@ -95,18 +97,22 @@ export function applyOpenCodeProxyEnvironment(
       options: {
         ...asRecord(provider.options),
         baseURL: providerProxyApiUrl(proxy),
-        // OpenCode treats a provider without a key as disconnected; a keyless proxy ignores it.
-        apiKey: proxy.apiKey === "" ? "t3-proxy" : proxy.apiKey,
+        apiKey: providerProxyToken(proxy),
       },
     };
   };
-  const content = encodeUnknownJsonStringExit({
+  const content = encodeUnknownJsonString({
     ...base,
     provider: { ...providers, anthropic: routed("anthropic"), openai: routed("openai") },
   });
-  return Exit.isSuccess(content)
-    ? { ...environment, OPENCODE_CONFIG_CONTENT: content.value }
-    : environment;
+  // A stored ChatGPT login attaches the built-in Codex plugin, whose fetch rewrites requests to
+  // chatgpt.com after any config override; user plugins such as Claude OAuth do the same.
+  return {
+    ...environment,
+    OPENCODE_CONFIG_CONTENT: content,
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+    OPENCODE_PURE: "1",
+  };
 }
 
 export function resolveOpenCodeServerPassword(

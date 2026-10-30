@@ -21,6 +21,9 @@ describe("applyOpenCodeProxyEnvironment", () => {
     );
 
     const proxied = { baseURL: "http://proxy:8317/v1", apiKey: "t3-proxy" };
+    // Plugins such as Codex's ChatGPT login replace fetch and would bypass the proxy.
+    expect(environment.OPENCODE_DISABLE_DEFAULT_PLUGINS).toBe("1");
+    expect(environment.OPENCODE_PURE).toBe("1");
     expect(JSON.parse(environment.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
       theme: "t3",
       provider: {

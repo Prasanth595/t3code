@@ -5,7 +5,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import type { ProviderProxyRoute } from "@t3tools/provider-core/server/providerProxy";
+import {
+  providerProxyToken,
+  type ProviderProxyRoute,
+} from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -59,7 +62,7 @@ export const applyClaudeProxyEnvironment = (
   const next: NodeJS.ProcessEnv = {
     ...environment,
     ANTHROPIC_BASE_URL: proxy.url,
-    ANTHROPIC_AUTH_TOKEN: proxy.apiKey,
+    ANTHROPIC_AUTH_TOKEN: providerProxyToken(proxy),
     // Empty, not removed: Claude Code otherwise falls back to a saved API key.
     ANTHROPIC_API_KEY: "",
   };

@@ -32,6 +32,11 @@ describe("applyClaudeProxyEnvironment", () => {
       ANTHROPIC_BASE_URL: "http://proxy:8317",
       ANTHROPIC_AUTH_TOKEN: "sk-proxy",
     });
+    // Claude Code reports "Not logged in" without contacting a proxy when no credential is set.
+    expect(
+      applyClaudeProxyEnvironment({}, { url: "http://proxy:8317", apiKey: "" })
+        .ANTHROPIC_AUTH_TOKEN,
+    ).toBe("t3-proxy");
   });
 });
 

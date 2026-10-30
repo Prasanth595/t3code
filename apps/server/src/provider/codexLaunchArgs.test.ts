@@ -33,8 +33,8 @@ describe("codexExecLaunchArgs", () => {
 });
 
 describe("applyCodexProxyRuntime", () => {
-  const proxyProvider = (keyField: string) =>
-    `model_providers.t3_proxy={name="T3 proxy",base_url="http://proxy:8317/v1",${keyField}wire_api="responses",requires_openai_auth=false,supports_websockets=false}`;
+  const proxyProvider =
+    'model_providers.t3_proxy={name="T3 proxy",base_url="http://proxy:8317/v1",env_key="T3_PROXY_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=false}';
 
   it("adds the proxy provider after env launch args and keeps the key out of argv", () => {
     const { config, environment } = applyCodexProxyRuntime(
@@ -49,22 +49,12 @@ describe("applyCodexProxyRuntime", () => {
       "-c",
       'model_provider="t3_proxy"',
       "-c",
-      proxyProvider('env_key="T3_PROXY_KEY",'),
+      proxyProvider,
     ]);
     NodeAssert.deepStrictEqual(codexExecLaunchArgs(config.launchArgs).slice(-2), [
       "-c",
-      proxyProvider('env_key="T3_PROXY_KEY",'),
+      proxyProvider,
     ]);
     NodeAssert.deepStrictEqual(environment, { PATH: "/bin", T3_PROXY_KEY: "sk-proxy" });
-  });
-
-  it("sends no key to a proxy that has none", () => {
-    const { config } = applyCodexProxyRuntime(
-      { launchArgs: "" },
-      {},
-      { url: "http://proxy:8317", apiKey: "" },
-    );
-
-    NodeAssert.deepStrictEqual(codexAppServerArgs(config.launchArgs).at(-1), proxyProvider(""));
   });
 });

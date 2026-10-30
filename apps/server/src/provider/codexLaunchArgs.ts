@@ -1,5 +1,6 @@
 import {
   providerProxyApiUrl,
+  providerProxyToken,
   type ProviderProxyRoute,
 } from "@t3tools/provider-core/server/providerProxy";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
@@ -22,15 +23,17 @@ export const applyCodexProxyRuntime = <Config extends { readonly launchArgs: str
   proxy: ProviderProxyRoute | undefined,
 ): { readonly config: Config; readonly environment: NodeJS.ProcessEnv } => {
   if (proxy === undefined) return { config, environment };
-  const keyField = proxy.apiKey === "" ? "" : `env_key="${CODEX_PROXY_KEY_ENV}",`;
   const proxyArgs = [
     `model_provider="${CODEX_PROXY_MODEL_PROVIDER}"`,
-    `model_providers.${CODEX_PROXY_MODEL_PROVIDER}={name="T3 proxy",base_url=${JSON.stringify(providerProxyApiUrl(proxy))},${keyField}wire_api="responses",requires_openai_auth=false,supports_websockets=false}`,
+    `model_providers.${CODEX_PROXY_MODEL_PROVIDER}={name="T3 proxy",base_url=${JSON.stringify(providerProxyApiUrl(proxy))},env_key="${CODEX_PROXY_KEY_ENV}",wire_api="responses",requires_openai_auth=false,supports_websockets=false}`,
   ]
     .map((value) => `-c ${JSON.stringify(value)}`)
     .join(" ");
   const launchArgs = resolveCodexLaunchArgs(config.launchArgs, environment);
-  const next: NodeJS.ProcessEnv = { ...environment, [CODEX_PROXY_KEY_ENV]: proxy.apiKey };
+  const next: NodeJS.ProcessEnv = {
+    ...environment,
+    [CODEX_PROXY_KEY_ENV]: providerProxyToken(proxy),
+  };
   // Folded into launchArgs above; left in place it would replace the proxy arguments.
   delete next[T3CODE_CODEX_LAUNCH_ARGS_ENV];
   return {

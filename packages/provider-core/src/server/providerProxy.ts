@@ -9,6 +9,13 @@ export interface ProviderProxyRoute {
 export const normalizeProviderProxyUrl = (url: string): string =>
   url.trim().replace(/\/+$/, "").replace(/\/v1$/, "");
 
+// Harnesses refuse to send requests without a credential; a proxy with no API keys ignores it.
+const KEYLESS_PROXY_TOKEN = "t3-proxy";
+
+/** The credential to send: the proxy's key, or a placeholder for a keyless proxy. */
+export const providerProxyToken = (route: ProviderProxyRoute): string =>
+  route.apiKey === "" ? KEYLESS_PROXY_TOKEN : route.apiKey;
+
 /** The OpenAI- and Anthropic-compatible API root. */
 export const providerProxyApiUrl = (route: ProviderProxyRoute): string => `${route.url}/v1`;
 
