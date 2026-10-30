@@ -33,11 +33,15 @@ import type { Feedback, InlineComment } from "../tracker/github.ts";
 const IDENTITY_WORDS =
   'You act on GitHub as rawphp. Your T3 server should have been started with GH_CONFIG_DIR=/gh/rawphp. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "the session\'s gh account is <x>, not rawphp".';
 
+/** The sentence that keeps a session on the branch its worktree was launched on. */
+const BRANCH_WORDS =
+  "Stay on the branch the worktree was launched on: never run `git checkout -b`, `git switch -c` or any command that creates or switches branches, and push the current branch with `git push -u origin HEAD`, unless told below to push to a named branch.";
+
 describe("launchMessage", () => {
   it("invokes /factory and says nobody is in the chat", () => {
     assert.strictEqual(
       launchMessage("rawphp/softfac", 10, "rawphp", "/gh/rawphp"),
-      `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\n${IDENTITY_WORDS}`,
+      `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR. ${BRANCH_WORDS}\n\n${IDENTITY_WORDS}`,
     );
   });
 
@@ -49,7 +53,7 @@ describe("launchMessage", () => {
     });
     assert.strictEqual(
       message,
-      `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\nThe pull request https://github.com/rawphp/softfac/pull/12 of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
+      `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR. ${BRANCH_WORDS}\n\nThe pull request https://github.com/rawphp/softfac/pull/12 of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
     );
   });
 
@@ -94,8 +98,7 @@ describe("launchMessage: a resumed run", () => {
     branch: "t3code/abc",
     after,
   });
-  const PREFIX =
-    "/factory acme/widgets#42\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\n";
+  const PREFIX = `/factory acme/widgets#42\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR. ${BRANCH_WORDS}\n\n`;
   const PUSH_WORDS =
     "Push your commits to that branch with `git push origin HEAD:t3code/abc`. If a pull request for this issue is already open on it, that pull request is updated. Do not open another pull request.";
 
@@ -150,6 +153,33 @@ describe("launchMessage: a resumed run", () => {
       message,
       `${PREFIX}The pull request https://github.com/acme/widgets/pull/50 of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
     );
+  });
+
+  it("tells a fresh launch and every kind of resume to stay on the launched branch", () => {
+    const pr = "https://github.com/acme/widgets/pull/50";
+    const launches = [
+      launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp"),
+      launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", undefined, "release"),
+      launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", resumed("time-limit")),
+      launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", resumed("interrupted")),
+      ...(["existing-pr", "feedback", "failed-regate"] as const).map((after) =>
+        launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", {
+          after,
+          branch: "t3code/abc",
+          prUrl: pr,
+        }),
+      ),
+    ];
+    for (const message of launches) {
+      assert.strictEqual(message.split(BRANCH_WORDS).length - 1, 1, message);
+    }
+    // A resume keeps its own push to the named branch, below the sentence that defers to it.
+    for (const message of launches.slice(2)) {
+      assert.ok(
+        message.indexOf(BRANCH_WORDS) < message.indexOf("git push origin HEAD:t3code/abc"),
+        message,
+      );
+    }
   });
 
   it("puts the identity paragraph after a resume paragraph", () => {

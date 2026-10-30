@@ -199,6 +199,8 @@ const defaultPr = (): PullRequest => ({
   baseRef: "main",
   headSha: "abc123",
   mergeable: "mergeable",
+  // After the claim, which `STARTED` writes at `T0` (10:13:16).
+  createdAt: "2026-10-04T10:20:00Z",
 });
 
 /** The folder T3 names a new worktree on branch `t3/2e8db933`. */
@@ -227,6 +229,8 @@ interface World {
   textCheck: TextCheck | GitHubError;
   status: ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
+  /** The commit the session's worktree has checked out, or the failed read of it. */
+  head: string | SessionsError;
   /** The next call of each method fails with this, once. */
   failNext: {
     pullRequest?: GitHubError;
@@ -323,6 +327,7 @@ const rigFor = (
     textCheck: "unchanged",
     status: statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
+    head: "def456",
     failNext: {},
     closedBy: null,
     onHead: {},
@@ -461,6 +466,11 @@ const rigFor = (
     removeWorktree: (path) => {
       t3Call(`removeWorktree ${path}`);
       return Effect.void;
+    },
+    worktreeHead: (path) => {
+      t3Call(`worktreeHead ${path}`);
+      const answer = world.head;
+      return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
     },
   };
   const ctx: BuildingContext = {
@@ -3458,6 +3468,103 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.strictEqual(rig.world.issue.state, "stuck");
       lookupFailed(rig, "watch");
+    }),
+  );
+});
+
+describe("advance: done on a branch the session made itself", () => {
+  const OWN = "t3/kpi-push-screen";
+  const NOT_ITS_BRANCH = "the session reported PR #12 but its branch is not this session's branch";
+  const BOUND: Line = { event: "branch_bound", data: { pr: 12, branch: OWN } };
+  /** A run whose session pushed `OWN` from its worktree, whose HEAD is the pull request's head. */
+  const ownBranchRig = (pr: Partial<PullRequest> = {}) => {
+    const rig = rigFor();
+    rig.world.pr = { ...defaultPr(), headRef: OWN, ...pr };
+    rig.world.head = "abc123";
+    return rig;
+  };
+  const assertUnbound = (rig: Rig, outcome: AdvanceOutcome, publicReason = NOT_ITS_BRANCH) => {
+    assert.strictEqual(outcome.kind, "stuck", JSON.stringify(outcome));
+    assert.ok(rig.gh.includes(`comment 10 ${stuckCommentText(publicReason, DONE_MESSAGE)}`));
+    assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance pr-not-bound"));
+    assert.ok(!linesOf(rig).some((line) => line.event === "branch_bound"));
+  };
+
+  it.effect("binds a pull request opened after the claim on the worktree's HEAD", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, BOUND, PR_OPENED]);
+      assert.ok(rig.t3.includes("worktreeHead /t3/wt"), rig.t3.join("\n"));
+      // Once bound, the ledger is the proof: the worktree is not read again.
+      clearCalls(rig);
+      rig.world.head = "def456";
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")));
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, BOUND, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is stuck when the pull request's head is not the worktree's HEAD", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig({ headSha: "0ther" });
+      assertUnbound(rig, yield* advanceIn(rig));
+      // The worktree is read before the stuck path removes it.
+      assert.ok(
+        rig.order.indexOf("t3:worktreeHead /t3/wt") < rig.order.indexOf("t3:removeWorktree /t3/wt"),
+        rig.order.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("is stuck for an older pull request the session checked out (#117)", () =>
+    Effect.gen(function* () {
+      // Someone else's pull request, opened before the claim: its head is what the worktree holds.
+      const rig = ownBranchRig({ createdAt: "2026-10-04T10:00:00Z" });
+      assertUnbound(rig, yield* advanceIn(rig));
+    }),
+  );
+
+  it.effect("is stuck for a pull request from a fork", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig({ crossRepository: true });
+      assertUnbound(
+        rig,
+        yield* advanceIn(rig),
+        "the session reported PR #12 but it comes from a fork",
+      );
+    }),
+  );
+
+  it.effect("is stuck for a pull request onto another base", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig({ baseRef: "release" });
+      assertUnbound(
+        rig,
+        yield* advanceIn(rig),
+        "the session reported PR #12 but its base is not the base branch main",
+      );
+    }),
+  );
+
+  it.effect("is stuck when the thread has no worktree", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      setStatus(rig, "completed", DONE_MESSAGE, { worktreePath: null });
+      assertUnbound(rig, yield* advanceIn(rig));
+      assert.ok(!rig.t3.some((call) => call.startsWith("worktreeHead")));
+    }),
+  );
+
+  it.effect("is stuck when the worktree's HEAD cannot be read", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      rig.world.head = new SessionsError({ operation: "worktree-head", cause: "not a git repo" });
+      assertUnbound(rig, yield* advanceIn(rig));
     }),
   );
 });

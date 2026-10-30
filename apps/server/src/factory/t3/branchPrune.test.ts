@@ -723,6 +723,28 @@ describe("unfinishedRunBranches", () => {
       }),
   );
 
+  it.effect(
+    "keeps a branch the session made and the factory bound while the run is unfinished",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir("ledger");
+        writeRun(dataDir, { repo: "acme/widgets", issue: "1", attempt: 1 }, [
+          building,
+          launched("t3/launched"),
+          ["branch_bound", { pr: 12, branch: "t3/kpi-push-screen" }],
+        ]);
+        const runs = yield* unfinishedRunBranches(dataDir, "acme/widgets");
+        const adopted = branch({
+          ref: "refs/heads/t3/kpi-push-screen",
+          name: "t3/kpi-push-screen",
+        });
+        assert.deepStrictEqual(decide(adopted, facts({ runs })), {
+          prune: false,
+          reason: "an unfinished run's",
+        });
+      }),
+  );
+
   it.effect("fails when one of the repo's runs cannot be read", () =>
     Effect.gen(function* () {
       const dataDir = tempDir("ledger");
