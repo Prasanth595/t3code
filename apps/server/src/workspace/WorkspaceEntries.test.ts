@@ -376,6 +376,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           "vendor/sub",
         ]);
         yield* writeTextFile(cwd, "vendor/sub/generated.ts", "export {};");
+        yield* writeTextFile(cwd, "vendor/sub/scratch.ts", "export {};");
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
@@ -383,6 +384,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src/keep.ts");
         expect(paths).toContain("vendor/sub");
         expect(paths).toContain("vendor/sub/lib/inner.ts");
+        expect(paths).toContain("vendor/sub/scratch.ts");
         expect(paths).not.toContain("vendor/sub/.git");
         expect(paths).not.toContain("vendor/sub/generated.ts");
       }),

@@ -139,28 +139,26 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-// Submodules and nested worktrees surface their `.git` gitlink file; it is repository metadata, not workspace content.
-function toEntryPath(relativePath: string): string | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(relativePath));
-  if (!normalizedPath || normalizedPath.split("/").includes(".git")) {
+function toProjectEntry(item: MixedItem): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+  if (!normalizedPath) {
     return null;
   }
-  return normalizedPath;
-}
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const path = toEntryPath(item.item.relativePath);
-  return path ? { path, kind: item.type } : null;
+  return {
+    path: normalizedPath,
+    kind: item.type,
+  };
 }
 
 function toFileEntry(item: FileItem): ProjectEntry | null {
-  const path = toEntryPath(item.relativePath);
-  return path ? { path, kind: "file" } : null;
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
 function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const path = toEntryPath(item.relativePath);
-  return path ? { path, kind: "directory" } : null;
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
 function mapFileSearchResult(
@@ -291,6 +289,8 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+// Submodules and nested worktrees surface their `.git` gitlink file; it is repository metadata.
+const GITLINK_CONSTRAINT = "!**/.git";
 const GITIGNORE_SOURCE = /(^|[\\/])\.gitignore$/;
 // A collapsed `dir/` that fits in one fff query token: no whitespace, glob, or negation syntax.
 const QUERY_SAFE_DIRECTORY = /^[^\s*?[\]{}!\\]+\/$/;
@@ -435,9 +435,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const vcsProcess = yield* VcsProcess.VcsProcess;
   let exclusionConstraints = yield* loadExclusionConstraints(vcsProcess, cwd);
   const withExclusions = (query: string) =>
-    exclusionConstraints && query
-      ? `${query} ${exclusionConstraints}`
-      : query || exclusionConstraints;
+    [query, GITLINK_CONSTRAINT, exclusionConstraints].filter(Boolean).join(" ");
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -501,21 +499,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
       const incompleteBeforeQuery = hasIncompleteInitialScan();
-      // fff's mixed search returns only directories for a constraint-only query; list files and
-      // derive their folders instead.
-      const mapped = exclusionConstraints
-        ? mapFileSearchResult(
-            yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "fileSearch", () =>
-              finder.fileSearch(exclusionConstraints, { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
-            ),
-            WORKSPACE_INDEX_MAX_ENTRIES,
-          )
-        : mapMixedSearchResult(
-            yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
-              finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
-            ),
-            WORKSPACE_INDEX_MAX_ENTRIES,
-          );
+      const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
+        finder.mixedSearch(withExclusions(""), { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      );
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -534,8 +521,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     const constrainedQuery = withExclusions(query);
-    // Mixed search drops files when the query holds only exclusion constraints.
-    if (kind === "file" || imageOnly || (kind === undefined && !query && exclusionConstraints)) {
+    if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(constrainedQuery, { pageSize }),
       );
