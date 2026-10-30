@@ -207,6 +207,21 @@ describe("OpenCode2Server spawned server", () => {
       assert.strictEqual(first.version, "2.0.18");
       assert.strictEqual(first.external, false);
       assert.strictEqual(second.client, first.client);
+
+      const proxied = yield* OpenCode2Server.make({
+        binaryPath,
+        serverUrl: "",
+        serverPassword: "",
+        directory,
+        environment: OpenCodeRuntime.applyOpenCodeProxyEnvironment(yield* HostProcess.Environment, {
+          url: "http://proxy:8317",
+          apiKey: "sk",
+        }),
+      });
+      const refused = yield* proxied
+        .withConnection((connection) => Effect.succeed(connection))
+        .pipe(Effect.flip);
+      assert.include(refused.detail, "OpenCode 2 cannot use the proxy");
     }).pipe(
       Effect.scoped,
       Effect.provide(

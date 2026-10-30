@@ -53,11 +53,13 @@ export const MINIMUM_OPENCODE_VERSION = "1.14.19";
 // login's plugin would send requests around the proxy.
 const MINIMUM_PROXIED_OPENCODE_VERSION = "1.14.49";
 
+/** Set only by applyOpenCodeProxyEnvironment. */
+export const isOpenCodeProxied = (environment: NodeJS.ProcessEnv | undefined): boolean =>
+  environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS === "1";
+
 /** The oldest server a spawn may accept, given its environment. */
 export const minimumOpenCodeVersionFor = (environment: NodeJS.ProcessEnv | undefined): string =>
-  environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS === "1"
-    ? MINIMUM_PROXIED_OPENCODE_VERSION
-    : MINIMUM_OPENCODE_VERSION;
+  isOpenCodeProxied(environment) ? MINIMUM_PROXIED_OPENCODE_VERSION : MINIMUM_OPENCODE_VERSION;
 const OPENCODE_HEALTH_TIMEOUT = "5 seconds";
 
 const OpenCodeHealthSchema = Schema.Struct({
@@ -277,7 +279,7 @@ export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting"
   client: OpencodeClient,
   environment: NodeJS.ProcessEnv | undefined,
 ) {
-  if (environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS !== "1") return;
+  if (!isOpenCodeProxied(environment)) return;
   const requested = Option.getOrElse(
     decodeOpenCodeConfigObject(resolveOpenCodeConfigContent(environment, {})),
     () => ({}),

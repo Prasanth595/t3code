@@ -109,6 +109,13 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
       enabled: true,
     },
   });
+  // A keyless hub at the same URL can't read accounts, so the proxy's key still applies.
+  expect(
+    UsageLimitSources.effectiveUsageLimitSources({
+      ...settings,
+      usageLimitSources: { [UsageLimitSourceId.make("hub")]: { ...hub, managementKey: "" } },
+    })[UsageLimitSources.PROVIDER_PROXY_SOURCE_ID]?.managementKey,
+  ).toBe("mgmt");
   for (const listed of [
     { [UsageLimitSourceId.make("hub")]: hub },
     {
