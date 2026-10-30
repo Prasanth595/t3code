@@ -1,14 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  AuthOrchestrationOperateScope,
-  type EnvironmentId,
-  type ScheduledTask,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type ScheduledTask, type ThreadId } from "@t3tools/contracts";
 import {
   StackActions,
   useFocusEffect,
@@ -23,17 +13,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import * as Dialog from "../../components/ui/Dialog";
-import { Menu } from "../../components/ui/Menu";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { ScheduledTaskStatusDot } from "../settings/components/ScheduledTaskStatusDot";
+import { useScheduledTaskActions } from "../settings/scheduled-task-actions";
 import { startScheduledTaskEditor } from "../settings/scheduled-task-editor-state";
 import { editDraft } from "../settings/scheduledTaskDraft";
 import {
@@ -77,35 +66,11 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
       return () => clearInterval(timer);
     }, []),
   );
-  const canOperate = useAtomValue(
-    serverEnvironment.runScheduledTaskNow.permissionAtom(environmentId),
-  );
-  const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "thread automation toggle",
-    reportFailure: false,
-  });
-  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "thread automation run now",
-    reportFailure: false,
-  });
-
+  const actions = useScheduledTaskActions(environmentId);
   const edit = (task: ScheduledTask) => {
     startScheduledTaskEditor({ environmentId, environmentLabel, draft: editDraft(task) });
     // Replacing the leaf sheet keeps the editor a detail of this thread, so Back and Save return here.
     navigation.dispatch(StackActions.replace("SettingsScheduledTaskEdit"));
-  };
-  const act = async (task: ScheduledTask, action: "run" | "toggle") => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-    const result =
-      action === "run"
-        ? await runNow({ environmentId, input: { id: task.id } })
-        : await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Dialog.alert(
-        action === "run" ? "Could not run automation" : "Could not update automation",
-        String(squashAtomCommandFailure(result)),
-      );
-    }
   };
 
   const content = (
@@ -132,9 +97,10 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
             key={task.id}
             task={task}
             now={now}
-            canOperate={canOperate}
+            enabled={actions.isEnabled(task)}
+            canOperate={actions.canOperate}
             onEdit={edit}
-            onAction={(action) => void act(task, action)}
+            onAction={(action) => void actions.act(task, action)}
           />
         ))
       )}
@@ -190,6 +156,7 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
 function AutomationRow(props: {
   readonly task: ScheduledTask;
   readonly now: number;
+  readonly enabled: boolean;
   readonly canOperate: boolean;
   readonly onEdit: (task: ScheduledTask) => void;
   readonly onAction: (action: "run" | "toggle") => void;
@@ -197,13 +164,16 @@ function AutomationRow(props: {
   const { task } = props;
   const running = task.lastRunStatus === "running";
   return (
-    <View className="flex-row items-start gap-3 border-b border-border py-3.5">
-      <SymbolView
-        name="calendar.badge.clock"
-        size={15}
-        tintColorClassName="accent-foreground-muted"
-        type="monochrome"
-      />
+    <View className="flex-row items-center gap-3 border-b border-border py-3">
+      <View className="size-4 items-center justify-center">
+        <SymbolView
+          name="calendar.badge.clock"
+          size={15}
+          tintColorClassName="accent-foreground-muted"
+          type="monochrome"
+        />
+        <ScheduledTaskStatusDot status={task.lastRunStatus} className="absolute -right-1 -top-1" />
+      </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Edit ${task.title}`}
@@ -217,7 +187,7 @@ function AutomationRow(props: {
           {describeScheduledTaskSchedule(task)}
           {running
             ? " · Running"
-            : !task.enabled
+            : !props.enabled
               ? " · Paused"
               : task.nextRunAt
                 ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, props.now)}`
@@ -229,45 +199,27 @@ function AutomationRow(props: {
           </Text>
         ) : null}
       </Pressable>
-      <Menu
-        actions={[
-          { id: "edit", title: "Edit" },
-          {
-            id: "toggle",
-            title: task.enabled ? "Pause" : "Resume",
-            attributes: { disabled: !props.canOperate },
-          },
-          // Webhook tasks run only on a request to their URL.
-          ...(task.schedule.type === "webhook"
-            ? []
-            : [
-                {
-                  id: "run",
-                  title: "Run now",
-                  attributes: { disabled: !props.canOperate || running },
-                },
-              ]),
-        ]}
-        onPressAction={({ nativeEvent }) => {
-          if (nativeEvent.event === "edit") props.onEdit(task);
-          else if (nativeEvent.event === "toggle" || nativeEvent.event === "run") {
-            props.onAction(nativeEvent.event);
-          }
-        }}
-      >
+      {/* Webhook tasks run only on a request to their URL. */}
+      {task.schedule.type === "webhook" ? null : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Actions for ${task.title}`}
-          className="-my-2.5 h-11 w-11 items-center justify-center"
+          accessibilityLabel={`Run ${task.title} now`}
+          accessibilityState={{ disabled: !props.canOperate || running }}
+          disabled={!props.canOperate || running}
+          onPress={() => props.onAction("run")}
+          className="-my-2 size-11 items-center justify-center active:opacity-70 disabled:opacity-40"
         >
-          <SymbolView
-            name="ellipsis"
-            size={18}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-          />
+          <SymbolView name="play" size={16} tintColorClassName="accent-icon" />
         </Pressable>
-      </Menu>
+      )}
+      <View className="self-stretch justify-center">
+        <ThemedSwitch
+          accessibilityLabel={props.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
+          disabled={!props.canOperate}
+          value={props.enabled}
+          onValueChange={() => props.onAction("toggle")}
+        />
+      </View>
     </View>
   );
 }
