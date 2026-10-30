@@ -1,3 +1,4 @@
+import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -283,10 +284,6 @@ function repositoryPathOf(segments: { readonly workspace: string; readonly slug:
   return `/repositories/${encodeURIComponent(segments.workspace)}/${encodeURIComponent(
     segments.slug,
   )}`;
-}
-
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 function stateParams(state: PullRequestListState): ReadonlyArray<string> {
