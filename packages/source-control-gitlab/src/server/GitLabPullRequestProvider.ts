@@ -182,13 +182,9 @@ export const make = Effect.gen(function* () {
     },
     detail = cli.getMergeRequestDetail(input),
   ) =>
-    Effect.all(
-      [
-        detail,
-        cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] }),
-      ],
-      { concurrency: 2 },
-    ).pipe(
+    Effect.all([detail, cli.listMergeRequestStats({ cwd: input.cwd, changeRequests: [input] })], {
+      concurrency: 2,
+    }).pipe(
       Effect.map(([mergeRequest, [stat]]) =>
         stat === undefined
           ? mergeRequest
