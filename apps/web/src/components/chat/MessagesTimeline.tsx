@@ -1094,12 +1094,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorkEntryContentReady: (anchorKey, entryId) => {
       const pending = disclosureRevealRef.current;
       if (
-        pending?.key !== anchorKey ||
-        pending.entryId !== entryId ||
-        pending.identity !== listIdentityKey
+        !pending ||
+        pending.identity !== listIdentityKey ||
+        (pending.contentKey === undefined
+          ? pending.key !== anchorKey || pending.entryId !== entryId
+          : pending.contentKey !== anchorKey)
       )
         return;
-      pending.ready = true;
+      pending.ready = pending.contentKey === undefined;
       scheduleDisclosureSettle();
     },
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,

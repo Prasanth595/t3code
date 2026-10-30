@@ -392,7 +392,7 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
-  it.each(["inline", "delayed"])("handles %s output expanded above the composer", async (mode) => {
+  it.each(["inline", "delayed", "grouped-delayed"])("reveals %s output", async (mode) => {
     setup();
     environmentQuery.data = null;
     environmentQuery.error = null;
@@ -446,6 +446,24 @@ describe("MessagesTimeline messages", () => {
                   }),
             },
           },
+          ...(mode === "grouped-delayed"
+            ? [
+                {
+                  id: "another-tool",
+                  kind: "work" as const,
+                  createdAt: CREATED_AT,
+                  entry: {
+                    id: "another-tool",
+                    createdAt: CREATED_AT,
+                    label: "Other tool",
+                    tone: "tool" as const,
+                    itemType: "dynamic_tool" as const,
+                    toolLifecycleStatus: "completed" as const,
+                    toolData: { input: { query: "other" } },
+                  },
+                },
+              ]
+            : []),
           ...tallEntries.slice(6),
         ]}
       />
@@ -453,7 +471,36 @@ describe("MessagesTimeline messages", () => {
     await using screen = await renderElement(timeline());
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
+    if (mode === "grouped-delayed") {
+      await act(() => {
+        void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
+      });
+      await vi.waitFor(() =>
+        expect(
+          screen.container.querySelector('[data-timeline-row-kind="work-toggle"] button'),
+        ).not.toBeNull(),
+      );
+      const group = () =>
+        screen.container.querySelector<HTMLElement>(
+          '[data-timeline-row-kind="work-toggle"] button',
+        )!;
+      await click(group());
+      await vi.waitFor(() =>
+        expect(
+          screen.container.querySelector('[data-work-entry-id="tool-near-composer"]'),
+        ).not.toBeNull(),
+      );
+      await click(
+        screen.container.querySelector<HTMLElement>('[data-work-entry-id="tool-near-composer"]')!,
+      );
+      await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
+      await click(group());
+    }
     const header = () => {
+      if (mode === "grouped-delayed")
+        return screen.container.querySelector<HTMLElement>(
+          '[data-timeline-row-kind="work-toggle"] button',
+        )!;
       const rows = screen.container.querySelectorAll<HTMLElement>(
         '[data-timeline-row-kind="work"] [role="button"]',
       );
@@ -475,7 +522,11 @@ describe("MessagesTimeline messages", () => {
       );
     });
 
+    const collapsedScrollTop = viewport.scrollTop;
     await click(header());
+    if (mode === "grouped-delayed") {
+      await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(collapsedScrollTop));
+    }
     if (mode !== "inline") {
       await vi.waitFor(() =>
         expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),

@@ -134,7 +134,7 @@ export type TimelineRow = MessagesTimelineRow;
 
 export function useInitialOutputReady(pending: boolean, onReady: (() => void) | undefined) {
   const notified = useRef(false);
-  // oxlint-disable-next-line t3code/react-effect-budget -- reveals a disclosure after its first async output commits
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals a disclosure after its first async output commits
   useEffect(() => {
     if (!pending && !notified.current) {
       notified.current = true;
