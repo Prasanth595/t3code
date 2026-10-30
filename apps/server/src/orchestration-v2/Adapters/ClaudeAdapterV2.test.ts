@@ -64,6 +64,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -89,6 +90,13 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  resolveClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
+} from "../../provider/ClaudeModelCatalog.ts";
+import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2803,6 +2811,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2865,6 +2874,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator,
+        ...(options?.modelCatalog ? { modelCatalog: options.modelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -4399,6 +4409,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.scoped,
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+        const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, model: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-reported-model:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+          });
+        // Models the live manifest delivers after a release, so the bundled catalog lacks them.
+        const manifestCatalog = resolveClaudeModelCatalog(
+          resolveProviderCatalog(
+            {
+              version: 1,
+              currentModels: {},
+              providers: {
+                claudeAgent: {
+                  profiles: {},
+                  models: [
+                    { slug: "claude-haiku-6", name: "Claude Haiku 6", status: "current" },
+                    { slug: "claude-sonnet-6", name: "Claude Sonnet 6", status: "current" },
+                  ],
+                },
+              },
+            },
+            ProviderDriverKind.make("claudeAgent"),
+          ) ?? undefined,
+        );
+        // The probe reports Bedrock with ANTHROPIC_DEFAULT_*_MODEL set after the adapter starts.
+        yield* Ref.set(
+          modelCatalog,
+          withClaudeCodeModelRoutes(manifestCatalog, [
+            { value: "default", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-6" },
+          ]),
+        );
+
+        yield* harness.runtime.startTurn(turn(1, "claude-haiku-6"));
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
+        assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
     ),
   );

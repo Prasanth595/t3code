@@ -35,7 +35,11 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import {
+  type ClaudeCodeReportedModel,
+  resolveClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
+} from "../ClaudeModelCatalog.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -170,6 +174,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    // Only a successful probe replaces these, so a failed one never sends turns back to slugs
+    // the backend rejects.
+    const claudeCodeModels = yield* Ref.make<ReadonlyArray<ClaudeCodeReportedModel>>([]);
+    const routedModelCatalog = Effect.zipWith(
+      modelCatalog,
+      Ref.get(claudeCodeModels),
+      withClaudeCodeModelRoutes,
+    );
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -179,7 +191,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         enabled,
         config,
       },
-      { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        scopedLimitNames,
+        modelCatalog: routedModelCatalog,
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -194,7 +210,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
       processEnv,
-      modelCatalog,
+      routedModelCatalog,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
@@ -213,7 +229,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               })),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, capabilities)),
+          Effect.tap(({ capabilities }) =>
+            Ref.set(lastGoodCapabilities, capabilities).pipe(
+              Effect.andThen(Ref.set(claudeCodeModels, capabilities.models ?? [])),
+            ),
+          ),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
               Effect.flatMap((capabilities) =>
