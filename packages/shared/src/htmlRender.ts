@@ -232,6 +232,7 @@ export const HTML_RENDER_THEME_GUIDE = [
 export const HTML_RENDER_LAYOUT_GUIDE = [
   `Frame width is reply width (${HTML_RENDER_COLUMN_WIDTH}px desktop, about 360px phones), on the thread background.`,
   "Leave html, body, and the outer element with no background color, no outer card, border, banner title, or side padding. This wins over any rule that sets a page background.",
+  "T3 adds an overridable 8px html gutter for selection rings and shadows. Use fluid widths within it.",
   "Standalone pages add a 16px gutter. Use container-relative widths (%, auto, max-width); viewport widths (vw and variants, innerWidth, clientWidth) and fixed widths can overflow.",
   "Reset body or * rather than html to preserve the gutter. Only intentional edge-to-edge pages should remove it with unlayered html{padding:0}; @layer rules cannot override it.",
   "A box that needs its own background gets 16px padding and var(--radius) corners. Give charts fixed pixel heights.",
@@ -358,7 +359,7 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
 }
 
 const BASE_CSS =
-  "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
+  "html{box-sizing:border-box;padding:8px;background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
   "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
   // Focus outlines paint inside the element, so the frame edge never clips them.
   ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}" +
