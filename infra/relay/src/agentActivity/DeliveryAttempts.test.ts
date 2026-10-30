@@ -1,12 +1,14 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
-import { relayDeliveryAttempts } from "../persistence/schema.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 
 describe("DeliveryAttempts", () => {
@@ -172,28 +174,23 @@ describe("DeliveryAttempts", () => {
     );
   });
 
-  it.effect("prunes delivery attempts last written before the cutoff", () => {
-    const deletes: Array<{ readonly table: unknown; readonly where: SQL }> = [];
+  const pruneWith = (batches: ReadonlyArray<number>) => {
+    const deleteCalls: number[] = [];
+    const predicates: SQL[] = [];
     const fakeDb = {
-      delete: (table: unknown) => ({
-        where: (where: SQL) => {
-          deletes.push({ table, where });
-          return Effect.void;
-        },
+      delete: () => ({
+        where: (predicate: SQL) => ({
+          returning: () => {
+            predicates.push(predicate);
+            const size = batches[deleteCalls.length] ?? 0;
+            deleteCalls.push(size);
+            return Effect.succeed(Array.from({ length: size }, (_, index) => ({ id: `${index}` })));
+          },
+        }),
       }),
     } as unknown as RelayDb.RelayDb["Service"];
-
-    return Effect.gen(function* () {
-      const attempts = yield* DeliveryAttempts.DeliveryAttempts;
-      yield* attempts.prune({ createdBefore: "2026-05-12T00:00:00.000Z" });
-
-      expect(deletes).toHaveLength(1);
-      expect(deletes[0]?.table).toBe(relayDeliveryAttempts);
-      expect(new PgDialect().sqlToQuery(deletes[0]!.where)).toEqual({
-        sql: '"relay_delivery_attempts"."created_at" < $1',
-        params: ["2026-05-12T00:00:00.000Z"],
-      });
-    }).pipe(
+    const run = DeliveryAttempts.DeliveryAttempts.pipe(
+      Effect.flatMap((attempts) => attempts.pruneExpired),
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
@@ -201,5 +198,59 @@ describe("DeliveryAttempts", () => {
         ),
       ),
     );
+    return { run, deleteCalls, predicates };
+  };
+
+  it.effect("stops pruning once a batch comes back short", () => {
+    const full = DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE;
+    const { run, deleteCalls, predicates } = pruneWith([full, 12]);
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-05-26T00:00:00.000Z"));
+      expect(yield* run).toBe(full + 12);
+      expect(deleteCalls).toEqual([full, 12]);
+      expect(predicates.map((predicate) => new PgDialect().sqlToQuery(predicate))).toEqual([
+        {
+          sql: '"relay_delivery_attempts"."id" in (select "id" from "relay_delivery_attempts" where "relay_delivery_attempts"."created_at" < $1 limit $2)',
+          params: ["2026-05-19T00:00:00.000Z", full],
+        },
+        {
+          sql: '"relay_delivery_attempts"."id" in (select "id" from "relay_delivery_attempts" where "relay_delivery_attempts"."created_at" < $1 limit $2)',
+          params: ["2026-05-19T00:00:00.000Z", full],
+        },
+      ]);
+    });
   });
+
+  it.effect("caps each run at the batch limit while a backlog remains", () => {
+    const full = DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE;
+    const { run, deleteCalls } = pruneWith(Array.from({ length: 10 }, () => full));
+    return Effect.gen(function* () {
+      expect(yield* run).toBe(full * DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES);
+      expect(deleteCalls).toHaveLength(DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_MAX_BATCHES);
+    });
+  });
+
+  // The Worker's db is Alchemy's proxyChain, whose builders render as nothing inside another
+  // query. Nothing listens on the port; the failed query still reports the SQL it sent.
+  it.live("prunes with a subquery the Worker's proxied database can render", () =>
+    Effect.gen(function* () {
+      const db = yield* Drizzle.Postgres(
+        Effect.succeed(Redacted.make("postgres://relay:relay@127.0.0.1:1/relay")),
+        { client: { prepare: false } },
+      );
+      const error = yield* DeliveryAttempts.DeliveryAttempts.pipe(
+        Effect.flatMap((attempts) => attempts.pruneExpired),
+        Effect.provide(
+          DeliveryAttempts.layer.pipe(
+            Layer.provide(NodeCryptoLayer.layer),
+            Layer.provide(Layer.succeed(RelayDb.RelayDb, db)),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect((error.cause as { readonly query: string }).query).toMatch(
+        /"relay_delivery_attempts"\."id" in \(select "id" from "relay_delivery_attempts" where "relay_delivery_attempts"\."created_at" < \$1 limit \$2\)/,
+      );
+    }).pipe(Effect.scoped),
+  );
 });
