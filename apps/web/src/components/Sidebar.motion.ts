@@ -180,7 +180,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           setGap(
             Math.min(
               gap + deficit,
-              scroller.clientHeight - ([...next.values()].at(-1)?.height ?? 0),
+              scroller.clientHeight -
+                ([...next.values()].findLast((position) => position.height > 0)?.height ?? 0),
             ),
           );
           scroller.scrollTop = scrollTop;
