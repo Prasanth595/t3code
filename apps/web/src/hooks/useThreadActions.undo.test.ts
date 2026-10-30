@@ -322,14 +322,17 @@ describe("archive and delete Undo expiry", () => {
     });
   });
 
-  it("expires the Archived Undo when the archived thread is deleted", async () => {
-    const actions = useThreadActions();
-    await actions.archiveThread(target);
-    const staleUndo = currentUndo();
-    shellLoaded.current = false;
-    await actions.deleteThread(target);
-    expect(useThreadUndoNotice.getState().notice).toBeNull();
-    await staleUndo();
-    expect(commands.unarchive).not.toHaveBeenCalled();
-  });
+  it.each([true, false])(
+    "expires the Archived Undo when deleting with shell loaded: %s",
+    async (loaded) => {
+      const actions = useThreadActions();
+      await actions.archiveThread(target);
+      const staleUndo = currentUndo();
+      shellLoaded.current = loaded;
+      await actions.deleteThread(target);
+      expect(useThreadUndoNotice.getState().notice).toBeNull();
+      await staleUndo();
+      expect(commands.unarchive).not.toHaveBeenCalled();
+    },
+  );
 });
