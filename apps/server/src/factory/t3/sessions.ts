@@ -31,6 +31,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { sourceControlDefinitions } from "../../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
+import { isCommitId } from "../text.ts";
 
 /**
  * Agent sessions as the factory sees them: softfac's `Sessions` trait
@@ -100,6 +101,12 @@ export interface LaunchRequest {
    * start and for a resume from an earlier run that left no pull request.
    */
   readonly pullRequestUrl?: string;
+}
+
+/** What a worktree has checked out (`worktreeCheckout`). */
+export interface Checkout {
+  readonly head: string;
+  readonly branch: string | null;
 }
 
 /** What `launch` returns. */
@@ -193,6 +200,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
+    "worktree-head",
     "broken-worktrees",
     "running-threads",
     "live-branches",
@@ -370,6 +378,12 @@ export class FactorySessions extends Context.Service<
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
+     * What the worktree at absolute `path` has checked out: its HEAD commit, and the branch HEAD
+     * is on (null when detached). Null when `path` has no `.git`: no worktree is there. A read that
+     * fails, or a HEAD that is not a full commit id, is `worktree-head`.
+     */
+    readonly worktreeCheckout: (path: string) => Effect.Effect<Checkout | null, SessionsError>;
+    /**
      * The unarchived threads whose worktree is gone or has no `.git`: T3's
      * pull request lookup and settlement run git there and fail every sweep.
      * A thread `archive` archived since this server started is left out, so
@@ -433,6 +447,7 @@ const LEFTOVER_REMOVE_ATTEMPTS = { schedule: Schedule.spaced("3 seconds"), times
 
 /** `git worktree remove` of a big `node_modules` can take a while. */
 const REMOVE_WORKTREE_TIMEOUT_MS = 10 * 60 * 1000;
+const WORKTREE_HEAD_TIMEOUT_MS = 30 * 1000;
 
 const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -695,6 +710,41 @@ const make = Effect.gen(function* () {
       .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
   });
 
+  const worktreeCheckout: FactorySessions["Service"]["worktreeCheckout"] = Effect.fn(
+    "Sessions.worktreeCheckout",
+  )(function* (worktreePath) {
+    const failed = (cause: unknown) => new SessionsError({ operation: "worktree-head", cause });
+    if (!path.isAbsolute(worktreePath)) {
+      return yield* failed(`the worktree path is not absolute: ${worktreePath}`);
+    }
+    const there = yield* fs.exists(path.join(worktreePath, ".git")).pipe(Effect.mapError(failed));
+    if (!there) return null;
+    const run = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "factory.sessions.worktreeCheckout",
+          cwd: worktreePath,
+          args: [...args],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+          timeoutMs: WORKTREE_HEAD_TIMEOUT_MS,
+        })
+        .pipe(Effect.mapError(failed));
+    const rev = yield* run(["rev-parse", "--verify", "HEAD"]);
+    const head = rev.stdout.trim();
+    if (rev.exitCode !== 0 || !isCommitId(head)) {
+      return yield* failed(`git rev-parse HEAD in ${worktreePath}: ${rev.stderr.trim()}`);
+    }
+    // `symbolic-ref --quiet` exits 1, printing nothing, when HEAD is detached.
+    const ref = yield* run(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if (ref.exitCode === 1 && ref.stdout.trim() === "") return { head, branch: null };
+    const branch = ref.stdout.trim();
+    if (ref.exitCode !== 0 || branch === "") {
+      return yield* failed(`git symbolic-ref HEAD in ${worktreePath}: ${ref.stderr.trim()}`);
+    }
+    return { head, branch };
+  });
+
   // A path whose `.git` cannot be checked (a permission error) is not called broken.
   const brokenWorktrees: FactorySessions["Service"]["brokenWorktrees"] = Effect.gen(function* () {
     const live = (yield* projections.getThreadWorktreePaths()).filter(
@@ -776,6 +826,7 @@ const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
+    worktreeCheckout,
     brokenWorktrees,
     runningThreads,
     liveBranches,

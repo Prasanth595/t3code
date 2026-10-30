@@ -1453,6 +1453,115 @@ const removeWorktree = (path: string) =>
     return yield* sessions.removeWorktree(path);
   });
 
+const worktreeCheckout = (path: string) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions.FactorySessions;
+    return yield* sessions.worktreeCheckout(path);
+  });
+
+const gitPrinted = (exitCode: number, stdout: string) =>
+  ({ exitCode, stdout, stderr: "", stdoutTruncated: false, stderrTruncated: false }) as never;
+
+describe("FactorySessions.worktreeCheckout", () => {
+  const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  type Answer = ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>;
+  /**
+   * The worktree's checkout with git answering its calls in turn: rev-parse, then symbolic-ref.
+   * A path with `gone` in it has no `.git`; `exists` records each path asked about.
+   */
+  const checkoutWith = (
+    path: string,
+    answers: ReadonlyArray<() => Answer>,
+    calls: Array<GitCall> = [],
+    exists: Array<string> | null = null,
+  ) => {
+    let call = 0;
+    return worktreeCheckout(path).pipe(
+      Effect.provide(
+        layerSessions(
+          noThreadsOnWorktrees,
+          {},
+          {},
+          recordingGit(calls, () => answers[call++]!()),
+          FileSystem.layerNoop({
+            exists: (checked) => {
+              exists?.push(checked);
+              return Effect.succeed(!checked.includes("gone"));
+            },
+          }),
+        ),
+      ),
+    );
+  };
+  const printed = (exitCode: number, stdout: string) => () =>
+    Effect.succeed(gitPrinted(exitCode, stdout));
+
+  it.effect("reads the HEAD commit and the branch it is on in the worktree", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const checkout = yield* checkoutWith(
+        "/tmp/wt/t3-abc",
+        [printed(0, `${SHA}\n`), printed(0, "t3/kpi-push-screen\n")],
+        calls,
+      );
+      assert.deepStrictEqual(checkout, { head: SHA, branch: "t3/kpi-push-screen" });
+      assert.deepStrictEqual(
+        calls.map(({ cwd, args }) => ({ cwd, args })),
+        [
+          { cwd: "/tmp/wt/t3-abc", args: ["rev-parse", "--verify", "HEAD"] },
+          { cwd: "/tmp/wt/t3-abc", args: ["symbolic-ref", "--quiet", "--short", "HEAD"] },
+        ],
+      );
+    }),
+  );
+
+  it.effect("reads a path with no .git as no worktree, without running git", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const exists: Array<string> = [];
+      assert.isNull(yield* checkoutWith("/tmp/wt/gone", [], calls, exists));
+      assert.deepStrictEqual(exists, ["/tmp/wt/gone/.git"]);
+      assert.deepStrictEqual(calls, []);
+    }),
+  );
+
+  it.effect("reads a detached HEAD as no branch", () =>
+    Effect.gen(function* () {
+      const checkout = yield* checkoutWith("/tmp/wt/t3-abc", [printed(0, SHA), printed(1, "")]);
+      assert.deepStrictEqual(checkout, { head: SHA, branch: null });
+    }),
+  );
+
+  it.effect("fails as worktree-head on a relative path, a failed git, or no full commit id", () =>
+    Effect.gen(function* () {
+      const spawnFailed = () =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "factory.sessions.worktreeCheckout",
+            command: "git rev-parse",
+            cwd: "/tmp/wt/t3-abc",
+            detail: "spawn git ENOENT",
+          }),
+        );
+      const cases: ReadonlyArray<[string, ReadonlyArray<() => Answer>]> = [
+        ["t3-abc", [printed(0, SHA), printed(0, "main")]],
+        ["/tmp/wt/t3-abc", [printed(128, SHA)]],
+        ["/tmp/wt/t3-abc", [printed(0, SHA.slice(0, 7))]],
+        ["/tmp/wt/t3-abc", [spawnFailed]],
+        ["/tmp/wt/t3-abc", [printed(0, SHA), printed(128, "")]],
+        ["/tmp/wt/t3-abc", [printed(0, SHA), spawnFailed]],
+      ];
+      for (const [path, answers] of cases) {
+        const error = yield* Effect.flip(checkoutWith(path, answers));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        if (error._tag === "FactorySessionsError") {
+          assert.strictEqual(error.operation, "worktree-head");
+        }
+      }
+    }),
+  );
+});
+
 describe("FactorySessions.removeWorktree", () => {
   it.effect("refuses a relative path without running git", () =>
     Effect.gen(function* () {

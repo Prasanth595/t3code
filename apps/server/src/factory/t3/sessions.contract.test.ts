@@ -89,6 +89,10 @@ it.live(
             yield* git(worktreePath, ["rev-parse", "HEAD"]),
             yield* git(repo, ["rev-parse", baseRef]),
           );
+          assert.deepStrictEqual(yield* sessions.worktreeCheckout(worktreePath), {
+            head: yield* git(worktreePath, ["rev-parse", "HEAD"]),
+            branch: status.branch,
+          });
 
           assert.deepStrictEqual(yield* sessions.thread(launched.threadId), {
             worktreePath,

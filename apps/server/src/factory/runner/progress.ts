@@ -8,7 +8,7 @@ import { fallbackOf } from "../cooldown.ts";
 import { isState, type State } from "../domain/lifecycle.ts";
 import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import type { Model } from "../t3/sessions.ts";
+import { launchBranchOf, type Model } from "../t3/sessions.ts";
 import { isCommitId } from "../text.ts";
 import type { CheckStatus } from "../tracker/github.ts";
 
@@ -116,6 +116,8 @@ export const relaunchCommandId = (relaunch: Relaunch, run: RunId): string =>
 
 export interface Seen {
   readonly claimed: boolean;
+  /** When the first `claimed` line was written, in Unix epoch milliseconds; null before the claim. */
+  readonly claimedMs: number | null;
   /** The `github_user` of the first `claimed` line; null when there is none or it is not text. */
   readonly githubUser: string | null;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
@@ -227,6 +229,8 @@ export interface Seen {
   readonly interruption: Interruption | null;
   /** The newest branch a `session_launched`, `session_interrupted` or `session_rate_limited` line names: where the run's work is. */
   readonly lastBranch: string | null;
+  /** Every branch a `branch_bound` line names: a branch the session made, whose pull request `advance` bound. */
+  readonly boundBranches: ReadonlyArray<string>;
   /** Milliseconds spent in `triage` and `building` in stints that have ended, less the factory's gate. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
@@ -440,6 +444,7 @@ const sentInterruption = (interruption: Interruption): Interruption => ({
 
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
+  let claimedMs: number | null = null;
   let githubUser: string | null = null;
   let approvedAt: string | null = null;
   let approvedBy: string | null = null;
@@ -477,6 +482,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let paused: Seen["paused"] = null;
   let interruption: Interruption | null = null;
   let lastBranch: string | null = null;
+  const boundBranches: Array<string> = [];
   let base: string | null = null;
   let model: Model | null = null;
   let workedMs = 0;
@@ -523,6 +529,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (!claimed) {
           const user = dataField(entry.data, "github_user");
           githubUser = typeof user === "string" ? user : null;
+          claimedMs = entry.ms;
         }
         claimed = true;
         break;
@@ -772,6 +779,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "pr_ready_outside":
         readyOutside = true;
         break;
+      case "branch_bound": {
+        const branch = dataField(entry.data, "branch");
+        if (typeof branch === "string" && !boundBranches.includes(branch)) {
+          boundBranches.push(branch);
+        }
+        break;
+      }
       case "session_interrupted": {
         const resumes = number(dataField(entry.data, "resumes"));
         const ordinal = number(dataField(entry.data, "run_ordinal"));
@@ -959,6 +973,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   }
   return {
     claimed,
+    claimedMs,
     githubUser,
     approvedAt,
     approvedBy,
@@ -993,6 +1008,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     paused,
     interruption,
     lastBranch,
+    boundBranches,
     base,
     model,
     workedMs,
@@ -1053,4 +1069,51 @@ export const attemptsSincePass = (seen: Seen, attempt: number): number => {
   const before = [...seen.passedAttempts].filter((n) => n < attempt);
   const lastPass = before.length === 0 ? 0 : Math.max(...before);
   return attempt - lastPass;
+};
+
+/** The branches and pull requests a run's ledger names as its work (`runNames`). */
+export interface RunNames {
+  readonly branches: ReadonlySet<string>;
+  readonly prs: ReadonlySet<number>;
+}
+
+/**
+ * Every branch and pull request any line of a run's ledger names as its work, not only the newest:
+ * a launch (its branch, resumed-from branch and worktree's launch branch), a planned resume, a
+ * stuck line, an interruption, a relaunch, a bound branch, and a pull request opened or left.
+ */
+export const runNames = (entries: ReadonlyArray<Entry>, seen: Seen): RunNames => {
+  const branches = new Set<string>();
+  const prs = new Set<number>();
+  const addBranch = (branch: unknown) => {
+    if (typeof branch === "string") branches.add(branch);
+  };
+  // A planned resume is a step, not a line of its own.
+  addBranch(seen.launchResumedFrom);
+  for (const entry of entries) {
+    switch (entry.event) {
+      case "session_launched": {
+        addBranch(dataField(entry.data, "branch"));
+        addBranch(dataField(dataField(entry.data, "resumed_from"), "branch"));
+        const worktree = dataField(entry.data, "worktree");
+        addBranch(launchBranchOf(typeof worktree === "string" ? worktree : null));
+        break;
+      }
+      case "stuck":
+      case "session_interrupted":
+      case "session_rate_limited":
+      case "branch_bound":
+      case "regate_relaunching":
+      case "feedback_relaunching":
+        addBranch(dataField(entry.data, "branch"));
+        break;
+      case "pr_opened":
+      case "pr_left": {
+        const pr = dataField(entry.data, "pr");
+        if (typeof pr === "number") prs.add(pr);
+        break;
+      }
+    }
+  }
+  return { branches, prs };
 };

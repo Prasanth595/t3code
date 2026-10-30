@@ -176,6 +176,7 @@ const defaultPr = (): PullRequest => ({
   baseRef: "main",
   headSha: HEAD,
   mergeable: "mergeable",
+  createdAt: "2026-10-04T10:00:00Z",
 });
 
 const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({
@@ -462,6 +463,7 @@ class FakeT3 {
       this.countedAtArchive.push(this.gh.calls.length);
       return Effect.void;
     },
+    worktreeCheckout: () => Effect.die("no worktree head"),
     removeWorktree: (path) => {
       this.calls.push(`removeWorktree ${path}`);
       if (this.worktreeRemoveFails) {

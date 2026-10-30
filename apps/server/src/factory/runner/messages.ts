@@ -196,8 +196,15 @@ const resumeParagraph = (resumed: ResumeFrom): string => {
 };
 
 /**
+ * Keeps the session on the branch T3 launched its worktree on, which `checkBinding` accepts. A
+ * resume's own `git push origin HEAD:<branch>` below it wins.
+ */
+const STAY_ON_BRANCH =
+  "Stay on the branch the worktree was launched on: never run `git checkout -b`, `git switch -c` or any command that creates or switches branches, and push the current branch with `git push -u origin HEAD`, unless told below to push to a named branch.";
+
+/**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
- * chat, names the base branch when the issue's `## Base` differs from the repo's (`base`), adds the
+ * chat, tells it to stay on its branch, names the base branch when the issue's `## Base` differs from the repo's (`base`), adds the
  * resume paragraph for a continued branch, and names the GitHub identity the session acts as
  * (`login`, `ghConfigDir`) with what to do when `gh` says otherwise.
  */
@@ -209,7 +216,7 @@ export const launchMessage = (
   resumed?: ResumeFrom,
   base?: string,
 ): string =>
-  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.${base === undefined ? "" : ` Open the pull request against ${base}, not the repo's default base.`}${resumed === undefined ? "" : `\n\n${resumeParagraph(resumed)}`}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
+  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR. ${STAY_ON_BRANCH}${base === undefined ? "" : ` Open the pull request against ${base}, not the repo's default base.`}${resumed === undefined ? "" : `\n\n${resumeParagraph(resumed)}`}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
 
 /** The issue's single status comment. */
 export const statusBody = (

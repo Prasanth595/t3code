@@ -36,6 +36,7 @@ import {
   append,
   checkBinding,
   earlierAttempts,
+  withBoundBranches,
   sessionBusy,
   stopOf,
   textStop,
@@ -782,7 +783,7 @@ const buildingMode = (
       const message = status.lastAssistantMessage;
       const branch = status.branch;
       // What `advance` bound the pull request with: the gate binds it the same way.
-      const earlier = yield* earlierAttempts(ctx, run);
+      const earlier = withBoundBranches(yield* earlierAttempts(ctx, run), seen);
       return {
         attempt,
         bind: (pull, mustBeDraft) => {
