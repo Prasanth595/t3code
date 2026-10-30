@@ -15,10 +15,12 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -1300,4 +1302,127 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.live("an agent opens a reported profile after a restart, before any client reports again", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      yield* browser.reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    const restarted = yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      return yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "Work" },
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+    expect(restarted.tabs).toMatchObject([{ profileId: "profile-work" }]);
+    expect(restarted).toMatchObject({
+      defaultProfileId: "profile-work",
+      profiles: [
+        { id: "default", name: "Default" },
+        { id: "incognito", name: "Incognito", incognito: true },
+        { id: "profile-work", name: "Work" },
+      ],
+    });
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.live("warns at startup about a saved profile catalog it cannot read or decode", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const savedPath = path.join(stateDir, "server-browser", "reported-profiles.json");
+    const startupWarnings = (saved: "missing" | "empty" | "invalid" | "unreadable") =>
+      Effect.gen(function* () {
+        const messages: string[] = [];
+        yield* fs.remove(savedPath, { recursive: true, force: true });
+        yield* fs.makeDirectory(path.dirname(savedPath), { recursive: true });
+        if (saved === "empty") yield* fs.writeFileString(savedPath, "");
+        if (saved === "invalid") yield* fs.writeFileString(savedPath, "{");
+        if (saved === "unreadable") yield* fs.makeDirectory(savedPath);
+        const logger = Logger.make(({ message }) => {
+          messages.push(String(message));
+        });
+        yield* ServerBrowser.ServerBrowser.pipe(
+          Effect.provide(
+            Layer.fresh(ServerBrowser.layer).pipe(
+              Layer.provide(Logger.layer([logger], { mergeWithExisting: false })),
+            ),
+          ),
+        );
+        return messages.filter((message) => message.includes("saved browser profiles"));
+      });
+
+    expect(yield* startupWarnings("missing")).toEqual([]);
+    expect(yield* startupWarnings("empty")).toEqual([]);
+    expect(yield* startupWarnings("invalid")).toEqual([
+      expect.stringContaining("ignoring invalid saved browser profiles"),
+    ]);
+    expect(yield* startupWarnings("unreadable")).toEqual([
+      expect.stringContaining("failed to read saved browser profiles"),
+    ]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.live("an interrupted profile save cannot leave the unchanged-report cache stale", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const cleanupStarted = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    let pauseCleanup = false;
+    const gatedFs = FileSystem.FileSystem.of({
+      ...fs,
+      remove: (target, options) =>
+        fs.remove(target, options).pipe(
+          Effect.tap(() => {
+            if (!pauseCleanup) return Effect.void;
+            pauseCleanup = false;
+            return Deferred.succeed(cleanupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCleanup)),
+            );
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const original = {
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" as const }],
+        defaultProfileId: "profile-work",
+      };
+      yield* browser.reportProfiles(original);
+      pauseCleanup = true;
+      const saving = yield* browser
+        .reportProfiles({ ...original, defaultProfileId: "default" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(cleanupStarted);
+      saving.interruptUnsafe();
+      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Fiber.await(saving);
+      yield* browser.reportProfiles(original);
+      const saved = yield* fs.readFileString(
+        path.join(stateDir, "server-browser", "reported-profiles.json"),
+      );
+      expect(JSON.parse(saved)).toMatchObject(original);
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(ServerBrowser.layer).pipe(
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gatedFs)),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(dependencies)),
 );
