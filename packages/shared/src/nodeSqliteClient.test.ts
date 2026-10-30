@@ -259,6 +259,24 @@ it.effect("serves another read while a read-only transaction is open", () =>
   ),
 );
 
+it.effect("serves a read that starts with a read-only transaction before any reader is up", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      const holder = sql
+        .withTransaction(countEntries(sql).pipe(Effect.andThen(Deferred.await(release))))
+        .pipe(SqliteClient.readOnly);
+      const read = countEntries(sql).pipe(
+        SqliteClient.readOnly,
+        Effect.tap(() => Deferred.succeed(release, undefined)),
+      );
+
+      const [, count] = yield* Effect.all([holder, read], { concurrency: "unbounded" });
+      assert.equal(count, 1);
+    }),
+  ),
+);
+
 // regression: #19226 read-only transactions run on the separate reader connection
 it.effect("rejects a write in a read-only transaction", () =>
   withReaderClient((sql) =>
