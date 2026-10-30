@@ -38,6 +38,7 @@ import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
   SessionsError,
   ThreadNotFoundError,
+  type Checkout,
   type FactoryProject,
   type LaunchRequest,
   type RunStatus,
@@ -271,6 +272,7 @@ const defaultPr = (): PullRequest => ({
   baseRef: "main",
   headSha: HEAD,
   mergeable: "mergeable",
+  createdAt: "2026-10-04T10:20:00Z",
 });
 
 const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({
@@ -506,6 +508,8 @@ class FakeT3 {
   archiveFails = false;
   failAt: number | null = null;
   worktreeRemoveFails = false;
+  /** The commit the session's worktree has checked out. */
+  checkout: Checkout = { head: "0".repeat(40), branch: "t3code/abc" };
   /** The T3 project of the repo; none when there is no project for it on this machine. */
   project: FactoryProject | null = {
     id: "proj-1",
@@ -529,7 +533,9 @@ class FakeT3 {
     operation: Parameters<typeof sessionsFailure>[0] = "status",
   ): SessionsError | null {
     this.calls.push(text);
-    const index = this.calls.filter((c) => !c.startsWith("removeWorktree")).length - 1;
+    const index =
+      this.calls.filter((c) => !c.startsWith("removeWorktree") && !c.startsWith("worktreeCheckout"))
+        .length - 1;
     return this.failAt === index ? sessionsFailure(operation) : null;
   }
 
@@ -587,6 +593,10 @@ class FakeT3 {
         return Effect.fail(sessionsFailure("remove-worktree"));
       }
       return Effect.void;
+    },
+    worktreeCheckout: (path) => {
+      this.calls.push(`worktreeCheckout ${path}`);
+      return Effect.succeed(this.checkout);
     },
   };
 }
@@ -1521,6 +1531,19 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
         clearCalls(second);
         assert.deepStrictEqual(yield* gateIn(second), { kind: "passed", pr: 12 });
       }),
+  );
+
+  it.effect("binds a pull request on a branch the session made at gate time too", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.gh.pr = { ...defaultPr(), headRef: "t3/kpi-push-screen" };
+      rig.t3.checkout = { head: HEAD, branch: "t3/kpi-push-screen" };
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      clearCalls(rig);
+      // The gate reads the binding from the ledger, not from the worktree.
+      rig.t3.checkout = { head: "0".repeat(40), branch: null };
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+    }),
   );
 
   it.effect("the PR is checked again at gate time and a changed one sends the issue to stuck", () =>

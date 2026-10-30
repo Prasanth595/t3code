@@ -327,6 +327,7 @@ const defaultPr = (): PullRequest => ({
   baseRef: "main",
   headSha: "abc123",
   mergeable: "mergeable",
+  createdAt: "2026-10-04T10:00:00Z",
 });
 
 const seed = (
@@ -514,6 +515,7 @@ const rigFor = (
       t3.push(`archive ${threadId}`);
       return Effect.void;
     },
+    worktreeCheckout: () => Effect.die("no worktree head"),
     removeWorktree: (path) => {
       t3.push(`removeWorktree ${path}`);
       return Effect.void;

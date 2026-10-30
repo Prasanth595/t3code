@@ -645,6 +645,7 @@ const PullRequestView = Schema.Struct({
   baseRefName: Schema.String,
   headRefOid: Schema.String,
   mergeable: Schema.String,
+  createdAt: Schema.String,
 });
 
 const CheckRunRows = Schema.Array(
@@ -833,6 +834,8 @@ export interface PullRequest {
   readonly headSha: string;
   /** GitHub's word on a merge into the base; any answer it gives that is not `MERGEABLE` or `CONFLICTING` is `unknown`. */
   readonly mergeable: Mergeable;
+  /** When it was opened, as GitHub writes it: `YYYY-MM-DDTHH:MM:SSZ`. */
+  readonly createdAt: string;
 }
 
 /**
@@ -1394,7 +1397,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     const args = [
       ...repoArgs(["pr", "view", String(number)]),
       "--json",
-      "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable",
+      "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable,createdAt",
     ];
     const stdout = yield* gh(args).pipe(
       Effect.catchTags({
@@ -1406,6 +1409,9 @@ export const makeGitHub = (options: GitHubOptions) => {
     const raw = yield* decode(PullRequestView, args, "an object describing a pull request", stdout);
     if (!isCommitId(raw.headRefOid)) {
       return yield* parseError(args, "a pull request and its full head commit id");
+    }
+    if (!isUtcSecond(raw.createdAt)) {
+      return yield* parseError(args, "a pull request's creation time as YYYY-MM-DDTHH:MM:SSZ");
     }
     return {
       number: raw.number,
@@ -1422,6 +1428,7 @@ export const makeGitHub = (options: GitHubOptions) => {
           : raw.mergeable === "CONFLICTING"
             ? "conflicting"
             : "unknown",
+      createdAt: raw.createdAt,
     };
   });
 
