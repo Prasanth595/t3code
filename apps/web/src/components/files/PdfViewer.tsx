@@ -217,7 +217,6 @@ export default function PdfViewer(props: { src: string; title: string; positionK
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
-  const pageOffset = scrollTop - pdfPageScrollTop(offsets, current);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
   const [onSize] = useState(
@@ -240,15 +239,6 @@ export default function PdfViewer(props: { src: string; title: string; positionK
     };
     setZoom(value);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
-  useLayoutEffect(() => {
-    const anchor = zoomAnchor.current;
-    zoomAnchor.current = null;
-    if (!anchor || anchor.width === width) return;
-    scroll.current?.scrollTo({
-      top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
-    });
-  });
   const restorePosition = useEffectEvent(() => {
     const saved = savedPosition();
     const node = scroll.current;
@@ -262,17 +252,27 @@ export default function PdfViewer(props: { src: string; title: string; positionK
   useLayoutEffect(() => {
     if (pdf) restorePosition();
   }, [pdf]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Record the reading position outside React so a remount can restore it.
-  useEffect(() => {
-    if (pdf && props.positionKey !== undefined)
-      rememberPosition(props.positionKey, {
-        page: current,
-        offset: pageOffset,
-        width,
-        zoom,
-        ratios,
-      });
-  }, [pdf, props.positionKey, current, pageOffset, width, zoom, ratios]);
+  const savePosition = (node: HTMLDivElement) => {
+    if (!pdf || props.positionKey === undefined) return;
+    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
+    rememberPosition(props.positionKey, {
+      page,
+      offset: node.scrollTop - pdfPageScrollTop(offsets, page),
+      width,
+      zoom,
+      ratios,
+    });
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    zoomAnchor.current = null;
+    const node = scroll.current;
+    if (!node || !pdf) return;
+    if (anchor && anchor.width !== width)
+      node.scrollTo({ top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width });
+    savePosition(node);
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
     if (matches.length) jumpToPage(matches[0]!);
@@ -413,7 +413,10 @@ export default function PdfViewer(props: { src: string; title: string; positionK
         aria-label={props.title}
         tabIndex={0}
         className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto bg-muted/40"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={(event) => {
+          setScrollTop(event.currentTarget.scrollTop);
+          savePosition(event.currentTarget);
+        }}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "f") {
             event.preventDefault();

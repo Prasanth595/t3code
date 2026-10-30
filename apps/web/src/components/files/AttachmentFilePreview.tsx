@@ -337,11 +337,13 @@ export function AttachmentFilePreview(props: {
       // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
       // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
       documentKey={
-        props.file
-          ? blobKey(props.file)
-          : props.asset && "attachmentId" in props.asset
-            ? `${props.asset.environmentId}:${props.asset.attachmentId}`
-            : undefined
+        kind !== "pdf"
+          ? undefined
+          : props.file
+            ? blobKey(props.file)
+            : props.asset && "attachmentId" in props.asset
+              ? `${props.asset.environmentId}:${props.asset.attachmentId}`
+              : undefined
       }
     />
   ) : kind === "audio" ? (
