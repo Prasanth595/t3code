@@ -1,10 +1,6 @@
-import * as NodeModule from "node:module";
-
 import { describe, expect, it } from "vite-plus/test";
 
-const { addExpoObserveSwift5 } = NodeModule.createRequire(import.meta.url)(
-  "./withExpoObserveSwift5.cjs",
-) as { addExpoObserveSwift5: (podfile: string) => string };
+import { addExpoObserveSwift5 } from "./withExpoObserveSwift5.cjs";
 
 const PODFILE = `target 'T3CodeFactory' do
   use_expo_modules!
