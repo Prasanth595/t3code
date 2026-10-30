@@ -105,6 +105,10 @@ describe("thread title actions", () => {
     const snooze = actions.find((action) => action.id === "snooze");
     expect(snooze?.subactions?.length).toBeGreaterThan(1);
     expect(snooze?.subactions?.at(-1)?.id).toBe("snooze:custom");
+    const customized = menu({ snoozePresets: [{ kind: "after", minutes: 360 }] });
+    expect(
+      customized.find((action) => action.id === "snooze")?.subactions?.map((action) => action.id),
+    ).toEqual([`snooze:${new Date(now.getTime() + 360 * 60_000).toISOString()}`, "snooze:custom"]);
   });
   it("disables title regeneration while it is running and retains destructive confirmation semantics", () => {
     const actions = menu({

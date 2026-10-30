@@ -16,6 +16,7 @@ export function buildThreadTitleMenu(input: {
         "threadSettlement" | "threadSnooze" | "threadPinning" | "threadTitleRegeneration"
       >
     | undefined;
+  readonly snoozePresets?: ServerConfig["settings"]["snoozePresets"] | undefined;
   readonly canOperate: boolean;
   readonly hasQueuedMessages: boolean;
   readonly now: Date;
@@ -40,7 +41,10 @@ export function buildThreadTitleMenu(input: {
           title: "Snooze",
           image: "clock",
           subactions: [
-            ...resolveSnoozePresets(now).map((preset) => ({
+            ...resolveSnoozePresets(
+              now,
+              input.snoozePresets ? { presets: input.snoozePresets } : {},
+            ).map((preset) => ({
               id: `snooze:${preset.snoozedUntil}`,
               title: preset.label,
               subtitle: preset.whenLabel,

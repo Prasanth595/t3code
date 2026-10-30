@@ -54,6 +54,7 @@ export function ThreadTitleMenu(props: {
   const actions = buildThreadTitleMenu({
     thread,
     capabilities: configs.get(thread.environmentId)?.environment.capabilities,
+    snoozePresets: configs.get(thread.environmentId)?.settings.snoozePresets,
     canOperate,
     hasQueuedMessages: queuedKeys.has(scopedThreadKey(thread.environmentId, thread.id)),
     now,
