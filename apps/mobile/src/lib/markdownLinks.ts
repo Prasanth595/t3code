@@ -6,6 +6,7 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { isWayfinderLink } from "@t3tools/shared/markdownLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
@@ -281,7 +282,9 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   return {
     kind: "link",
     href:
-      /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
+      /^(?:mailto|tel):/i.test(normalized) ||
+      parseThreadLinkHref(normalized) !== null ||
+      isWayfinderLink(normalized)
         ? normalized
         : null,
   };

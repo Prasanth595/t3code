@@ -24,6 +24,16 @@ describe("ElectronShell", () => {
     writeTextMock.mockReset();
   });
 
+  it.effect("opens only known Wayfinder destinations", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+      const shell = yield* ElectronShell.ElectronShell;
+      assert.equal(yield* shell.openExternal("wayfinder://map/I_map"), true);
+      assert.equal(yield* shell.openExternal("wayfinder://ticket/id?command=run"), false);
+      assert.deepEqual(openExternalMock.mock.calls, [["wayfinder://map/I_map"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens remote SSH editor URLs", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

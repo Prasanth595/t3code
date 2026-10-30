@@ -3,6 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("allows concrete Wayfinder destinations but not commands", () => {
+    expect(resolveMarkdownLinkPresentation("wayfinder://map/I_map")).toEqual({
+      kind: "link",
+      href: "wayfinder://map/I_map",
+    });
+    expect(resolveMarkdownLinkPresentation("wayfinder://ticket/id?command=run")).toEqual({
+      kind: "link",
+      href: null,
+    });
+  });
   it("opens relative directory links as workspace paths", () => {
     expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
       kind: "file",

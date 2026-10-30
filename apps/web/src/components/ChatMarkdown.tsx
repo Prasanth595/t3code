@@ -93,6 +93,7 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { isWayfinderLink } from "@t3tools/shared/markdownLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
@@ -643,6 +644,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
+    if (isWayfinderLink(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };

@@ -38,6 +38,34 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
   expect(JSON.stringify(tree)).not.toContain("javascript:");
 });
 
+it("preserves concrete Wayfinder destinations and drops unknown commands", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  for (const href of [
+    "wayfinder://repo/R_repo",
+    "wayfinder://map/I_map",
+    "wayfinder://ticket/I_ticket",
+    "wayfinder://prototype/I_ticket?canvas=prototypes%2Freplies%2Findex.html&rev=" + "a".repeat(40),
+    "wayfinder://map?repo=owner%2Frepo&number=217",
+  ]) {
+    const tree = processor.runSync(processor.parse(`[Open in Wayfinder](${href})`));
+    expect(tree.children[0]).toMatchObject({ children: [{ properties: { href } }] });
+  }
+  for (const href of [
+    "wayfinder://settings",
+    "wayfinder://ticket/id?command=run",
+    "wayfinder://user@map/id",
+    "wayfinder://prototype/id?canvas=prototypes%2F..%2Fprivate.html",
+    "wayfinder://map?repo=owner%2Frepo&number=217&number=218",
+  ]) {
+    const tree = processor.runSync(processor.parse(`[Invalid](${href})`));
+    expect(JSON.stringify(tree)).not.toContain('"href"');
+  }
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)

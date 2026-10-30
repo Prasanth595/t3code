@@ -15,6 +15,7 @@ import {
 } from "./codexMarkdownDirectives.ts";
 import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+import { isWayfinderLink } from "./wayfinderLinks.ts";
 
 type MarkdownImageHastNode = {
   type?: string;
@@ -157,6 +158,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      "wayfinder",
     ],
     src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
   },
@@ -189,8 +191,27 @@ export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRaw,
   rehypePreserveImageSourceMeta,
+  rehypeValidateWayfinderLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
+
+function rehypeValidateWayfinderLinks() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (
+        node.properties &&
+        typeof href === "string" &&
+        /^wayfinder:/i.test(href) &&
+        !isWayfinderLink(href)
+      ) {
+        delete node.properties.href;
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 const isImageNode = (node: PhrasingContent | undefined): boolean =>
   node?.type === "image" ||

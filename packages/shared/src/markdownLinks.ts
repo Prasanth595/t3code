@@ -12,6 +12,8 @@ import {
   splitFilePathPosition,
 } from "./fileLinks.ts";
 
+export { isWayfinderLink } from "./wayfinderLinks.ts";
+
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
 // Names may use any script (`線性代數/考試.pdf`). The final segment is optional so an
