@@ -942,18 +942,22 @@ it.effect("a navigation that fails while a load reads its title keeps its failur
       // A load at the same await depth reports after the held one, so its Success marks the end.
       page.emit("load");
 
-      let event = yield* PubSub.take(events);
-      while (
-        event.type !== "navigated" ||
-        event.tabId !== tabId ||
-        event.snapshot.navStatus._tag !== "Success"
-      ) {
-        event = yield* PubSub.take(events);
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
       }
-      expect(event.type === "navigated" && event.snapshot.navStatus).toMatchObject({
-        _tag: "Success",
-        title: "test page",
-      });
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );
