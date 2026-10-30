@@ -6,16 +6,23 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import {
   PullRequestMedia,
   PullRequestMediaContext,
-  usePullRequestImageSource,
   usePullRequestMediaUrl,
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import {
   changeRequestLinkResolver,
   changeRequestReferenceAutolinker,
 } from "@t3tools/client-runtime/pull-request-markdown";
-import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
+import { SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
+import { assetEnvironment } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -30,7 +37,10 @@ import {
   type FilePreviewItem,
 } from "../../components/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
-import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type {
+  MarkdownImageRenderer,
+  MarkdownImageSourceResolver,
+} from "../../native/SelectableMarkdownText";
 
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
@@ -63,6 +73,29 @@ export function PullRequestMarkdownRepository(props: {
         <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
       </LinkResolverContext>
     </AutolinksContext>
+  );
+}
+
+/** Images Enriched draws natively, such as one inside a list item, load like the standalone ones. */
+function usePullRequestImageSource(resolve: (url: string) => string): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(context?.environmentId ?? null);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return useCallback(
+    async (image) => {
+      const url = resolve(image.href);
+      const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
+      if (!context || !fetchUrl) return /^https?:\/\//i.test(url) ? { uri: url } : null;
+      const resource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: context.cwd, url: fetchUrl };
+      const state = assetUrlStateFromResult(
+        await createUrl({ environmentId: context.environmentId, input: { resource } }),
+        httpBaseUrl,
+      );
+      if (state._tag !== "Success") throw new Error("Pull request image is unavailable");
+      return { uri: state.url };
+    },
+    [context, createUrl, httpBaseUrl, resolve],
   );
 }
 
