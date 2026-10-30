@@ -619,7 +619,7 @@ describe("providerMaintenanceRunner", () => {
       ),
   );
 
-  it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
+  it.effect("resolves npm to a .cmd shim from the provider's PATH on win32", () => {
     const captured: Array<{
       readonly command: string;
       readonly args: ReadonlyArray<string>;
@@ -627,7 +627,20 @@ describe("providerMaintenanceRunner", () => {
     }> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner(registry);
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "npm",
+              updateArgs: ["install", "-g", "@openai/codex@latest"],
+              updateLockKey: "npm-global",
+              env: { PATH: "C:\\fake\\npm" },
+            }),
+          ),
+      });
 
       const result = yield* runner.updateProvider(CODEX_DRIVER);
 
@@ -645,12 +658,15 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "win32"),
+          // Only the provider's PATH has npm.
           Layer.succeed(HostProcess.Environment, {
-            PATH: "C:\\fake\\npm",
+            PATH: "C:\\Windows\\System32",
             PATHEXT: ".COM;.EXE;.BAT;.CMD",
           }),
-          Layer.succeed(SpawnExecutableResolution, (command) =>
-            command === "npm" ? "C:\\fake\\npm\\npm.cmd" : undefined,
+          Layer.succeed(SpawnExecutableResolution, (command, _platform, env) =>
+            command === "npm" && env.PATH === "C:\\fake\\npm"
+              ? "C:\\fake\\npm\\npm.cmd"
+              : undefined,
           ),
           layerLatestVersionHttpClient("0.0.0"),
           Layer.succeed(
