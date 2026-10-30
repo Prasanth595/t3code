@@ -123,8 +123,6 @@ export class ApnsDeliveryTransportError extends Schema.TaggedError<ApnsDeliveryT
   }
 }
 
-export const isApnsDeliveryTransportError = Schema.is(ApnsDeliveryTransportError);
-
 export class ApnsDeliveryJobRetryableFailure extends Schema.TaggedError<ApnsDeliveryJobRetryableFailure>()(
   "ApnsDeliveryJobRetryableFailure",
   {
