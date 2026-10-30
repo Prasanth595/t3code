@@ -4,9 +4,11 @@ import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 
 import { useRightPanelStore } from "~/rightPanelStore";
+import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
-import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
+import { PanelTabCloseButton } from "../ui/panel-tab-close-button";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 
 function SkillInlineText(props: {
   text: string;
@@ -83,20 +85,44 @@ export function skillInstructionsOpener(
   return () => useRightPanelStore.getState().openFile(threadRef, skill.path);
 }
 
+/**
+ * Shared shell for the skill chip in the composer and in sent messages, so
+ * both surfaces keep the same RightPanelTab look; the composer adds pointer
+ * and hover classes via `className`. Border and tint colors reuse the
+ * ContextChip skill accent so the chip still reads as the old purple chip.
+ */
+function SkillTabChipShell(props: React.ComponentProps<typeof ContextChip>) {
+  return (
+    <ContextChip
+      kind="skill"
+      className="group/tab h-6 max-w-36 gap-0.5 rounded-md border pr-2 pl-1.5 text-xs bg-accent/40 text-foreground [button:enabled&]:hover:bg-accent/60"
+      {...props}
+    />
+  );
+}
+
+/**
+ * Resting tinted badge; PanelTabCloseButton swaps it for its X on hover
+ * (group/tab), sent messages keep it permanently.
+ */
+function SkillTabChipBadge() {
+  return (
+    <span className="flex size-3 shrink-0 items-center justify-center rounded-[5px] bg-(--context-chip-accent)/17 text-(--context-chip-foreground) [&_svg]:size-2 [&_svg]:[stroke-width:2.5]">
+      <SkillChipIcon />
+    </span>
+  );
+}
+
 export function SkillChipPopover(props: {
   label: string;
   description: string | null | undefined;
   copyMarkdown?: string | undefined;
   onViewInstructions: (() => void) | undefined;
+  onRemove?: (() => void) | undefined;
 }) {
-  return (
-    <ContextChipPopover
-      kind="skill"
-      icon={<SkillChipIcon />}
-      label={props.label}
-      accessibleLabel={`Skill ${props.label}`}
-      copyMarkdown={props.copyMarkdown}
-    >
+  const details = (
+    <>
+      <PopoverTitle className="sr-only">{`Skill ${props.label}`}</PopoverTitle>
       <div className="space-y-3 p-2 text-sm">
         <p className="font-medium">{props.label}</p>
         <p>{props.description || "No description is available for this skill."}</p>
@@ -106,7 +132,45 @@ export function SkillChipPopover(props: {
           </Button>
         ) : null}
       </div>
-    </ContextChipPopover>
+    </>
+  );
+  return (
+    <Popover>
+      {props.onRemove ? (
+        <SkillTabChipShell className="cursor-pointer hover:bg-accent/60">
+          <PanelTabCloseButton label={`Remove ${props.label} skill`} onClick={props.onRemove}>
+            <SkillTabChipBadge />
+          </PanelTabCloseButton>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                className="flex min-w-0 cursor-pointer items-center"
+                aria-label={`Skill ${props.label}. Show details`}
+              />
+            }
+          >
+            <ContextChipLabel>{props.label}</ContextChipLabel>
+          </PopoverTrigger>
+        </SkillTabChipShell>
+      ) : (
+        <PopoverTrigger
+          render={
+            <SkillTabChipShell
+              render={<button type="button" />}
+              aria-label={`Skill ${props.label}. Show details`}
+              data-markdown-copy={props.copyMarkdown}
+            />
+          }
+        >
+          <SkillTabChipBadge />
+          <ContextChipLabel>{props.label}</ContextChipLabel>
+        </PopoverTrigger>
+      )}
+      <PopoverPopup side="top" width="lg" padding="compact">
+        {details}
+      </PopoverPopup>
+    </Popover>
   );
 }
 
