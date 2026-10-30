@@ -564,7 +564,7 @@ describe("auth session revoke", () => {
       );
 
       assert.include(output, `Revoked session ${server.session.sessionId}.`);
-      assert.isTrue(yield* Deferred.isDone(server.removed));
+      yield* Deferred.await(server.removed);
       const listed = yield* captureStdout(
         runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
       );
@@ -592,7 +592,7 @@ describe("auth session revoke", () => {
       yield* server.persistRunningServer;
       yield* revoke;
 
-      assert.isTrue(yield* Deferred.isDone(server.removed));
+      yield* Deferred.await(server.removed);
     }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
   );
 
