@@ -19,9 +19,24 @@ it.effect(
                 models:
                   request.headers.authorization === "Bearer account-a"
                     ? [
-                        { slug: "second", display_name: "Second from OpenAI", visibility: "list" },
+                        {
+                          slug: "second",
+                          display_name: "Second from OpenAI",
+                          visibility: "list",
+                          default_reasoning_level: "low",
+                          supported_reasoning_levels: [
+                            { effort: "low", description: "Fast" },
+                            { effort: "ultra", description: "Deepest" },
+                            { effort: "", description: "Malformed" },
+                          ],
+                        },
                         { slug: "hidden", display_name: "Hidden", visibility: "hidden" },
-                        { slug: "first", display_name: "First from OpenAI", visibility: "list" },
+                        {
+                          slug: "first",
+                          display_name: "First from OpenAI",
+                          visibility: "list",
+                          supported_reasoning_levels: [{ effort: "low", description: "Fast" }],
+                        },
                       ]
                     : [{ slug: "account-b-only", display_name: "B", visibility: "list" }],
               }),
@@ -49,7 +64,20 @@ it.effect(
         ],
       );
       assert.deepEqual(a[1]!.capabilities, native[0]!.capabilities);
-      assert.isNull(a[0]!.capabilities);
+      assert.deepEqual(a[0]!.capabilities, {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low", isDefault: true },
+              { id: "ultra", label: "Ultra" },
+            ],
+            currentValue: "low",
+          },
+        ],
+      });
       const b = yield* chatGptModels("account-b", native).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
       );
@@ -57,6 +85,7 @@ it.effect(
         b.map((model) => model.slug),
         ["account-b-only"],
       );
+      assert.isNull(b[0]!.capabilities);
       assert.deepEqual(requests, ["Bearer account-a", "Bearer account-b"]);
     }),
 );
