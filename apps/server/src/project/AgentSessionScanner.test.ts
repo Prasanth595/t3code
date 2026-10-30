@@ -76,6 +76,7 @@ const layerScannerTest = (input: ScannerTestInput) =>
                   value: input.piAgentDir ?? `${input.claudeHomePath}/pi-agent`,
                   sensitive: false,
                 },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
               ],
               config: {},
             },
@@ -638,7 +639,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             [ProviderInstanceId.make("pi")]: {
               driver: ProviderDriverKind.make("pi"),
               enabled: true,
-              environment: [{ name: "PI_CODING_AGENT_DIR", value: piAgentDir, sensitive: false }],
+              environment: [
+                { name: "PI_CODING_AGENT_DIR", value: piAgentDir, sensitive: false },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+              ],
               config: {},
             },
             [ProviderInstanceId.make("pi-flat")]: {

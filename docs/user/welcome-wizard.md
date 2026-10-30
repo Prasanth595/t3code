@@ -75,8 +75,9 @@ A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.
 
 Imported projects include Claude, Codex and Pi conversations active within the last
-30 days. You can continue those conversations in T3 Code. Pi sessions are read
-from each enabled Pi provider's session directory, which follows
+30 days. You can continue those conversations in T3 Code. Pi is off by default:
+enable it in Settings, then open `/welcome` to import its sessions. Pi sessions
+are read from each enabled Pi provider's session directory, which follows
 `PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
 Pi conversation imports its active branch, the one Pi reopens.
 
