@@ -18,6 +18,19 @@ File: `<base dir>/factory/config.yml`, by default `~/.config/t3fac/factory/confi
 | `model_fallbacks`           | mapping      | no       | none    | Model id → another model id on the same provider instance, used while the first model's provider rate limit cools down.                                     |
 | `prune_branches_after_days` | integer ≥ 1  | no       | `14`    | Age of the last commit after which an unmerged local `t3/*` branch with no pull request at its tip is pruned.                                               |
 | `prune_branches_dry_run`    | boolean      | no       | `false` | The prune decides and logs `would prune` lines, and deletes nothing.                                                                                        |
+| `default_project`           | mapping      | no       | none    | The block a T3 project with no `factory` block is watched with. See below.                                                                                  |
+
+`default_project` keys. Any other key is an error `default_project.<key>: unknown key`, or `default_project.limits.<key>: unknown key` under `limits`. A settings save keeps the block.
+
+| Key                           | Type            | Required | Default | Rule                                  |
+| ----------------------------- | --------------- | -------- | ------- | ------------------------------------- |
+| `instructors`                 | list of strings | yes      |         | At least one login.                   |
+| `limits.minutes`              | integer ≥ 1     | no       | `180`   | As the repo block's.                  |
+| `limits.gate_retries`         | integer ≥ 0     | no       | `2`     | Optional here, unlike the repo block. |
+| `limits.checks_minutes`       | integer ≥ 1     | no       | `30`    | As the repo block's.                  |
+| `limits.interruption_resumes` | integer ≥ 0     | no       | `2`     | As the repo block's.                  |
+
+The resolved config and the inference: [Repo config → The default block](/agents/repo-config#the-default-block).
 
 | Retired key      | Load result                       |
 | ---------------- | --------------------------------- |

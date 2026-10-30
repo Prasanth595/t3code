@@ -42,7 +42,9 @@ export function WatchedRepos({
       <SettingsSection title="Watched repos">
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
           Repos are added as T3 projects: the factory watches every project on this environment
-          whose checkout has a .dw/config.yml with a factory block.
+          whose checkout has a .dw/config.yml with a factory block. With default_project in the
+          machine config, it watches every project with a GitHub origin, and a factory block only
+          overrides the default.
           {none ? " No T3 project on this environment has one yet." : null}
         </p>
         {watchError !== null ? (
@@ -76,6 +78,12 @@ export function WatchedRepos({
             title="Workspace root"
             description={<code className="break-all">{block.path}</code>}
           />
+          {block.default_config === true ? (
+            <SettingsRow
+              title="Default config"
+              description="No factory block in .dw/config.yml: this repo runs on default_project from the machine config, with the provision and gate inferred from its default branch. Add a factory block to override it."
+            />
+          ) : null}
           {block.factory !== null ? <ProjectConfigRows factory={block.factory} /> : null}
           {block.errors !== null ? (
             <SettingsRow
@@ -94,22 +102,24 @@ export function WatchedRepos({
               description="Not read yet (the factory reads it on its next pass)"
             />
           ) : null}
-          <SettingsRow
-            title="Project config on GitHub"
-            control={
-              <TouchLink
-                render={
-                  <a
-                    href={`https://github.com/${block.repo}/blob/${block.factory?.base ?? "HEAD"}/.dw/config.yml`}
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                }
-              >
-                View .dw/config.yml on GitHub
-              </TouchLink>
-            }
-          />
+          {block.default_config === true ? null : (
+            <SettingsRow
+              title="Project config on GitHub"
+              control={
+                <TouchLink
+                  render={
+                    <a
+                      href={`https://github.com/${block.repo}/blob/${block.factory?.base ?? "HEAD"}/.dw/config.yml`}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  View .dw/config.yml on GitHub
+                </TouchLink>
+              }
+            />
+          )}
         </SettingsSection>
       ))}
     </>

@@ -177,6 +177,13 @@ describe("editMachineConfig", () => {
       assert.include(text, "min_free_gib: 25");
     });
 
+    it("keeps a hand-written default_project through an edit", () => {
+      const block =
+        "default_project:\n  instructors:\n    - rawphp\n  limits:\n    gate_retries: 2\n";
+      const text = edited(COMMENTED + block, { poll_seconds: 90 });
+      assert.include(text, block);
+    });
+
     it("keeps a hand-written deploy_wait_minutes through an edit", () => {
       const text = edited(COMMENTED + "deploy_wait_minutes: 240\n", { poll_seconds: 90 });
       assert.include(text, "deploy_wait_minutes: 240");
@@ -360,7 +367,12 @@ describe("readMachineConfigReport", () => {
 
   it.effect("lists the watched projects for a missing file and for an invalid one", () =>
     Effect.gen(function* () {
-      const expected = WATCHED.map((w) => ({ ...w, factory: null, errors: null }));
+      const expected = WATCHED.map((w) => ({
+        ...w,
+        default_config: false,
+        factory: null,
+        errors: null,
+      }));
       const missing = yield* report(null, of(WATCHED));
       assert.deepStrictEqual(missing.report.repos, expected);
       const invalid = yield* report("poll_seconds: 1\n", of(WATCHED));
@@ -388,9 +400,30 @@ describe("readMachineConfigReport", () => {
         },
       ];
       assert.deepStrictEqual(r.repos, [
-        { repo: "Acme/Widgets", path: "/one", title: "One", factory: null, errors: ambiguous },
-        { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
-        { repo: "acme/widgets", path: "/two", title: "Two", factory: null, errors: ambiguous },
+        {
+          repo: "Acme/Widgets",
+          path: "/one",
+          title: "One",
+          default_config: false,
+          factory: null,
+          errors: ambiguous,
+        },
+        {
+          repo: "c/d",
+          path: "/d",
+          title: "Dee",
+          default_config: false,
+          factory: null,
+          errors: null,
+        },
+        {
+          repo: "acme/widgets",
+          path: "/two",
+          title: "Two",
+          default_config: false,
+          factory: null,
+          errors: ambiguous,
+        },
       ]);
     }),
   );
@@ -450,10 +483,18 @@ describe("readMachineConfigReport", () => {
           repo: "a/b",
           path: "/b",
           title: "Bee",
+          default_config: false,
           factory: null,
           errors: [{ file: ".dw/config.yml", message: "bad" }],
         },
-        { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
+        {
+          repo: "c/d",
+          path: "/d",
+          title: "Dee",
+          default_config: false,
+          factory: null,
+          errors: null,
+        },
       ]);
     }),
   );
@@ -479,6 +520,67 @@ describe("readMachineConfigReport", () => {
       assert.strictEqual(r.repos[0]?.factory?.base, "main");
       assert.deepStrictEqual(r.repos[0]?.factory?.required_checks, ["ci"]);
       assert.strictEqual(r.repos[0]?.errors, null);
+      assert.isFalse(r.repos[0]?.default_config);
+    }),
+  );
+
+  it.effect("marks a repo on the machine's default and shows the block it resolved to", () =>
+    Effect.gen(function* () {
+      const project = {
+        instructors: ["rawphp"],
+        base: "main",
+        provision: ["npm ci"],
+        gate: ["npm run build", "npm run test"],
+        requiredChecks: [],
+        limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+        autonomy: "pr" as const,
+      };
+      const defaulted: WatchedProject = {
+        repo: "a/b",
+        path: "/b",
+        title: "Bee",
+        defaulted: {
+          head: {
+            branch: "main",
+            files: { packageJson: "{}", composerJson: null, lockfiles: ["package-lock.json"] },
+          },
+        },
+      };
+      const readings = new Map<string, RepoConfigReading>([
+        ["a/b", { kind: "ok", project, onDefault: true }],
+      ]);
+      const { report: r } = yield* report(COMMENTED, of([defaulted]), readings);
+      assert.deepStrictEqual(r.repos, [
+        {
+          repo: "a/b",
+          path: "/b",
+          title: "Bee",
+          default_config: true,
+          factory: {
+            instructors: ["rawphp"],
+            base: "main",
+            provision: ["npm ci"],
+            gate: ["npm run build", "npm run test"],
+            required_checks: [],
+            limits: { minutes: 180, gate_retries: 2, checks_minutes: 30, interruption_resumes: 2 },
+            autonomy: "pr",
+          },
+          errors: null,
+        },
+      ]);
+      // A checkout that showed no block, on a repo whose block on GitHub the pass ran on.
+      const own = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
+      const { report: ownReport } = yield* report(COMMENTED, of([defaulted]), own);
+      assert.isFalse(ownReport.repos[0]?.default_config);
+      // An error says which config it came from; one that cannot tell keeps the listing's mark.
+      const label = (reading: RepoConfigReading) =>
+        report(COMMENTED, of([defaulted]), new Map([["a/b", reading]])).pipe(
+          Effect.map(({ report: r }) => r.repos[0]?.default_config),
+        );
+      const errors = [{ file: ".dw/config.yml", message: "bad" }];
+      assert.isFalse(yield* label({ kind: "errors", errors, onDefault: false }));
+      assert.isTrue(yield* label({ kind: "errors", errors, onDefault: true }));
+      assert.isTrue(yield* label({ kind: "errors", errors }));
     }),
   );
 });

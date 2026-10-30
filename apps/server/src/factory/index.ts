@@ -25,6 +25,7 @@ import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./att
 import { loadHandPause, loadPendingDeploy } from "./claims.ts";
 import {
   DEFAULT_POLL_SECONDS,
+  factoryOptIn,
   formatConfigError,
   loadMachineConfig,
   parseProjectConfig,
@@ -37,6 +38,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { launchModel, type Cooldown } from "./cooldown.ts";
+import { type Defaulted, type DefaultProject, resolveDefault } from "./defaultProject.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
@@ -200,6 +202,8 @@ const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>
 /** A project config that could not be had: the pass's error, and the same problems per field. */
 interface ProjectReadError extends PassError {
   readonly errors: ReadonlyArray<ConfigError>;
+  /** Set once the read knows whether the repo runs on the default or on its own block. */
+  readonly onDefault?: boolean;
 }
 
 /** The checkout's own `.dw/config.yml`, for a repo whose default branch `branch` has none on GitHub. */
@@ -220,14 +224,16 @@ const fromCheckout = Effect.fn("Factory.fromCheckout")(function* (
 });
 
 /**
- * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub,
- * or, only when GitHub says the file is not there, the copy in the watched checkout's working
- * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
- * Either way the config must name the default branch as its `base`.
+ * `.dw/config.yml` from GitHub's default branch, or the checkout's copy only when GitHub has none
+ * (some gates hold machine-specific commands); its `base` must be the default branch. A `defaulted`
+ * repo runs on the machine's default unless GitHub's copy has a `factory` block; `onDefault` says
+ * which.
  */
 const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
   github: ReturnType<typeof makeGitHub>,
   checkout: string,
+  defaulted?: Defaulted,
+  defaultProject?: DefaultProject,
 ) {
   const found = yield* github.baseConfig().pipe(
     Effect.mapError((error): ProjectReadError => ({
@@ -242,6 +248,34 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
       ],
     })),
   );
+  if (defaulted !== undefined && (found.text === null || factoryOptIn(found.text) === "no")) {
+    const resolved: Result.Result<ProjectConfig, ReadonlyArray<ConfigError>> = defaultProject ===
+    undefined
+      ? Result.fail([
+          {
+            file: PROJECT_CONFIG_PATH,
+            message: "the machine config has no default_project, and the repo has no factory block",
+          },
+        ])
+      : resolveDefault(defaultProject, found.branch, defaulted.head);
+    if (Result.isSuccess(resolved)) return { project: resolved.success, onDefault: true };
+    return yield* Effect.fail<ProjectReadError>({
+      kind: "config",
+      message: resolved.failure.map(formatConfigError).join("; "),
+      errors: resolved.failure,
+      onDefault: true,
+    });
+  }
+  return yield* ownBlock(found, checkout).pipe(
+    Effect.mapError((error): ProjectReadError => ({ ...error, onDefault: false })),
+  );
+});
+
+/** The repo's own `factory` block: GitHub's copy, else the checkout's, naming the default branch. */
+const ownBlock = Effect.fn("Factory.ownBlock")(function* (
+  found: { readonly branch: string; readonly text: string | null },
+  checkout: string,
+) {
   const { file, text } =
     found.text !== null
       ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
@@ -266,7 +300,7 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
       errors: [{ file, field: "factory.base", message }],
     });
   }
-  return parsed.success;
+  return { project: parsed.success, onDefault: false };
 });
 
 /** What the live world runs its gates with, and what it does when one ends. */
@@ -606,11 +640,19 @@ export const liveWorld = (
   return {
     project: (watched) =>
       withProcess(
-        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
+        projectFromBase(
+          githubFor(watched),
+          watched.path,
+          watched.defaulted,
+          machine.defaultProject,
+        ).pipe(Effect.provide(files)),
       ).pipe(
-        Effect.tap((project) =>
-          Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
+        Effect.tap(({ project, onDefault }) =>
+          Effect.sync(() =>
+            onProject?.(watched.repo, { kind: "ok", project, ...(onDefault && { onDefault }) }),
+          ),
         ),
+        Effect.map(({ project }) => project),
         Effect.tapError((error) =>
           // A transient failure with a last good copy says nothing new about the config: the
           // pass runs on that copy and the last reading stands. Without a copy the repo is
@@ -618,7 +660,11 @@ export const liveWorld = (
           lastGoodCopy(lastGood, watched.repo, "project", error) !== undefined
             ? Effect.void
             : Effect.sync(() =>
-                onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
+                onProject?.(watched.repo, {
+                  kind: "errors",
+                  errors: error.errors,
+                  ...(error.onDefault !== undefined && { onDefault: error.onDefault }),
+                }),
               ),
         ),
         Effect.mapError((error): PassError => ({
@@ -926,17 +972,18 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
   };
   const readings = new Map<string, RepoConfigReading>();
   // The repos the pass's last listing named, for the status; a pass lists them anew before it works.
-  const listWatched = watched.listAndRemember.pipe(
-    Effect.tap((listing) =>
-      Effect.sync(() => {
-        const repos = listing.repos.map((entry) => entry.repo);
-        state.watched = repos;
-        if (state.status.state === "running") {
-          state.status = { ...state.status, settings: { ...state.status.settings, repos } };
-        }
-      }),
-    ),
-  );
+  const listWatched = (machine: MachineConfig) =>
+    watched.listAndRemember(machine.defaultProject !== undefined).pipe(
+      Effect.tap((listing) =>
+        Effect.sync(() => {
+          const repos = listing.repos.map((entry) => entry.repo);
+          state.watched = repos;
+          if (state.status.state === "running") {
+            state.status = { ...state.status, settings: { ...state.status.settings, repos } };
+          }
+        }),
+      ),
+    );
   const shared: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
@@ -993,7 +1040,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
         shared,
       ),
       // Where the list comes from is known here alone.
-      watchedRepos: listWatched.pipe(Effect.mapError(asPassError("t3"))),
+      watchedRepos: listWatched(machine).pipe(Effect.mapError(asPassError("t3"))),
       // The sessions write under the worktrees folder T3 uses now, the gate under the factory dir.
       freeSpace: () =>
         sessions.worktreesDirectory(worktreesDir).pipe(
@@ -1101,7 +1148,9 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
   // One reload or save at a time, and none cut short half way: two at once from idle would
   // make two loops, and a save cut short after the write leaves the loop on the old config.
   // The settings page reads the list untapped: only the pass writes `state.watched` and the status.
-  const watchedRepos = watched.list;
+  const watchedRepos = Effect.suspend(() =>
+    watched.list(state.current?.machine.defaultProject !== undefined),
+  );
   const lock = yield* Semaphore.make(1);
   const reload = lock.withPermits(1)(Effect.uninterruptible(reloadNow));
   const save = (body: unknown) =>

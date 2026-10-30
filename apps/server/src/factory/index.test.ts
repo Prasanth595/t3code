@@ -32,6 +32,7 @@ import {
   type WatchedListing,
   type WatchedProject,
 } from "./config.ts";
+import type { Defaulted } from "./defaultProject.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
@@ -103,7 +104,7 @@ const watching = (
   );
   return Layer.succeed(
     FactoryWatchedRepos,
-    FactoryWatchedRepos.of({ list: listing, listAndRemember: listing }),
+    FactoryWatchedRepos.of({ list: () => listing, listAndRemember: () => listing }),
   );
 };
 
@@ -1249,7 +1250,7 @@ describe("liveWorld", () => {
    * fails the branch's tip call with a 404 instead.
    */
   const baseConfigGh = (
-    file: { readonly base: string } | { readonly stderr: string },
+    file: { readonly base: string } | { readonly stderr: string } | { readonly text: string },
     ref: "ok" | "missing" = "ok",
   ) => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
@@ -1264,7 +1265,7 @@ describe("liveWorld", () => {
       }
       if (args[0] === "api" && path.startsWith(`repos/${REPO}/contents/`)) {
         if ("stderr" in file) return { stderr: file.stderr };
-        const text = configText(file.base);
+        const text = "text" in file ? file.text : configText(file.base);
         return JSON.stringify({
           name: "config.yml",
           path: ".dw/config.yml",
@@ -1314,10 +1315,12 @@ describe("liveWorld", () => {
     root: string,
     withLastGood = false,
     repo = REPO,
+    onMachine: MachineConfig = machine,
+    defaulted?: Defaulted,
   ) => {
     const readings: Array<RepoConfigReading> = [];
     const world = liveWorld(
-      machine,
+      onMachine,
       "/factory-test/data",
       process,
       NodeServices.layer,
@@ -1345,10 +1348,204 @@ describe("liveWorld", () => {
         prunedAt: new Map(),
       },
     );
-    return Effect.result(world.project({ repo, path: root })).pipe(
-      Effect.map((result) => ({ result, readings })),
-    );
+    return Effect.result(
+      world.project({ repo, path: root, ...(defaulted !== undefined && { defaulted }) }),
+    ).pipe(Effect.map((result) => ({ result, readings })));
   };
+
+  describe("with the machine's default_project", () => {
+    const withDefault: MachineConfig = {
+      ...machine,
+      defaultProject: {
+        instructors: ["rawphp"],
+        limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+      },
+    };
+
+    it.effect("a repo with its own factory block runs on that block alone", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "main" });
+        const { result } = yield* readProject(process, "/p", false, REPO, withDefault);
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) {
+          assert.deepStrictEqual(result.success, {
+            instructors: ["tomkaczocha"],
+            base: "main",
+            provision: [],
+            gate: ["make"],
+            requiredChecks: [],
+            limits: { minutes: 1, gateRetries: 0, checksMinutes: 30, interruptionResumes: 2 },
+            autonomy: "pr",
+          });
+        }
+      }),
+    );
+
+    const npmTest: Defaulted = {
+      head: {
+        branch: "main",
+        files: {
+          packageJson: '{"scripts":{"test":"vitest"}}',
+          composerJson: null,
+          lockfiles: ["package-lock.json"],
+        },
+      },
+    };
+
+    it.effect("a repo on the default runs on it, on GitHub's default branch, and says so", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: NOT_FOUND.stderr });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        const expected = {
+          instructors: ["rawphp"],
+          base: "main",
+          provision: ["npm ci"],
+          gate: ["npm run test"],
+          requiredChecks: [],
+          limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+          autonomy: "pr" as const,
+        };
+        assert.deepStrictEqual(Result.isSuccess(result) && result.success, expected);
+        assert.deepStrictEqual(readings, [{ kind: "ok", project: expected, onDefault: true }]);
+      }),
+    );
+
+    it.effect("a .dw/config.yml on GitHub with no factory key leaves the repo on the default", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ text: "tracker:\n  backend: github\n" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.deepStrictEqual(Result.isSuccess(result) && result.success.gate, ["npm run test"]);
+        assert.strictEqual(readings[0]?.kind === "ok" && readings[0].onDefault, true);
+      }),
+    );
+
+    it.effect("a factory block on GitHub wins over a checkout that shows none", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "main" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isSuccess(result)) {
+          assert.deepStrictEqual(result.success.instructors, ["tomkaczocha"]);
+          assert.deepStrictEqual(result.success.gate, ["make"]);
+        }
+        assert.deepStrictEqual(readings.length, 1);
+        assert.notProperty(readings[0], "onDefault");
+      }),
+    );
+
+    const failsWith = (onMachine: MachineConfig, defaulted: Defaulted, part: string) =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: NOT_FOUND.stderr });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          onMachine,
+          defaulted,
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.strictEqual(result.failure.kind, "config");
+          assert.isUndefined(result.failure.transient);
+        }
+        assert.strictEqual(readings.length, 1);
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.strictEqual(reading.errors.length, 1);
+          assert.include(reading.errors[0]?.message, part);
+          assert.strictEqual(reading.onDefault, true);
+        }
+      });
+
+    it.effect("a broken factory block on GitHub is the repo's own error, not the default's", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ base: "develop" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.isTrue(Result.isFailure(result));
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") assert.strictEqual(reading.onDefault, false);
+      }),
+    );
+
+    it.effect("a .dw/config.yml on GitHub that does not parse is the repo's own error", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ text: "factory: [unclosed\n" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.isTrue(Result.isFailure(result));
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.strictEqual(reading.onDefault, false);
+          assert.include(reading.errors[0]?.message, "YAML");
+        }
+      }),
+    );
+
+    it.effect("a GitHub read that fails says nothing of which config the repo runs on", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" });
+        const { readings } = yield* readProject(process, "/p", false, REPO, withDefault, npmTest);
+        assert.strictEqual(readings[0]?.kind, "errors");
+        assert.notProperty(readings[0], "onDefault");
+      }),
+    );
+
+    it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
+      failsWith(
+        withDefault,
+        {
+          head: { branch: "main", files: { packageJson: null, composerJson: null, lockfiles: [] } },
+        },
+        "no gate could be inferred",
+      ),
+    );
+
+    it.effect("a repo on the default whose checkout has no origin/HEAD says how to set it", () =>
+      failsWith(withDefault, { head: null }, "git remote set-head origin --auto"),
+    );
+
+    it.effect("a repo listed on the default after the machine dropped it is a config error", () =>
+      failsWith(machine, npmTest, "no default_project"),
+    );
+  });
 
   it.effect("a project config committed on its own base branch is loaded", () =>
     Effect.gen(function* () {
@@ -2929,8 +3126,8 @@ describe("reloading the machine config", () => {
           Layer.succeed(
             FactoryWatchedRepos,
             FactoryWatchedRepos.of({
-              list: counted("list"),
-              listAndRemember: counted("listAndRemember"),
+              list: () => counted("list"),
+              listAndRemember: () => counted("listAndRemember"),
             }),
           ),
         );
@@ -2948,6 +3145,47 @@ describe("reloading the machine config", () => {
         assert.ok(calls.listAndRemember >= remembered);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "the pass and the settings page list with the default only when the machine has one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process, entered, release } = holdingProcess();
+          const args = { list: [] as Array<boolean>, listAndRemember: [] as Array<boolean> };
+          const recorded = (name: keyof typeof args) => (withDefault: boolean) =>
+            Effect.sync((): WatchedListing => {
+              args[name].push(withDefault);
+              return { repos: [A_B], departed: [], unresolved: [] };
+            });
+          const { loop, write } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            Layer.succeed(
+              FactoryWatchedRepos,
+              FactoryWatchedRepos.of({
+                list: recorded("list"),
+                listAndRemember: recorded("listAndRemember"),
+              }),
+            ),
+          );
+          yield* Deferred.await(entered);
+          yield* loop.watchedRepos;
+          assert.deepStrictEqual(args, { list: [false], listAndRemember: [false] });
+          yield* Deferred.succeed(release, undefined);
+          yield* write(`${VALID}default_project:\n  instructors: [rawphp]\n`);
+          yield* loop.reload;
+          yield* loop.watchedRepos;
+          assert.strictEqual(args.list.at(-1), true);
+          const waited = yield* Effect.gen(function* () {
+            while (!args.listAndRemember.includes(true)) yield* loop.awaitPass;
+          }).pipe(Effect.timeoutOption("30 seconds"));
+          assert.isTrue(Option.isSome(waited), "no pass listed with the default");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>

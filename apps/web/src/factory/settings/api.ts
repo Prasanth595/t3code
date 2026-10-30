@@ -20,6 +20,11 @@ export interface RepoBlock {
   readonly repo: string;
   /** The project's workspace root. */
   readonly path: string;
+  /**
+   * The repo has no factory block and runs on the machine's `default_project`, with `factory` the
+   * block that resolved to. An older server does not send it.
+   */
+  readonly default_config?: boolean;
   readonly factory: {
     readonly instructors: ReadonlyArray<string>;
     readonly base: string;

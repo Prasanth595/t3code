@@ -4,10 +4,10 @@ File: `.dw/config.yml` in the repo. Parsed by [`apps/server/src/factory/config.t
 
 ## Where it is read
 
-| Purpose                     | Source                                                                                                                                                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here.                                                   |
-| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass. Only when GitHub says the file is not there, the checkout's working tree, so a checkout-only config takes effect on the next pass without a push. |
+| Purpose                     | Source                                                                                                                                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here. Without them, watched only on the machine's [`default_project`](#the-default-block). |
+| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass. Only when GitHub says the file is not there, the checkout's working tree, so a checkout-only config takes effect on the next pass without a push.                                    |
 
 ## Schema
 
@@ -54,6 +54,33 @@ Keys the server does not read are ignored.
 | `regates`              | Nothing. The key is accepted and ignored.                                                                                                                                                        | None                                        |
 | `checks_minutes`       | Wait for `required_checks` after the gate commands pass.                                                                                                                                         | `stuck`                                     |
 | `interruption_resumes` | Resumes or relaunches after a session ended `failed` or `cancelled`, or its thread vanished, when T3 trouble is in evidence.                                                                     | `stuck`                                     |
+
+## The default block
+
+With the machine config's `default_project` set, a T3 project whose GitHub-origin checkout has no `factory` block (no `.dw/config.yml`, or one without the key) is watched on the default. A repo with its own `factory` block uses that block alone: nothing from the default and no inferred command is merged in. Code: [`apps/server/src/factory/defaultProject.ts`](https://github.com/original-solutions/t3code-factory/blob/main/apps/server/src/factory/defaultProject.ts).
+
+| Field               | Value                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `instructors`       | `default_project.instructors`                                                                                 |
+| `limits`            | `default_project.limits`, with its defaults                                                                   |
+| `base`              | The repo's default branch on GitHub                                                                           |
+| `required_checks`   | `[]`                                                                                                          |
+| `autonomy`          | `pr`                                                                                                          |
+| `provision`, `gate` | Inferred from the files committed at the root of `origin/HEAD`, read with `git` in the checkout on every pass |
+
+| Found on the default branch                   | provision                                         | gate                                                                                                                      |
+| --------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `package.json` with `package-lock.json`       | `npm ci`                                          | `npm run <script>` for each of `typecheck`, `lint`, `build`, `test`, `format:check` that `scripts` defines, in that order |
+| `package.json` with `pnpm-lock.yaml`          | `pnpm install --frozen-lockfile`                  | the same scripts, with `pnpm run`                                                                                         |
+| `package.json` with `bun.lock` or `bun.lockb` | `bun install --frozen-lockfile`                   | the same scripts, with `bun run`                                                                                          |
+| `package.json` with `yarn.lock`               | `yarn install --frozen-lockfile`                  | the same scripts, with `yarn run`                                                                                         |
+| `composer.json`                               | `composer install --no-interaction --no-progress` | `composer check` if `scripts.check` exists, else `composer test` if `scripts.test` exists                                 |
+
+A repo with both manifests gets both: composer first in `provision` and in `gate`. With more than one lockfile, the first row that matches wins. A `package.json` with no lockfile infers nothing.
+
+Each pass reads `.dw/config.yml` on the default branch on GitHub first, as for any watched repo (three API calls per repo per pass): if it has a `factory` block, that block is used, even though the checkout showed none, and Settings does not mark the repo "default config". The files are read from the checkout's `origin/HEAD`, so they are as fresh as its last fetch.
+
+No gate inferred (no manifest, or no matching script): the repo is watched, its reading is one error saying no gate could be inferred and a `factory` block in `.dw/config.yml` is needed, and its issues are not claimed. A clone with no `origin/HEAD`, or one whose `origin/HEAD` names another branch than the default branch on GitHub, is watched with one error saying to run `git remote set-head origin --auto`. A `git` that times out reading the files leaves the checkout unresolved for that pass. A checkout T3 cannot name (no remote, or a timeout) is not watched that pass. When another project of the same repo has its own `factory` block, the defaulted checkout is dropped, so the repo is not ambiguous.
 
 ## Gate
 

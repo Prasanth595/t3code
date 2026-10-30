@@ -490,6 +490,49 @@ describe("FactorySettingsPanel", () => {
     expect(root.querySelectorAll("ul, li")).toHaveLength(0);
   });
 
+  it("marks a repo running on the machine's default and shows the block it resolved to", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(
+      ok(
+        report({
+          repos: [
+            {
+              repo: "rawphp/agent-doctor",
+              path: "/work/agent-doctor",
+              title: "Agent doctor",
+              default_config: true,
+              factory: {
+                instructors: ["tomkaczocha", "rawphp"],
+                base: "main",
+                provision: ["npm ci"],
+                gate: ["npm run build", "npm run test", "npm run format:check"],
+                required_checks: [],
+                limits: {
+                  minutes: 180,
+                  gate_retries: 2,
+                  checks_minutes: 30,
+                  interruption_resumes: 2,
+                },
+                autonomy: "pr",
+              },
+              errors: null,
+            },
+          ],
+        }),
+      ),
+    );
+    await using panel = await open();
+    const root = panel.container;
+
+    const text = textOf(root);
+    expect(text).toContain("Default config");
+    expect(text).toContain("npm run build, npm run test, npm run format:check");
+    expect(text).toContain("npm ci");
+    expect(text).toContain("tomkaczocha, rawphp");
+    // There is no .dw/config.yml to link to.
+    expect(text).not.toContain("View .dw/config.yml on GitHub");
+  });
+
   it("shows the one-line hint when no T3 project is watched", async () => {
     resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(report()));

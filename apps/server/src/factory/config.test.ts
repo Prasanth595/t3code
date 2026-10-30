@@ -863,3 +863,66 @@ describe("loaders", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("machine default_project", () => {
+  it("is absent from the config when the file has no block", () => {
+    expect(machine(MACHINE).defaultProject).toBeUndefined();
+  });
+
+  it("reads the instructors and fills the limits, gate retries at 2", () => {
+    const t = edit(MACHINE, (tree) =>
+      set(tree, "default_project", "{instructors: [tomkaczocha, rawphp]}"),
+    );
+    expect(machine(t).defaultProject).toEqual({
+      instructors: ["tomkaczocha", "rawphp"],
+      limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
+    });
+  });
+
+  it("takes the limits it is given", () => {
+    const t = edit(MACHINE, (tree) =>
+      set(
+        tree,
+        "default_project",
+        "{instructors: [rawphp], limits: {gate_retries: 0, minutes: 90, checks_minutes: 10, interruption_resumes: 1}}",
+      ),
+    );
+    expect(machine(t).defaultProject?.limits).toEqual({
+      minutes: 90,
+      gateRetries: 0,
+      checksMinutes: 10,
+      interruptionResumes: 1,
+    });
+  });
+
+  it("an empty instructors list is an error naming the field", () => {
+    const t = edit(MACHINE, (tree) => set(tree, "default_project", "{instructors: []}"));
+    assertOne(machineErr(t), "default_project.instructors", MFILE);
+  });
+
+  it("a missing instructors list is an error naming the field", () => {
+    const t = edit(MACHINE, (tree) => set(tree, "default_project", "{limits: {gate_retries: 1}}"));
+    assertOne(machineErr(t), "default_project.instructors", MFILE);
+  });
+
+  it("an unknown key inside it is an error naming the field", () => {
+    const t = edit(MACHINE, (tree) =>
+      set(tree, "default_project", "{instructors: [rawphp], gate: [npm test]}"),
+    );
+    const errs = machineErr(t);
+    assertOne(errs, "default_project.gate", MFILE);
+    expect(formatConfigError(errs[0]!)).toBe(`${MFILE}: default_project.gate: unknown key`);
+  });
+
+  it("an unknown key inside its limits is an error naming the field", () => {
+    const t = edit(MACHINE, (tree) =>
+      set(tree, "default_project", "{instructors: [rawphp], limits: {regates: 3}}"),
+    );
+    assertOne(machineErr(t), "default_project.limits.regates", MFILE);
+  });
+
+  it("a block that is not a mapping is an error naming it", () => {
+    const t = edit(MACHINE, (tree) => set(tree, "default_project", "[rawphp]"));
+    assertOne(machineErr(t), "default_project", MFILE);
+  });
+});

@@ -30,11 +30,25 @@ notify: true
 | `prune_branches_after_days` | no       | `14`    | Days after its last commit that a `t3/*` branch with unmerged work and no pull request is deleted, at least 1. Once an hour the factory deletes each watched repo's `t3/*` branches that are merged or abandoned. A branch stays while a worktree has it checked out, a thread that is not archived works on it, a factory run still names it, or an open or draft pull request is from it or onto it. A branch on GitHub goes only once its pull request is merged or closed. Each deletion is logged first in `branch-prune.jsonl` in the factory's data folder, with the commit. `git branch <name> <sha>` brings back a line marked `local`, and `git push origin <sha>:refs/heads/<name>` one marked `remote`. Unmerged commits stay in the checkout under `refs/factory-pruned/`, so the commit is always there; delete those refs with `git update-ref -d` once you no longer need them. |
 | `prune_branches_dry_run`    | no       | `false` | `true` deletes nothing and writes a `would prune` line to the server log for each branch the factory would delete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
-Any other key is an error, and the factory stays idle until it is fixed. A version from before `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` or the `prune_branches_*` keys rejects that key as unknown, so delete it before you roll back that far. Three keys from older versions, `model_instance`, `model` and `repos`, load with a warning instead: the current version ignores them, and a save from Settings → Factory keeps them, so a rollback to a version that needs them still starts. Delete them once you won't roll back that far.
+Any other key is an error, and the factory stays idle until it is fixed. A version from before `keep_versions`, `deploy_wait_minutes`, `model_fallbacks`, `default_project` or the `prune_branches_*` keys rejects that key as unknown, so delete it before you roll back that far. Three keys from older versions, `model_instance`, `model` and `repos`, load with a warning instead: the current version ignores them, and a save from Settings → Factory keeps them, so a rollback to a version that needs them still starts. Delete them once you won't roll back that far.
+
+## A default for every repo
+
+`default_project` makes every T3 project with a GitHub `origin` a watched repo, even one with no `factory` block in its `.dw/config.yml`:
+
+```yaml
+default_project:
+  instructors: [alice, bob]
+  limits: { gate_retries: 2 }
+```
+
+`instructors` is required, with at least one login. `limits` takes the same keys as a repo's ([Add a repo](/guide/add-a-repo#_1-commit-the-factory-block)), and `gate_retries` defaults to `2` here. Any other key in the block is an error. A repo on the default uses its default branch as `base`, `pr` autonomy and no required checks, and the factory infers its `provision` and `gate` from the manifests on that branch each pass, so a script you add there shows up on the next pass once the checkout has fetched it. Each watched repo costs a few GitHub API calls per pass, so a machine with many GitHub projects spends more of the login's hourly limit. A repo with a `factory` block, in its checkout or on its default branch on GitHub, uses that block and nothing from here.
+
+Without `default_project`, only repos with a `factory` block are watched.
 
 ## Changing it
 
-Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates` and `feedback_seconds`. Edit `notify`, `min_free_gib`, `max_load_per_core`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
+Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates` and `feedback_seconds`. Edit `default_project`, `notify`, `min_free_gib`, `max_load_per_core`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
 
 The server reads the file when it starts and each time Settings → Factory saves it. It doesn't watch the file, so a hand edit takes effect at the next save from the page or the next restart.
 

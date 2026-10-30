@@ -5,6 +5,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
+import type { Defaulted, DefaultProject } from "./defaultProject.ts";
 import { asciiLower } from "./ledger/runId.ts";
 
 export const ConfigErrorSchema = Schema.Struct({
@@ -92,12 +93,27 @@ export const PROJECT_CONFIG_PATH = ".dw/config.yml";
 
 /** What the last pass found when it read a repo's project config. */
 export type RepoConfigReading =
-  | { readonly kind: "ok"; readonly project: ProjectConfig }
-  | { readonly kind: "errors"; readonly errors: ReadonlyArray<ConfigError> };
+  | {
+      readonly kind: "ok";
+      readonly project: ProjectConfig;
+      /** The project config is the machine's `default_project`, resolved for the repo. */
+      readonly onDefault?: true;
+    }
+  | {
+      readonly kind: "errors";
+      readonly errors: ReadonlyArray<ConfigError>;
+      /** Whether the errors are the default's or the repo's own block's; absent when neither was read. */
+      readonly onDefault?: boolean;
+    };
 
 export interface WatchedRepo {
   readonly repo: string;
   readonly path: string;
+  /**
+   * Set when the checkout has no `factory` block and the machine has a `default_project`: the
+   * repo runs on that default, with what the reader found on its default branch.
+   */
+  readonly defaulted?: Defaulted;
 }
 
 /** A watched repo with the title of the T3 project it comes from, for the settings page. */
@@ -180,6 +196,11 @@ export interface MachineConfig {
   readonly pruneBranchesAfterDays: number;
   /** The branch prune only logs what it would delete. */
   readonly pruneBranchesDryRun: boolean;
+  /**
+   * `default_project`: the block a T3 project with no `factory` block of its own is watched with.
+   * Absent, such a project is not watched.
+   */
+  readonly defaultProject?: DefaultProject;
 }
 
 type Mapping = Record<string, unknown>;
@@ -335,6 +356,13 @@ const makeChecker = (file: string) => {
     }
   };
 
+  /** One error per key of `value` that is not in `known`, on the key's own field. */
+  const unknownFields = (value: Mapping, known: ReadonlyArray<string>, path: string) => {
+    for (const key of Object.keys(value)) {
+      if (!known.includes(key)) err(join(path, key), "unknown key");
+    }
+  };
+
   /** Parse the text into a YAML mapping, or the single file-level error. */
   const root = (text: string): Result.Result<Mapping, ReadonlyArray<ConfigError>> => {
     let value: unknown;
@@ -368,6 +396,7 @@ const makeChecker = (file: string) => {
     stringList,
     autonomy,
     unknownKeys,
+    unknownFields,
     root,
     finish,
   };
@@ -399,26 +428,11 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     }
   }
 
-  const limits = c.mapping(c.child(factory, "factory", "limits"), "factory.limits");
-  const minutes = c.optionalUint(limits, "factory.limits", "minutes", DEFAULT_MINUTES, 1);
-  const gateRetries = c.uint(
-    c.child(limits, "factory.limits", "gate_retries"),
-    "factory.limits.gate_retries",
-    0,
-  );
-  const checksMinutes = c.optionalUint(
-    limits,
+  const limits = limitsFrom(
+    c,
+    c.mapping(c.child(factory, "factory", "limits"), "factory.limits"),
     "factory.limits",
-    "checks_minutes",
-    DEFAULT_CHECKS_MINUTES,
-    1,
-  );
-  const interruptionResumes = c.optionalUint(
-    limits,
-    "factory.limits",
-    "interruption_resumes",
-    DEFAULT_INTERRUPTION_RESUMES,
-    0,
+    undefined,
   );
   const autonomy = c.autonomy(c.child(factory, "factory", "autonomy"), "factory.autonomy");
 
@@ -428,10 +442,7 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision === undefined ||
     gate === undefined ||
     requiredChecks === undefined ||
-    minutes === undefined ||
-    gateRetries === undefined ||
-    checksMinutes === undefined ||
-    interruptionResumes === undefined ||
+    limits === undefined ||
     autonomy === undefined
   ) {
     return undefined;
@@ -442,9 +453,46 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision,
     gate,
     requiredChecks,
-    limits: { minutes, gateRetries, checksMinutes, interruptionResumes },
+    limits,
     autonomy,
   };
+};
+
+/** The keys a `limits` block reads. */
+const LIMITS_KEYS = ["minutes", "gate_retries", "checks_minutes", "interruption_resumes"] as const;
+
+/**
+ * A `limits` mapping at `path`. `gate_retries` is required when `gateRetriesDefault` is undefined
+ * (a repo's block), else optional with that default (the machine's `default_project`).
+ */
+const limitsFrom = (
+  c: Checker,
+  limits: Mapping | undefined,
+  path: string,
+  gateRetriesDefault: number | undefined,
+): Limits | undefined => {
+  const minutes = c.optionalUint(limits, path, "minutes", DEFAULT_MINUTES, 1);
+  const gateRetries =
+    gateRetriesDefault === undefined
+      ? c.uint(c.child(limits, path, "gate_retries"), `${path}.gate_retries`, 0)
+      : c.optionalUint(limits, path, "gate_retries", gateRetriesDefault, 0);
+  const checksMinutes = c.optionalUint(limits, path, "checks_minutes", DEFAULT_CHECKS_MINUTES, 1);
+  const interruptionResumes = c.optionalUint(
+    limits,
+    path,
+    "interruption_resumes",
+    DEFAULT_INTERRUPTION_RESUMES,
+    0,
+  );
+  if (
+    minutes === undefined ||
+    gateRetries === undefined ||
+    checksMinutes === undefined ||
+    interruptionResumes === undefined
+  ) {
+    return undefined;
+  }
+  return { minutes, gateRetries, checksMinutes, interruptionResumes };
 };
 
 const MACHINE_KEYS = [
@@ -461,6 +509,7 @@ const MACHINE_KEYS = [
   "model_fallbacks",
   "prune_branches_after_days",
   "prune_branches_dry_run",
+  "default_project",
 ] as const;
 
 /**
@@ -532,6 +581,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const pruneBranchesDryRun = c.optionalBoolean(root, "", "prune_branches_dry_run", false);
+  const defaultProject = defaultProjectFrom(c, root);
   checkUnknownKeys(c, root);
 
   if (
@@ -547,7 +597,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     deployWaitMinutes === undefined ||
     modelFallbacks === undefined ||
     pruneBranchesAfterDays === undefined ||
-    pruneBranchesDryRun === undefined
+    pruneBranchesDryRun === undefined ||
+    defaultProject === undefined
   ) {
     return undefined;
   }
@@ -564,7 +615,31 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     modelFallbacks,
     pruneBranchesAfterDays,
     pruneBranchesDryRun,
+    ...(defaultProject !== null && { defaultProject }),
   };
+};
+
+const DEFAULT_PROJECT_KEYS = ["instructors", "limits"] as const;
+const DEFAULT_GATE_RETRIES = 2;
+
+/** `default_project`: null when absent, undefined when it has errors. */
+const defaultProjectFrom = (c: Checker, root: Mapping): DefaultProject | null | undefined => {
+  if (!Object.hasOwn(root, "default_project")) return null;
+  const path = "default_project";
+  const block = c.mapping(root[path], path);
+  if (block === undefined) return undefined;
+  const instructors = c.stringList(
+    c.child(block, path, "instructors"),
+    `${path}.instructors`,
+    false,
+  );
+  const limitsPath = `${path}.limits`;
+  const limitsBlock = Object.hasOwn(block, "limits") ? c.mapping(block["limits"], limitsPath) : {};
+  const limits = limitsFrom(c, limitsBlock, limitsPath, DEFAULT_GATE_RETRIES);
+  c.unknownFields(block, DEFAULT_PROJECT_KEYS, path);
+  if (limitsBlock !== undefined) c.unknownFields(limitsBlock, LIMITS_KEYS, limitsPath);
+  if (instructors === undefined || limits === undefined) return undefined;
+  return { instructors, limits };
 };
 
 /** `model_fallbacks`: model id to another model id; absent is none. */
