@@ -114,6 +114,8 @@ import {
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
+import { ComposerGoalBar } from "./ComposerGoalBar";
+import { presentComposerGoalBar } from "./presentComposerGoalBar";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
@@ -370,6 +372,8 @@ export interface ChatComposerProps {
   projectSelectionRequired: boolean;
 
   phase: SessionPhase;
+  /** The thread is working, including runless work the session phase does not show. */
+  threadWorking: boolean;
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
@@ -463,6 +467,8 @@ export interface ChatComposerProps {
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => void;
+  /** Sends a composer command without replacing the draft, such as `/goal resume`. */
+  onSendStandaloneCommand: (text: string, failureMessage: string) => Promise<void>;
   onResume: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -3079,6 +3085,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  const composerGoal = presentComposerGoalBar({
+    goal: props.activeThreadShell?.goal ?? null,
+    working: props.threadWorking,
+    prompt: activePendingProgress ? activePendingProgress.customAnswer : prompt,
+    canPauseResume: selectedProvider === "codex",
+  });
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
@@ -3196,6 +3208,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {composerGoal === null ? null : (
+              <ComposerGoalBar
+                model={composerGoal}
+                canOperate={canOperateThread}
+                onSendCommand={props.onSendStandaloneCommand}
+              />
+            )}
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
