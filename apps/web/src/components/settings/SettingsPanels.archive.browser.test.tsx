@@ -155,6 +155,8 @@ function openContextMenu(container: HTMLElement) {
 }
 
 it.each([
+  ["Unarchive all", "unarchiveThreads"],
+  ["Delete all", "deleteArchivedThreads"],
   ["Unarchive all in project", "unarchiveThreads"],
   ["Delete all in project", "deleteArchivedThreads"],
 ] as const)(

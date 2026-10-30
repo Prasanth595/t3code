@@ -138,6 +138,7 @@ export function ArchivedThreadsPanel() {
   })();
 
   type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];
+  const archivedThreads = archivedGroups.flatMap((group) => group.threads);
 
   const reportFailure = (result: AtomCommandResult<unknown, unknown> | null, title: string) => {
     if (result?._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -229,6 +230,34 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {archivedThreads.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
+          <p className="text-sm text-muted-foreground">
+            {archivedThreads.length} archived thread{archivedThreads.length === 1 ? "" : "s"}
+          </p>
+          <div className="flex items-center gap-2">
+            {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
+              <Button
+                key={action}
+                type="button"
+                variant={action === "delete" ? "destructive-outline" : "outline"}
+                size="sm"
+                disabled={pendingKeys.size > 0}
+                onClick={() =>
+                  void handleBulkAction(
+                    action,
+                    archivedThreads,
+                    archivedGroups.length === 1 ? ` in ${archivedGroups[0]!.title}` : "",
+                  )
+                }
+              >
+                <Icon />
+                <span>{label} all</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
