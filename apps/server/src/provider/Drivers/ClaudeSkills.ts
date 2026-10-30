@@ -104,7 +104,6 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-/** Holds managed-settings.json and the managed `.claude/skills`. */
 function claudeManagedDirectory(
   path: Path.Path,
   platform: NodeJS.Platform,
@@ -469,7 +468,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   );
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
-    // Managed skills reach every project, like user skills.
     ...(managedDirectory
       ? [{ directory: path.join(managedDirectory, ".claude", "skills"), scope: "user" as const }]
       : []),

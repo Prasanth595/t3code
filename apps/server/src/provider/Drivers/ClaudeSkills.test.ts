@@ -450,6 +450,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         "deploy",
         ["---", "name: deploy", "description: Managed deploy.", "---"].join("\n"),
       );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"skillOverrides":{"deploy":"off"}}',
+      );
+      yield* fs.writeFileString(
+        path.join(programFiles, "ClaudeCode", "managed-settings.json"),
+        '{"skillOverrides":{"deploy":"on"}}',
+      );
       const managedSkills = yield* discoverClaudeSkills({ homePath: configDir }, workspace, {
         ProgramFiles: programFiles,
       });
