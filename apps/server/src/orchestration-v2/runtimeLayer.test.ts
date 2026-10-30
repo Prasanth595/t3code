@@ -7621,6 +7621,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
+    "unrelated-recovery",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -7776,6 +7777,28 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         threadId,
         limitRecovery: arm.limitRecovery,
       };
+      if (scenario === "unrelated-recovery") {
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:unrelated-window"),
+              type: "thread.metadata-updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...current.thread,
+                limitRecovery: {
+                  runId: RunId.make("recovery:old-provider-run"),
+                  resetAt: DateTime.formatIso(DateTime.add(now, { hours: 4 })),
+                  autoResume: true,
+                  waitForReset: true,
+                },
+              },
+            },
+          ],
+        });
+      }
       const stopBeforeArm =
         scenario === "stop-before-arm" || scenario === "stop-before-arm-mismatched-recovery";
       if (stopBeforeArm) {
@@ -8089,6 +8112,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "unrelated-recovery" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8100,6 +8124,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "unrelated-recovery" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||

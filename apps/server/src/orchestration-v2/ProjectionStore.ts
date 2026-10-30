@@ -1403,6 +1403,26 @@ const waitsOnUser = (item: OrchestrationV2TurnItem, liveRunIds: ReadonlySet<RunI
   item.type === "link_request" ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
+function shellErrorSummary(
+  failure: Parameters<typeof threadErrorSummary>[0],
+  sessionError: string | null,
+  thread: OrchestrationV2AppThread,
+  runId: RunId | null,
+) {
+  const summary = threadErrorSummary(failure, sessionError);
+  const recovery = thread.limitRecovery;
+  return {
+    ...summary,
+    usageLimitResetAt:
+      summary.usageLimitResetAt ??
+      (summary.lastErrorClass === "usage_limit" &&
+      recovery?.runId === runId &&
+      recovery.waitForReset === true
+        ? recovery.resetAt
+        : null),
+  };
+}
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
@@ -1513,9 +1533,11 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    ...threadErrorSummary(
+    ...shellErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
+      projection.thread,
+      latestRun?.id ?? null,
     ),
     pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
@@ -6476,9 +6498,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.activity_run_status === "waiting"
               ? row.activity_run_status
               : null,
-          ...threadErrorSummary(
+          ...shellErrorSummary(
             terminalFailureItem?.type === "error" ? terminalFailureItem.failure : null,
             row.last_error,
+            thread,
+            latestRunId,
           ),
           pendingRuntimeRequest,
           latestUserMessageAt:

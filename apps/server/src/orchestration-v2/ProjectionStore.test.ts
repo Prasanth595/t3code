@@ -1047,6 +1047,12 @@ it.effect("SQL limit recovery loads armed threads before their reset", () =>
       payload: { ...failure, failure: { ...failure.failure!, resetAt: null } },
     });
     assert.equal((yield* candidate)?.usageLimitResetAt, retry.resetAt);
+    assert.equal((yield* store.getThreadShell(threadId))?.usageLimitResetAt, retry.resetAt);
+    assert.equal(
+      ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+        .usageLimitResetAt,
+      retry.resetAt,
+    );
     yield* updateThread("no-reset-unarmed", {});
     assert.isUndefined(yield* candidate);
     yield* updateThread("retry-cancelled", { limitRecovery: { ...retry, autoResume: false } });
