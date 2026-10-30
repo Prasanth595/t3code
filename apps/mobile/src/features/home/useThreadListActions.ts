@@ -689,7 +689,7 @@ export function useThreadListActions(): {
   const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
     const plan = planThreadMove(
-      appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+      appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom),
       thread,
       direction,
     );
@@ -757,7 +757,7 @@ export function useThreadListActions(): {
     direction: ThreadMoveDestination,
   ) => {
     const shells = withThreadDrafts(
-      appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+      appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom),
       drafts,
     );
     const plan = planThreadMove(shells, thread, direction);

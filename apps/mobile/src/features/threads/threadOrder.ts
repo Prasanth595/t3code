@@ -392,7 +392,16 @@ export function withThreadDrafts<T extends EnvironmentThreadShell>(
   if (drafts.size === 0) return threads;
   return threads.map((thread) => {
     const patch = drafts.get(rowId(thread));
-    return patch === undefined ? thread : { ...thread, ...patch };
+    if (patch === undefined) return thread;
+    const draft = { ...thread, ...patch };
+    if (draft.pinnedAt != null && thread.pinnedAt == null)
+      return {
+        ...draft,
+        settledOverride: thread.settledOverride === "settled" ? "active" : draft.settledOverride,
+        settledAt: thread.settledOverride === "settled" ? null : draft.settledAt,
+        snoozedUntil: null,
+      };
+    return draft;
   });
 }
 
@@ -407,14 +416,14 @@ export function threadArrangementCommands(
   draft: EnvironmentThreadShell,
 ): ThreadArrangementCommand[] {
   // Settle clears the pin and both keys; pin clears the parked states.
+  if (draft.pinnedAt != null && saved.pinnedAt == null)
+    return [{ type: "pin", orderKey: draft.pinOrderKey }];
   if (draft.settledOverride === "settled")
     return saved.settledOverride === "settled" &&
       saved.pinnedAt === draft.pinnedAt &&
       saved.snoozedUntil === draft.snoozedUntil
       ? []
       : [{ type: "settle" }];
-  if (draft.pinnedAt != null && saved.pinnedAt == null)
-    return [{ type: "pin", orderKey: draft.pinOrderKey }];
   const commands: ThreadArrangementCommand[] = [];
   if (draft.pinnedAt == null && saved.pinnedAt != null) commands.push({ type: "unpin" });
   if (saved.settledOverride === "settled") commands.push({ type: "unsettle" });

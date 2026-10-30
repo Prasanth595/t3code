@@ -158,22 +158,30 @@ describe("thread arrangement drafts", () => {
     });
   });
 
-  it.each(["settled", null] as const)("pins a thread settled before saving (%s), carrying its slot", (settledOverride) => {
-    const saved = [thread("a", { settledOverride, settledAt: NOW })];
-    const draft = applyThreadMove(
-      saved,
-      key(saved[0]!),
-      {
-        section: "pinned",
-        assignments: [{ id: key(saved[0]!), orderKey: "p3" }],
-      },
-      NOW,
-    );
+  it.each(["settled", null] as const)(
+    "pins a thread settled before saving (%s), carrying its slot",
+    (settledOverride) => {
+      const saved = [thread("a", { settledOverride, settledAt: NOW })];
+      const draft = applyThreadMove(
+        saved,
+        key(saved[0]!),
+        {
+          section: "pinned",
+          assignments: [{ id: key(saved[0]!), orderKey: "p3" }],
+        },
+        NOW,
+      );
 
-    const live = [{ ...saved[0]!, settledOverride: "settled" as const }];
-    const shown = withThreadDrafts(live, recordThreadMove(new Map(), saved, draft));
-    expect(commandsFor(live, shown)).toEqual({ a: [{ type: "pin", orderKey: "p3" }] });
-  });
+      const live = [{ ...saved[0]!, settledOverride: "settled" as const }];
+      const shown = withThreadDrafts(live, recordThreadMove(new Map(), saved, draft));
+      expect(shown[0]).toMatchObject({
+        pinnedAt: NOW,
+        settledOverride: "active",
+        snoozedUntil: null,
+      });
+      expect(commandsFor(live, shown)).toEqual({ a: [{ type: "pin", orderKey: "p3" }] });
+    },
+  );
 
   it("settles without key writes, even after earlier draft moves", () => {
     const saved = [thread("a", { pinnedAt: NOW, pinOrderKey: "p0" })];
