@@ -932,17 +932,17 @@ const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
     return false;
   }
   const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
-  // Not null: the marker is there and fresh.
   const wait = deployWait(pending, world.deploySnooze(), world.nowMs());
-  const snoozedUntil = wait === null ? null : wait.snoozedUntilMs;
-  if (snoozedUntil !== null) {
+  // Null only for a missing or stale marker, which returned above.
+  if (wait === null) return false;
+  if (wait.snoozedUntilMs !== null) {
     pass.line(
-      `deploy snoozed until ${formatTs(snoozedUntil)}: ${build} is waiting; claiming as normal`,
+      `deploy snoozed until ${formatTs(wait.snoozedUntilMs)}: ${build} is waiting; claiming as normal`,
     );
     yield* clear;
     return false;
   }
-  const waited = Math.max(0, world.nowMs() - (wait?.clockFromMs ?? pending.sinceMs));
+  const waited = Math.max(0, world.nowMs() - wait.clockFromMs);
   pass.line(
     `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
   );

@@ -150,17 +150,22 @@ export const loadDeploySnooze = (dataDir: string): number | null => {
   return /^[0-9]{1,12}$/.test(text) ? Number(text) * 1000 : null;
 };
 
-/** A build waiting to be installed, as the pass and the status take it. */
-export interface DeployWait {
-  readonly pending: PendingDeploy;
-  /** The end of the snooze in force, or null. */
-  readonly snoozedUntilMs: number | null;
-  /**
-   * When `deploy_wait_minutes` counts from: the first wait, or the end of a snooze that has ended
-   * when that is later. Null while a snooze is in force.
-   */
-  readonly clockFromMs: number | null;
-}
+/**
+ * A build waiting to be installed, as the pass and the status take it: snoozed until
+ * `snoozedUntilMs`, or counting `deploy_wait_minutes` from `clockFromMs`, the first wait or the
+ * end of a snooze that has ended when that is later.
+ */
+export type DeployWait =
+  | {
+      readonly pending: PendingDeploy;
+      readonly snoozedUntilMs: number;
+      readonly clockFromMs: null;
+    }
+  | {
+      readonly pending: PendingDeploy;
+      readonly snoozedUntilMs: null;
+      readonly clockFromMs: number;
+    };
 
 /**
  * The waiting build from the two markers as of `nowMs`: null when nothing is pending or the marker
