@@ -1004,7 +1004,7 @@ export function decodeReviewDecisionsJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const enterprise = decoded.success.data.metadata?.enterprise === true;
+  const enterprise = decoded.success.data.metadata?.enterprise;
   const decisions = new Map<number, PullRequestReviewDecision | null>();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const number = Number(node?.iid);
@@ -1016,6 +1016,7 @@ export function decodeReviewDecisionsJson(
     )
       continue;
     const approvals = node.approvedBy.nodes.length;
+    if (node.approved === false && approvals === 0 && enterprise == null) continue;
     decisions.set(
       number,
       node.approved === false && (enterprise || approvals > 0)

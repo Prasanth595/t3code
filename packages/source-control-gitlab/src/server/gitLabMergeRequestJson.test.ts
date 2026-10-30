@@ -623,11 +623,14 @@ describe("decodeRepositoryBlobsJson", () => {
 });
 
 describe("decodeReviewDecisionsJson", () => {
-  const decisionsOf = (enterprise: boolean, nodes: ReadonlyArray<unknown>) =>
+  const decisionsOf = (enterprise: boolean | null, nodes: ReadonlyArray<unknown>) =>
     expectSuccess(
       decodeReviewDecisionsJson(
         JSON.stringify({
-          data: { metadata: { enterprise }, project: { mergeRequests: { nodes } } },
+          data: {
+            metadata: enterprise === null ? null : { enterprise },
+            project: { mergeRequests: { nodes } },
+          },
         }),
       ),
     );
@@ -678,6 +681,9 @@ describe("decodeReviewDecisionsJson", () => {
 
   it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
     expect([...decisionsOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
+    expect([
+      ...decisionsOf(null, [{ iid: "7", approved: false, approvedBy: approvedBy() }]),
+    ]).toEqual([]);
     expect([
       ...decisionsOf(true, [
         { iid: "7", approved: null, approvedBy: approvedBy("julius") },
