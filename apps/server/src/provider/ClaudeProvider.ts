@@ -641,7 +641,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       : undefined;
   const oauthUsage = oauthResult && Result.isSuccess(oauthResult) ? oauthResult.success : undefined;
   const usage = oauthUsage?.usage ?? capabilities.usage;
-  const usageCheckedAt = oauthUsage ? checkedAt : (capabilities.usageCheckedAt ?? checkedAt);
+  const usageCheckedAt = oauthUsage
+    ? DateTime.formatIso(yield* DateTime.now)
+    : (capabilities.usageCheckedAt ?? checkedAt);
   const usageFailed = oauthResult && Result.isFailure(oauthResult) && !usage?.rate_limits_available;
   // Only the SDK's filtered model list identifies the streamed overage bucket.
   if (scopedLimitNames && capabilities.usage) {

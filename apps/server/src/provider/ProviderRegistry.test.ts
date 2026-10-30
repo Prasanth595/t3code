@@ -40,6 +40,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 import { type ClaudeOAuthUsage, ClaudeOAuthUsageError } from "./claudeResetCredits.ts";
 import {
   claudeOAuthUsageToResponse,
@@ -2445,7 +2446,7 @@ it.layer(
           rate_limits: { five_hour: { utilization: 10, resets_at: null } },
         };
         const check = (
-          overrides: Partial<TestClaudeCapabilities>,
+          overrides: Partial<TestClaudeCapabilities & { usageCheckedAt: string }>,
           oauthUsage?: Effect.Effect<ClaudeOAuthUsage | undefined, ClaudeOAuthUsageError>,
           usage: ClaudeOAuthUsage["usage"] = sdkUsage,
         ) =>
@@ -2513,6 +2514,23 @@ it.layer(
           [10],
         );
         assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
+
+        const sdkCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        const freshOAuth = yield* check(
+          { subscriptionType: "max", usageCheckedAt: sdkCheckedAt },
+          TestClock.adjust("1 second").pipe(Effect.as(oauthUsage)),
+        );
+        const cachedSdk = yield* check(
+          { subscriptionType: "max", usageCheckedAt: sdkCheckedAt },
+          Effect.fail(new ClaudeOAuthUsageError({ cause: new Error("request failed") })),
+        );
+        assert.deepStrictEqual(
+          resolveUsageLimitsAfterProbe({
+            published: freshOAuth.usageLimits,
+            probed: cachedSdk.usageLimits,
+          })?.windows.map((window) => window.usedPercent),
+          [42],
+        );
 
         const scopedUsage = (models: Array<string>) =>
           claudeOAuthUsageToResponse({
