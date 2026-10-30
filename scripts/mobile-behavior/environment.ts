@@ -235,7 +235,9 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
 
   const command = Effect.map(uuid, CommandId.make);
   const projection = (threadId: ThreadId) =>
-    client["orchestration.getThreadProjection"]({ threadId }).pipe(Effect.map(knownThreadProjection));
+    client["orchestration.getThreadProjection"]({ threadId }).pipe(
+      Effect.map(knownThreadProjection),
+    );
 
   const create = Effect.fn("environment.create")(function* (
     title: string,
