@@ -1,12 +1,9 @@
-import { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   totalTokens,
   type ProviderUsageReader,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
@@ -14,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { OpenCodeSettings } from "../settings.ts";
@@ -79,14 +76,14 @@ function parseOpenCodeMessage(
   };
 }
 
-export interface CachedOpenCodeRow {
+interface CachedOpenCodeRow {
   readonly fingerprint: string | null;
   readonly created: number | null;
   readonly record: UsageRecord | null;
 }
 
-/** Parsed rows by `${databasePath}\0${table}`, then rowid; changed tables get new maps. */
-export type OpenCodeUsageCache = Map<string, ReadonlyMap<number, CachedOpenCodeRow>>;
+/** Parsed rows by `${databasePath}\0${table}`, then rowid. */
+type OpenCodeUsageCache = Map<string, ReadonlyMap<number, CachedOpenCodeRow>>;
 
 interface ListedRow {
   readonly row_id: number;
@@ -169,8 +166,19 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     found = true;
     const file = { path: path.join(root, name), records: [] as UsageRecord[] };
     files.push(file);
-    yield* Effect.gen(function* () {
+    const readIdentity = fileSystem.stat(file.path).pipe(
+      Effect.map((stat) =>
+        Option.isNone(stat.ino) && Option.isNone(stat.birthtime)
+          ? null
+          : `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}`,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    const beforeOpen = yield* readIdentity;
+    const readDatabase = Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const identity = yield* readIdentity;
+      const cacheable = identity !== null && identity === beforeOpen;
       // Fail promptly on live-writer locks instead of stalling the server.
       yield* sql.unsafe("PRAGMA busy_timeout = 100");
       const tables = new Set(
@@ -193,13 +201,19 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const previous = cache?.rows.get(key);
         const hit = (row: ListedRow) =>
           row.fingerprint !== null && previous?.get(row.row_id)?.fingerprint === row.fingerprint;
-        // Select ids through time indexes; a rowid sweep (or ORDER BY rowid) reads every row. One
-        // statement also excludes mid-scan appends. octet_length reads the record header only;
-        // the length guards writers that keep time_updated.
+        // Use time indexes for the window; octet_length avoids loading overflow pages.
+        // OpenCode updates time_updated when a message changes.
+        const fingerprint =
+          columns.has("time_updated") && cacheable
+            ? `CASE WHEN time_updated IS NOT NULL THEN json_array(?, id, session_id, ${timestamp}, time_updated, octet_length(data)) END`
+            : "NULL";
         const listed = (yield* sql.unsafe<ListedRow>(
-          `SELECT rowid AS row_id, ${columns.has("time_updated") ? "time_updated || ':' || octet_length(data)" : "NULL"} AS fingerprint
+          `SELECT rowid AS row_id, ${fingerprint} AS fingerprint
            FROM ${table} ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
-          timestamp === "NULL" ? [] : [sinceMs],
+          [
+            ...(columns.has("time_updated") && cacheable ? [identity] : []),
+            ...(timestamp === "NULL" ? [] : [sinceMs]),
+          ],
         )).toSorted((a, b) => a.row_id - b.row_id);
         const misses = listed.filter((row) => !hit(row));
         const fetched = new Map<number, Omit<CachedOpenCodeRow, "fingerprint">>();
@@ -234,7 +248,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         }
         const next = new Map<number, CachedOpenCodeRow>();
         for (const row of listed) {
-          // The listed fingerprint is never newer than fetched data, so a race only re-reads.
           const parsed = fetched.get(row.row_id);
           const entry = parsed
             ? { fingerprint: row.fingerprint, ...parsed }
@@ -253,10 +266,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
             next.set(rowId, entry);
           }
         }
-        // Without new rows, an equally large table only holds unchanged previous entries.
-        if (fetched.size > 0 || next.size !== (previous?.size ?? 0)) cache.rows.set(key, next);
+        cache.rows.set(key, next);
       }
-    }).pipe(
+    });
+    yield* Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(readDatabase)).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
       Effect.catchTags({
         SqlError: () => {
@@ -362,41 +375,10 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
   return [...canonical];
 });
 
-export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path | ProviderHost.ProviderHost;
+export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 
-// Rename when parseOpenCodeMessage output or the fingerprint changes; a bad file reads as empty.
-const CACHE_FILE_NAME = "usage-opencode-cache-v1.json";
-// Tuples in plain records; ReadonlyMap codecs made encode and decode several times slower.
-const CacheFile = Schema.fromJsonString(
-  Schema.Record(
-    Schema.String,
-    Schema.Array(
-      Schema.Tuple([
-        Schema.Number,
-        Schema.NullOr(Schema.String),
-        Schema.NullOr(Schema.Number),
-        Schema.NullOr(
-          Schema.Struct({
-            provider: UsageProviderKind,
-            timestampMs: Schema.Number,
-            model: Schema.String,
-            sessionId: Schema.String,
-            totals: UsageTokenTotals,
-            reportedCostUsd: Schema.NullOr(Schema.Number),
-            speed: Schema.Literals(["standard", "fast", "ultrafast"]),
-            dedupeKey: Schema.NullOr(Schema.String),
-          }),
-        ),
-      ]),
-    ),
-  ),
-);
-const decodeCacheFile = Schema.decodeUnknownEffect(CacheFile);
-const encodeCacheFile = Schema.encodeEffect(CacheFile);
-// Parsed rows by cache file, so refreshes and restarts re-read only rows that changed.
-const rowCaches = new Map<string, OpenCodeUsageCache>();
-// Cache files whose last write failed; the next scan writes them again.
-const unsavedCachePaths = new Set<string>();
+const rowCache: OpenCodeUsageCache = new Map();
+const scanLock = Semaphore.makeUnsafe(1);
 
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
@@ -406,24 +388,6 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
     windowStartMs,
     retentionCutoffMs,
   }) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const cachePath = path.join((yield* ProviderHost.ProviderHost).paths.stateDir, CACHE_FILE_NAME);
-    if (!rowCaches.has(cachePath)) {
-      const loaded = yield* fileSystem.readFileString(cachePath).pipe(
-        Effect.flatMap(decodeCacheFile),
-        Effect.orElseSucceed(() => ({})),
-      );
-      const tables = Object.entries(loaded).map(([key, rows]) => {
-        const entries = rows.map(([id, fingerprint, created, record]) => {
-          return [id, { fingerprint, created, record }] as const;
-        });
-        return [key, new Map(entries)] as const;
-      });
-      if (!rowCaches.has(cachePath)) rowCaches.set(cachePath, new Map(tables));
-    }
-    const rowCache = rowCaches.get(cachePath)!;
-    const before = new Map(rowCache);
     const roots = new Set<string>();
     for (const instance of instances) {
       for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
@@ -441,24 +405,10 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
         ),
       { concurrency: "unbounded" },
     );
-    if (
-      unsavedCachePaths.has(cachePath) ||
-      rowCache.size !== before.size ||
-      rowCache.entries().some(([key, rows]) => before.get(key) !== rows)
-    ) {
-      unsavedCachePaths.add(cachePath);
-      const tables = rowCache.entries().map(([key, rows]) => {
-        const entries = rows
-          .entries()
-          .map(([id, row]) => [id, row.fingerprint, row.created, row.record] as const);
-        return [key, entries.toArray()] as const;
-      });
-      yield* encodeCacheFile(Object.fromEntries(tables)).pipe(
-        Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
-        Effect.tap(() => Effect.sync(() => unsavedCachePaths.delete(cachePath))),
-        Effect.ignore({ log: true }),
-      );
+    const paths = new Set(scans.flatMap((scan) => scan.files?.map((file) => file.path) ?? []));
+    for (const key of rowCache.keys()) {
+      if (!paths.has(key.slice(0, key.indexOf("\0")))) rowCache.delete(key);
     }
     return scans;
-  }),
+  }, scanLock.withPermit),
 };

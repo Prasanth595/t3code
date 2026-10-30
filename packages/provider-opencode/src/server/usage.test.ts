@@ -1,8 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -46,6 +44,7 @@ describe("readOpenCodeUsage", () => {
       const path = yield* Path.Path;
       const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-large-test-" });
       const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe("PRAGMA journal_mode = WAL");
       yield* db.unsafe(
         "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
       );
@@ -71,6 +70,9 @@ describe("readOpenCodeUsage", () => {
       yield* insert(302, "invalid", "{invalid");
       yield* insert(303, "msg-0", data);
 
+      const writer = new NodeSqlite.DatabaseSync(path.join(dir, "opencode.db"));
+      yield* Effect.addFinalizer(() => Effect.sync(() => writer.close()));
+      let changed = false;
       let largestRawResult = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
@@ -85,6 +87,12 @@ describe("readOpenCodeUsage", () => {
               0,
             );
             largestRawResult = Math.max(largestRawResult, rawSize);
+            if (!changed && rawSize > 0) {
+              changed = true;
+              writer
+                .prepare("UPDATE message SET data = ? WHERE id = ?")
+                .run(JSON.stringify({ ...message, tokens: { input: 900, output: 20 } }), "msg-129");
+            }
             return rows;
           }),
         ),
@@ -100,6 +108,12 @@ describe("readOpenCodeUsage", () => {
       assert.strictEqual(
         records.reduce((total, record) => total + record.totals.uncachedInputTokens, 0),
         13000,
+      );
+      assert.strictEqual(
+        (yield* readOpenCodeUsage(dir, sinceMs)).files
+          .flatMap((file) => file.records)
+          .find((record) => record.dedupeKey === "opencode:msg-129")?.totals.uncachedInputTokens,
+        900,
       );
       assert.isAbove(largestRawResult, 0);
       assert.isBelow(largestRawResult, 6 * 1024 * 1024);
@@ -341,7 +355,6 @@ describe("openCodeUsageReader", () => {
           awaitRefresh: true,
         })
         .pipe(
-          Effect.provide(TestProviderHost.layer()),
           Effect.provideService(HostProcess.Environment, {}),
           Effect.provideService(HostProcess.HomeDirectory, home),
         );
@@ -351,119 +364,6 @@ describe("openCodeUsageReader", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
-
-  it.effect("restores parsed rows after a restart and ignores unreadable cache files", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "usage-reader-persist-test-",
-      });
-      const db = yield* openDatabase(path.join(dir, "opencode.db"));
-      yield* db.unsafe(
-        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
-      );
-      const data = JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 7 } });
-      yield* db.unsafe("INSERT INTO message VALUES ('a', 's', 1, 1, ?)", [data]);
-      const counts = yield* countQueries;
-      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
-      const reader = openCodeUsageReader;
-      const scan = (cacheFile?: string) =>
-        Effect.gen(function* () {
-          const host = yield* ProviderHost.ProviderHost;
-          const cachePath = path.join(host.paths.stateDir, "usage-opencode-cache-v1.json");
-          if (cacheFile !== undefined) yield* fileSystem.writeFileString(cachePath, cacheFile);
-          counts.dataRows = 0;
-          const [source] = yield* reader.scan({
-            instances: [
-              {
-                instanceId: ProviderInstanceId.make("opencode"),
-                config: undefined,
-                environment: { OPENCODE_DATA_DIR: dir },
-                configured: true,
-              },
-            ],
-            settings: DEFAULT_SERVER_SETTINGS,
-            windowStartMs: 0,
-            retentionCutoffMs: 0,
-            awaitRefresh: true,
-          });
-          const records = source?.files?.flatMap((file) => file.records);
-          return {
-            records,
-            dataRows: counts.dataRows,
-            saved: yield* fileSystem.readFileString(cachePath),
-          };
-        }).pipe(Effect.provide(TestProviderHost.layer()));
-
-      const first = yield* scan();
-      assert.strictEqual(first.records?.[0]?.totals.uncachedInputTokens, 7);
-      // Each host has its own state dir, so seeding its cache file stands in for a restart.
-      assert.deepStrictEqual(yield* scan(first.saved), { ...first, dataRows: 0 });
-      for (const bad of ["{", '[["key",[[1,{"fingerprint":1}]]]]']) {
-        assert.deepStrictEqual(yield* scan(bad), first);
-      }
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("retries a failed cache write on the next unchanged scan", () => {
-    let failures = 1;
-    const flakyFileSystem = Layer.effect(
-      FileSystem.FileSystem,
-      Effect.map(FileSystem.FileSystem, (inner) => ({
-        ...inner,
-        // Writing under a missing directory fails with a real PlatformError.
-        writeFileString: (target: string, contents: string) =>
-          failures-- > 0
-            ? inner.writeFileString(`${target}/missing/file`, contents)
-            : inner.writeFileString(target, contents),
-      })),
-    ).pipe(Layer.provide(NodeServices.layer));
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "usage-reader-retry-test-",
-      });
-      const db = yield* openDatabase(path.join(dir, "opencode.db"));
-      yield* db.unsafe(
-        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
-      );
-      yield* db.unsafe("INSERT INTO message VALUES ('a', 's', 1, 1, ?)", [
-        JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 7 } }),
-      ]);
-      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
-      const reader = openCodeUsageReader;
-      const host = yield* ProviderHost.ProviderHost;
-      const cachePath = path.join(host.paths.stateDir, "usage-opencode-cache-v1.json");
-      const scan = reader.scan({
-        instances: [
-          {
-            instanceId: ProviderInstanceId.make("opencode"),
-            config: undefined,
-            environment: { OPENCODE_DATA_DIR: dir },
-            configured: true,
-          },
-        ],
-        settings: DEFAULT_SERVER_SETTINGS,
-        windowStartMs: 0,
-        retentionCutoffMs: 0,
-        awaitRefresh: true,
-      });
-      yield* scan;
-      assert.isFalse(yield* fileSystem.exists(cachePath));
-      // The rows are unchanged since the failed write, so only the retry can save them.
-      yield* scan;
-      assert.isTrue(yield* fileSystem.exists(cachePath));
-    }).pipe(
-      Effect.provide(
-        TestProviderHost.layer().pipe(
-          Layer.provideMerge(flakyFileSystem),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      ),
-    );
-  });
 });
 
 describe("readOpenCodeUsage cache", () => {
@@ -536,6 +436,23 @@ describe("readOpenCodeUsage cache", () => {
       cache.retentionCutoffMs = sinceMs;
       yield* read(sinceMs);
       assert.strictEqual((yield* read(sinceMs - 2 * 86_400_000))[0], 1);
+      yield* db.unsafe("DELETE FROM message WHERE id = 'b'");
+      yield* insert("d", sinceMs + 1, 40);
+      assert.deepStrictEqual(yield* read(sinceMs), [1, "opencode:a=5", "opencode:d=40"]);
+      yield* db.unsafe("UPDATE message SET session_id = 'new-session' WHERE id = 'a'");
+      assert.strictEqual((yield* read(sinceMs))[0], 1);
+      yield* db.unsafe("UPDATE message SET time_created = time_created + 1 WHERE id = 'a'");
+      assert.strictEqual((yield* read(sinceMs))[0], 1);
+      const replacement = yield* openDatabase(path.join(dir, "replacement.db"));
+      yield* replacement.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+      );
+      yield* replacement.unsafe(
+        "INSERT INTO message (rowid, id, session_id, time_created, time_updated, data) SELECT 2, 'a', 'new-session', ?, ?, ?",
+        [sinceMs + 1, sinceMs + 1, data(9)],
+      );
+      yield* fileSystem.rename(path.join(dir, "replacement.db"), path.join(dir, "opencode.db"));
+      assert.deepStrictEqual(yield* read(sinceMs), [1, "opencode:a=9"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
