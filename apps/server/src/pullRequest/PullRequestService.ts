@@ -57,6 +57,7 @@ import {
   type PullRequestRoutingIdentityResult,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
+  type PullRequestReviewerCandidatesInput,
   type PullRequestReviewerRequestInput,
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
@@ -265,7 +266,7 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReactionInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly reviewerCandidates: (
-      input: PullRequestRef,
+      input: PullRequestReviewerCandidatesInput,
     ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestError>;
     readonly requestReviewers: (
       input: PullRequestReviewerRequestInput,
@@ -2389,6 +2390,7 @@ export const make = Effect.gen(function* () {
                         repository: project.repository,
                         host: project.host,
                         number: input.number,
+                        query: input.query,
                       })
                       .pipe(Effect.mapError(toPullRequestError("reviewerCandidates")))
                   : Effect.fail(

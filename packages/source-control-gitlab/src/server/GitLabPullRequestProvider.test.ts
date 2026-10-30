@@ -63,6 +63,7 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
