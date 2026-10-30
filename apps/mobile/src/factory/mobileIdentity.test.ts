@@ -84,6 +84,7 @@ describe("fork mobile identity", () => {
     const sharing = pluginOptions(config, "expo-sharing").ios as Record<string, unknown>;
     expect(sharing.extensionBundleIdentifier).toBe(`${expected.id}.sharing`);
     expect(sharing.appGroupId).toBe(`group.${expected.id}`);
+    expect(config.plugins).toContain("./src/factory/withExpoObserveSwift5.cjs");
 
     expect(config.updates?.enabled).toBe(false);
     expect(config.updates?.url).toBeUndefined();
