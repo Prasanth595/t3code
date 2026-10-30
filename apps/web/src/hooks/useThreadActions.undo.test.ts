@@ -54,10 +54,7 @@ const threadShell = vi.hoisted(() => ({
 const shellLoaded = vi.hoisted(() => ({ current: true }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
+  readEnvironmentServerConfigLoaded: () => true,
   readThreadShell: () => (shellLoaded.current ? threadShell : null),
 }));
 vi.mock("../state/use-atom-command", () => ({
