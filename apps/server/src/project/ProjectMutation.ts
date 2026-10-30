@@ -53,12 +53,7 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
   }
 });
 
-/**
- * A deleted project's clone record goes with it. The record lives only in
- * memory and nothing else removes it, so a client that disconnects after the
- * delete commits must not skip the discard: the stale "Failed to clone" banner
- * would outlive the project, and Remove could no longer clear it.
- */
+// A disconnect after deletion commits must not leave the in-memory clone record behind.
 export const mutateProjectWithClone = Effect.fn("mutateProjectWithClone")(function* (
   projects: ProjectMutations,
   clones: Pick<ProjectCloneTracker["Service"], "discard">,
