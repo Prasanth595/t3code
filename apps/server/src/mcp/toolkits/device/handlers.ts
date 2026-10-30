@@ -4,6 +4,7 @@ import {
   type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
+  type DeviceSession,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -314,6 +315,40 @@ const handlers = {
               .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: input.hostId })
               .pipe(mapLocateErrors);
       const hostId = Option.isSome(open) ? open.value.hostId : input.hostId;
+      if (input.shutdown === true) {
+        // Like devices.close, an omitted hostId matches a session on any host.
+        const matches = (session: DeviceSession) =>
+          (input.hostId === undefined || session.hostId === input.hostId) &&
+          (input.deviceId === undefined || session.deviceId === input.deviceId);
+        const recorded = (yield* devices.sessionsForThread(scope.thread.threadId)).some(matches);
+        // Sessions live in memory, so a restart forgets them and close alone would turn nothing off.
+        if (!recorded) {
+          if (input.deviceId === undefined) {
+            return yield* new DeviceToolUnavailableError({
+              reason:
+                "No device is open in this thread, so nothing was turned off. Pass deviceId to turn a device off.",
+            });
+          }
+          const openElsewhere = new DeviceToolUnavailableError({
+            reason: `Device ${input.deviceId}${input.hostId === undefined ? "" : ` on host ${input.hostId}`} is open in another thread, so it was not turned off.`,
+          });
+          const state = yield* devices.list;
+          if (state.sessions.some(matches)) return yield* openElsewhere;
+          const target = yield* pickDevice(state, input);
+          // The service rechecks under its session lock, since another thread may open it meanwhile.
+          if (
+            target.booted &&
+            !(yield* devices.shutdownUnlessOpen({
+              hostId: target.hostId,
+              deviceId: target.id,
+              platform: target.platform,
+            }))
+          ) {
+            return yield* openElsewhere;
+          }
+          return {};
+        }
+      }
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(hostId === undefined ? {} : { hostId }),
