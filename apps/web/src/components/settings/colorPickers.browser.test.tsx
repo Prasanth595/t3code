@@ -216,6 +216,12 @@ describe("provider accent color picker", () => {
     await screen.echo("#00ff00");
     await screen.echo("#ff0000");
 
-    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(255, 0, 0)");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#ff0000");
+    await screen.echo("");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#2563eb");
+    await userEvent.click(page.getByRole("button", { name: "Add color", exact: true }));
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#2563eb");
+
+    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(37, 99, 235)");
   });
 });
