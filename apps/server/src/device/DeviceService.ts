@@ -283,7 +283,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const shutdownClaims = new Map<string, number>();
   const shutdownsInFlight = new Map<string, number>();
   const opensInFlight = new Map<string, number>();
-  const deviceKey = (hostId: DeviceHostId, deviceId: DeviceId) => `${hostId}\u0000${deviceId}`;
+  // Android discovery uses the AVD name while off and a serial while running.
+  const deviceKey = (device: DeviceSummary) =>
+    `${device.hostId}\u0000${device.platform}\u0000${device.platform === "android" && !device.physical ? device.name : device.id}`;
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
       enabled: value.enableDeviceSupport,
@@ -759,7 +761,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         }
       }
       const openingDevice = device;
-      const openingKey = deviceKey(host.id, device.id);
+      const openingKey = deviceKey(device);
       return yield* Effect.acquireUseRelease(
         lifecycleLock.withPermit(
           Effect.gen(function* () {
@@ -831,7 +833,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                     hostLabel: host.label,
                     reason: "Device support was turned off while the device was opening.",
                   });
-                const key = deviceKey(host.id, device.id);
+                const key = deviceKey(device);
                 if (shutdownsInFlight.has(key) || (shutdownClaims.get(key) ?? 0) > openedEpoch)
                   return yield* new DeviceHostUnavailableError({
                     hostId: host.id,
@@ -942,7 +944,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     "DeviceService.shutdownUnlessOpen",
   )(function* (input) {
     const host = yield* resolveHost(input.hostId);
-    const key = deviceKey(host.id, input.deviceId);
+    const { device } = yield* resolveDevice(host.id, input.deviceId);
+    const key = deviceKey(device);
     return yield* Effect.acquireUseRelease(
       lifecycleLock.withPermit(
         Effect.gen(function* () {
