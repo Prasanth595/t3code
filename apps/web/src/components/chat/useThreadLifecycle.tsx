@@ -523,8 +523,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       : null;
 
   const forceStop = useForceStopThread(environmentId);
+  // A draft's thread does not exist yet; loading it early caches the thread as deleted.
   const anyRunStop = useAtomValue(
-    activeThreadRef ? environmentThreadDetails.runStopAtom(activeThreadRef) : NO_RUN_STOP_ATOM,
+    activeThreadRef && activeThreadShell !== null
+      ? environmentThreadDetails.runStopAtom(activeThreadRef)
+      : NO_RUN_STOP_ATOM,
   );
   // A background Stop matters only while that work is still pending.
   const runStop = anyRunStop?.background && activeBackgroundTasks.length === 0 ? null : anyRunStop;
