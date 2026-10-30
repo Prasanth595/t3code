@@ -9831,7 +9831,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const updated = new Map(current);
             updated.set(String(artifacts.request.id), {
               type: "approval",
-              requestId: artifacts.request.id,
               requestKind: "mcp-elicitation",
               decision,
             });
