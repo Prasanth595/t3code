@@ -45,7 +45,7 @@ function findTreeRow(path: string): HTMLElement | null {
 }
 
 describe("FileBrowserPanel", () => {
-  it("Copy mention reaches the clipboard when clicked with the pointer", async () => {
+  it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
     await using _screen = await render(
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
@@ -72,6 +72,14 @@ describe("FileBrowserPanel", () => {
     await expect.element(action).toBeVisible();
     await userEvent.click(action);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
+
+    const row = findTreeRow("README.md")!;
+    await userEvent.keyboard("{Tab}");
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await expect.element(action).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
