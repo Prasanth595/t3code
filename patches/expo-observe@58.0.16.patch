@@ -1,0 +1,16 @@
+diff --git a/ios/ObserveModule.swift b/ios/ObserveModule.swift
+index ec78eea0a57fac600de0b0f099f7aff93402599a..8ce5a85322de074a3de81781919cfe08a87106cf 100644
+--- a/ios/ObserveModule.swift
++++ b/ios/ObserveModule.swift
+@@ -62,7 +62,10 @@ public final class ObserveModule: Module {
+ 
+       // Broadcast the integrations config so integration libraries (e.g. expo-image) can activate.
+       self.lastIntegrations = config.integrations ?? [:]
+-      self.emit(event: "configure", payload: ["integrations": self.lastIntegrations])
++      // `emit` takes a `sending` payload; Swift 6.2 rejects one built from a stored property.
++      // The payload is a copy of plain JSON values, so handing it to the JS runtime is safe.
++      nonisolated(unsafe) let payload = ["integrations": self.lastIntegrations]
++      self.emit(event: "configure", payload: payload)
+     }
+ 
+     Function("getIntegrations") {
