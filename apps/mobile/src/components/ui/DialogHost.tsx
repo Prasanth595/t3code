@@ -19,7 +19,7 @@ export function DialogHost() {
     (TextInputDialogRequest & { readonly id: number }) | null
   >(null);
   const nextPresentationId = useRef(0);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Register the native prompt presenter for this host's lifetime.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register the native prompt presenter for this host's lifetime.
   useEffect(() => {
     const present = (request: TextInputDialogRequest) =>
       setPresented({ ...request, id: ++nextPresentationId.current });
