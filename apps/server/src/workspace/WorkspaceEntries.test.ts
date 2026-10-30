@@ -56,6 +56,16 @@ function writeTextFile(
   });
 }
 
+// Git hooks export repository-location variables; unset them so fixtures only touch temp repos.
+const isolatedGitEnv: NodeJS.ProcessEnv = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_COMMON_DIR: undefined,
+};
+
 const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
     const process = yield* VcsProcess.VcsProcess;
@@ -64,7 +74,7 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
       command: "git",
       cwd,
       args,
-      ...(env ? { env } : {}),
+      env: { ...env, ...isolatedGitEnv },
       timeoutMs: 10_000,
     });
     return result.stdout.trim();
@@ -352,7 +362,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     it.effect("indexes initialized submodule files without their gitlink metadata", () =>
       Effect.gen(function* () {
         const identity = {
-          ...process.env,
           GIT_AUTHOR_NAME: "T3 Test",
           GIT_AUTHOR_EMAIL: "t3@example.com",
           GIT_COMMITTER_NAME: "T3 Test",
