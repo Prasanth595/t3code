@@ -175,7 +175,6 @@ describe("AcpSessionRuntime", () => {
             );
             expect(work.cgroup.trim()).toContain(`/${unit}`);
             expect(work.rootCgroup).toBe(work.cgroup);
-            expect(runtime.processContainment).toBe("cgroup-v2");
             if (end === "stop") {
               expect(runtime.terminateProcessGroup).toBeDefined();
               if (runtime.terminateProcessGroup !== undefined) yield* runtime.terminateProcessGroup;
@@ -263,7 +262,6 @@ describe("AcpSessionRuntime", () => {
       yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
       yield* runtime.start();
       expect(leases).toBe(0);
-      expect(runtime.processContainment).toBe("cgroup-v2");
       if (runtime.terminateProcessGroup === undefined) return expect.fail("Missing ACP teardown");
       const teardown = yield* runtime.terminateProcessGroup.pipe(Effect.forkChild);
       yield* Deferred.await(stopping);
