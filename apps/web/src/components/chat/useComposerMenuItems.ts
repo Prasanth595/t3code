@@ -106,9 +106,13 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], composerThreadQuery(pathTriggerQuery), {
-    titlesOnly: true,
-  });
+  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  const threadQuery = composerThreadQuery(pathTriggerQuery);
+  useThreadSearch(
+    isPathTrigger && threadQuery !== pathTriggerQuery ? [environmentId] : [],
+    threadQuery,
+    { titlesOnly: true },
+  );
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();

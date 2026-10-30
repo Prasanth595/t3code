@@ -305,7 +305,15 @@ export function useComposerCommandMenu({
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
-    trigger?.kind === "path" ? composerThreadQuery(trigger.query) : "",
+    trigger?.kind === "path" ? trigger.query : "",
+    { titlesOnly: true },
+  );
+  const threadQuery = trigger?.kind === "path" ? composerThreadQuery(trigger.query) : "";
+  useThreadSearch(
+    trigger?.kind === "path" && environmentId && threadQuery !== trigger.query
+      ? [environmentId]
+      : [],
+    threadQuery,
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({
