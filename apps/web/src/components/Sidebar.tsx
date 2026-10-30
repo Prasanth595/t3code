@@ -101,6 +101,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -2899,10 +2900,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threadSearchInputRef.current?.focus();
     threadSearchInputRef.current?.select();
   });
+  const readRoutePanelsOpen = useStableCallback(() => ({
+    terminalOpen: routeTerminalOpen,
+    previewOpen:
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+      "preview",
+  }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase thread search shortcut while the sidebar is mounted
   useEffect(
-    () => registerCommands({ "sidebar.focusSearch": onFocusSearchShortcut }, { capture: true }),
-    [onFocusSearchShortcut],
+    () =>
+      registerCommands(
+        { "sidebar.focusSearch": onFocusSearchShortcut },
+        { capture: true, context: readRoutePanelsOpen },
+      ),
+    [onFocusSearchShortcut, readRoutePanelsOpen],
   );
 
   const newThreadShortcutLabel =
