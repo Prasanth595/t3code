@@ -383,8 +383,6 @@ export function usePullRequestHandoffs({
         branch: prepared.value.branch,
       },
     });
-    // Released here whatever happened next: a loading toast never expires on its own, so leaving
-    // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
     if (task === null) {
       toastManager.update(

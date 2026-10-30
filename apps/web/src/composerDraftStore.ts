@@ -439,9 +439,6 @@ export function checkoutPullRequestUrlToLink(
   return checkout && draft.branch === checkout.branch ? checkout.url : null;
 }
 
-/**
- * Draft session metadata paired with its stable draft-session identity.
- */
 interface ProjectDraftSession extends DraftSessionState {
   draftId: DraftId;
 }
