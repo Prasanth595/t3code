@@ -418,26 +418,11 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     }
   }
 
-  const limits = c.mapping(c.child(factory, "factory", "limits"), "factory.limits");
-  const minutes = c.optionalUint(limits, "factory.limits", "minutes", DEFAULT_MINUTES, 1);
-  const gateRetries = c.uint(
-    c.child(limits, "factory.limits", "gate_retries"),
-    "factory.limits.gate_retries",
-    0,
-  );
-  const checksMinutes = c.optionalUint(
-    limits,
+  const limits = limitsFrom(
+    c,
+    c.mapping(c.child(factory, "factory", "limits"), "factory.limits"),
     "factory.limits",
-    "checks_minutes",
-    DEFAULT_CHECKS_MINUTES,
-    1,
-  );
-  const interruptionResumes = c.optionalUint(
-    limits,
-    "factory.limits",
-    "interruption_resumes",
-    DEFAULT_INTERRUPTION_RESUMES,
-    0,
+    undefined,
   );
   const autonomy = c.autonomy(c.child(factory, "factory", "autonomy"), "factory.autonomy");
 
@@ -447,10 +432,7 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision === undefined ||
     gate === undefined ||
     requiredChecks === undefined ||
-    minutes === undefined ||
-    gateRetries === undefined ||
-    checksMinutes === undefined ||
-    interruptionResumes === undefined ||
+    limits === undefined ||
     autonomy === undefined
   ) {
     return undefined;
@@ -461,9 +443,46 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision,
     gate,
     requiredChecks,
-    limits: { minutes, gateRetries, checksMinutes, interruptionResumes },
+    limits,
     autonomy,
   };
+};
+
+/** The keys a `limits` block reads. */
+const LIMITS_KEYS = ["minutes", "gate_retries", "checks_minutes", "interruption_resumes"] as const;
+
+/**
+ * A `limits` mapping at `path`. `gate_retries` is required when `gateRetriesDefault` is undefined
+ * (a repo's block), else optional with that default (the machine's `default_project`).
+ */
+const limitsFrom = (
+  c: Checker,
+  limits: Mapping | undefined,
+  path: string,
+  gateRetriesDefault: number | undefined,
+): Limits | undefined => {
+  const minutes = c.optionalUint(limits, path, "minutes", DEFAULT_MINUTES, 1);
+  const gateRetries =
+    gateRetriesDefault === undefined
+      ? c.uint(c.child(limits, path, "gate_retries"), `${path}.gate_retries`, 0)
+      : c.optionalUint(limits, path, "gate_retries", gateRetriesDefault, 0);
+  const checksMinutes = c.optionalUint(limits, path, "checks_minutes", DEFAULT_CHECKS_MINUTES, 1);
+  const interruptionResumes = c.optionalUint(
+    limits,
+    path,
+    "interruption_resumes",
+    DEFAULT_INTERRUPTION_RESUMES,
+    0,
+  );
+  if (
+    minutes === undefined ||
+    gateRetries === undefined ||
+    checksMinutes === undefined ||
+    interruptionResumes === undefined
+  ) {
+    return undefined;
+  }
+  return { minutes, gateRetries, checksMinutes, interruptionResumes };
 };
 
 const MACHINE_KEYS = [
@@ -591,7 +610,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
 };
 
 const DEFAULT_PROJECT_KEYS = ["instructors", "limits"] as const;
-const LIMITS_KEYS = ["minutes", "gate_retries", "checks_minutes", "interruption_resumes"] as const;
 const DEFAULT_GATE_RETRIES = 2;
 
 /** `default_project`: null when absent, undefined when it has errors. */
@@ -606,35 +624,12 @@ const defaultProjectFrom = (c: Checker, root: Mapping): DefaultProject | null | 
     false,
   );
   const limitsPath = `${path}.limits`;
-  const limits = Object.hasOwn(block, "limits") ? c.mapping(block["limits"], limitsPath) : {};
-  const minutes = c.optionalUint(limits, limitsPath, "minutes", DEFAULT_MINUTES, 1);
-  const gateRetries = c.optionalUint(limits, limitsPath, "gate_retries", DEFAULT_GATE_RETRIES, 0);
-  const checksMinutes = c.optionalUint(
-    limits,
-    limitsPath,
-    "checks_minutes",
-    DEFAULT_CHECKS_MINUTES,
-    1,
-  );
-  const interruptionResumes = c.optionalUint(
-    limits,
-    limitsPath,
-    "interruption_resumes",
-    DEFAULT_INTERRUPTION_RESUMES,
-    0,
-  );
+  const limitsBlock = Object.hasOwn(block, "limits") ? c.mapping(block["limits"], limitsPath) : {};
+  const limits = limitsFrom(c, limitsBlock, limitsPath, DEFAULT_GATE_RETRIES);
   c.unknownFields(block, DEFAULT_PROJECT_KEYS, path);
-  if (limits !== undefined) c.unknownFields(limits, LIMITS_KEYS, limitsPath);
-  if (
-    instructors === undefined ||
-    minutes === undefined ||
-    gateRetries === undefined ||
-    checksMinutes === undefined ||
-    interruptionResumes === undefined
-  ) {
-    return undefined;
-  }
-  return { instructors, limits: { minutes, gateRetries, checksMinutes, interruptionResumes } };
+  if (limitsBlock !== undefined) c.unknownFields(limitsBlock, LIMITS_KEYS, limitsPath);
+  if (instructors === undefined || limits === undefined) return undefined;
+  return { instructors, limits };
 };
 
 /** `model_fallbacks`: model id to another model id; absent is none. */

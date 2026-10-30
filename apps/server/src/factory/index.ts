@@ -25,6 +25,7 @@ import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./att
 import { loadHandPause, loadPendingDeploy } from "./claims.ts";
 import {
   DEFAULT_POLL_SECONDS,
+  factoryOptIn,
   formatConfigError,
   loadMachineConfig,
   parseProjectConfig,
@@ -37,7 +38,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { launchModel, type Cooldown } from "./cooldown.ts";
-import { resolveDefault } from "./defaultProject.ts";
+import { type Defaulted, type DefaultProject, resolveDefault } from "./defaultProject.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
@@ -224,11 +225,15 @@ const fromCheckout = Effect.fn("Factory.fromCheckout")(function* (
  * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub,
  * or, only when GitHub says the file is not there, the copy in the watched checkout's working
  * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
- * Either way the config must name the default branch as its `base`.
+ * Either way the config must name the default branch as its `base`. A repo the reader listed on
+ * the machine's default (`defaulted`) runs on it unless GitHub's copy has a `factory` block, which
+ * wins over a checkout that showed none.
  */
 const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
   github: ReturnType<typeof makeGitHub>,
   checkout: string,
+  defaulted?: Defaulted,
+  defaultProject?: DefaultProject,
 ) {
   const found = yield* github.baseConfig().pipe(
     Effect.mapError((error): ProjectReadError => ({
@@ -243,6 +248,24 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
       ],
     })),
   );
+  if (defaulted !== undefined && (found.text === null || factoryOptIn(found.text) === "no")) {
+    const resolved =
+      defaultProject === undefined
+        ? Result.fail([
+            {
+              file: PROJECT_CONFIG_PATH,
+              message:
+                "the machine config has no default_project, and the repo has no factory block",
+            },
+          ])
+        : resolveDefault(defaultProject, found.branch, defaulted.files);
+    if (Result.isSuccess(resolved)) return resolved.success;
+    return yield* Effect.fail<ProjectReadError>({
+      kind: "config",
+      message: resolved.failure.map(formatConfigError).join("; "),
+      errors: resolved.failure,
+    });
+  }
   const { file, text } =
     found.text !== null
       ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
@@ -604,35 +627,16 @@ export const liveWorld = (
     );
     return { kind: "started" } as const;
   });
-  // A repo on the machine's default reads no `.dw/config.yml`: the reader has its files.
-  const projectOf = (watched: WatchedRepo): Effect.Effect<ProjectConfig, ProjectReadError> => {
-    const { defaulted } = watched;
-    if (defaulted === undefined) {
-      return withProcess(
-        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
-      );
-    }
-    if (machine.defaultProject === undefined) {
-      const message =
-        "the machine config has no default_project, and the repo has no factory block";
-      return Effect.fail({
-        kind: "config",
-        message,
-        errors: [{ file: PROJECT_CONFIG_PATH, message }],
-      });
-    }
-    const resolved = resolveDefault(machine.defaultProject, defaulted);
-    return Result.isSuccess(resolved)
-      ? Effect.succeed(resolved.success)
-      : Effect.fail({
-          kind: "config",
-          message: resolved.failure.map(formatConfigError).join("; "),
-          errors: resolved.failure,
-        });
-  };
   return {
     project: (watched) =>
-      projectOf(watched).pipe(
+      withProcess(
+        projectFromBase(
+          githubFor(watched),
+          watched.path,
+          watched.defaulted,
+          machine.defaultProject,
+        ).pipe(Effect.provide(files)),
+      ).pipe(
         Effect.tap((project) =>
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),

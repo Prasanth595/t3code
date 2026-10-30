@@ -26,10 +26,12 @@ export interface RepoFiles {
   readonly lockfiles: ReadonlyArray<string>;
 }
 
-/** What the reader found of a repo it watches on the default: its default branch and its files. */
+/**
+ * What the reader found of a repo it watches on the default: the files on `origin/HEAD`, or null
+ * for a checkout with no `origin/HEAD` to read them from.
+ */
 export interface Defaulted {
-  readonly base: string;
-  readonly files: RepoFiles;
+  readonly files: RepoFiles | null;
 }
 
 /** The package managers by lockfile, in the order one is chosen when a repo has several. */
@@ -91,19 +93,28 @@ export const inferCommands = (
   return { provision, gate };
 };
 
-/** The repo's project config on the default, or the one error that no gate could be inferred. */
+const failure = (message: string): Result.Result<never, ReadonlyArray<ConfigError>> =>
+  Result.fail([{ file: PROJECT_CONFIG_PATH, message }]);
+
+/**
+ * The project config of a repo on the default, whose default branch is `base`; or the one error
+ * that its files could not be read or that no gate could be inferred from them.
+ */
 export const resolveDefault = (
   defaultProject: DefaultProject,
-  { base, files }: Defaulted,
+  base: string,
+  files: RepoFiles | null,
 ): Result.Result<ProjectConfig, ReadonlyArray<ConfigError>> => {
+  if (files === null) {
+    return failure(
+      "the checkout has no origin/HEAD, so its files cannot be read: run `git remote set-head origin --auto` in it",
+    );
+  }
   const { provision, gate } = inferCommands(files);
   if (gate.length === 0) {
-    return Result.fail([
-      {
-        file: PROJECT_CONFIG_PATH,
-        message: `no gate could be inferred from package.json or composer.json on ${base}: a factory block in .dw/config.yml is needed`,
-      },
-    ]);
+    return failure(
+      `no gate could be inferred from package.json or composer.json on ${base}: a factory block in .dw/config.yml is needed`,
+    );
   }
   return Result.succeed({
     instructors: defaultProject.instructors,

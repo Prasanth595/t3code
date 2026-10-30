@@ -137,26 +137,6 @@ export const make = Effect.gen(function* () {
   const isCheckout = (root: string): Effect.Effect<boolean> =>
     fs.exists(path.join(root, ".git")).pipe(Effect.orElseSucceed(() => false));
 
-  // The copy committed on origin's default branch, for a checkout whose working tree has none.
-  // `git show` fails for a directory that is no clone, a clone with no `origin/HEAD` and a branch
-  // with no such file, all of which are "not opted in"; a git that times out did not finish.
-  const committed = Effect.fn("WatchedRepos.committed")(function* (
-    root: string,
-  ): Effect.fn.Return<Read> {
-    if (!(yield* isCheckout(root))) return ABSENT;
-    const shown = yield* runner
-      .run({
-        command: "git",
-        args: ["-C", root, "show", `origin/HEAD:${PROJECT_CONFIG_PATH}`],
-        timeout: "10 seconds",
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(Effect.option);
-    // A git that cannot run (not on PATH, or refused) has read nothing.
-    if (Option.isNone(shown) || shown.value.timedOut) return UNRESOLVED;
-    return shown.value.code === 0 ? { kind: "text", text: shown.value.stdout } : ABSENT;
-  });
-
   /** `git -C root <args>`: its output, null when it ended non-zero, "unresolved" when git did not finish. */
   const gitOutput = (root: string, args: ReadonlyArray<string>) =>
     runner
@@ -168,6 +148,7 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.option,
+        // A git that cannot run (not on PATH, or refused) has read nothing.
         Effect.map((shown) =>
           Option.isNone(shown) || shown.value.timedOut
             ? ("unresolved" as const)
@@ -177,16 +158,26 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  // What a project on the default runs on: origin's default branch and the manifests committed
-  // at its root. Null for a clone with no `origin/HEAD`, which is left unwatched like one with no
-  // committed `.dw/config.yml`.
+  // The copy committed on origin's default branch, for a checkout whose working tree has none.
+  // `git show` fails for a directory that is no clone, a clone with no `origin/HEAD` and a branch
+  // with no such file, all of which are "not opted in"; a git that times out did not finish.
+  const committed = Effect.fn("WatchedRepos.committed")(function* (
+    root: string,
+  ): Effect.fn.Return<Read> {
+    if (!(yield* isCheckout(root))) return ABSENT;
+    const shown = yield* gitOutput(root, ["show", `origin/HEAD:${PROJECT_CONFIG_PATH}`]);
+    if (shown === "unresolved") return UNRESOLVED;
+    return shown === null ? ABSENT : { kind: "text", text: shown };
+  });
+
+  // The manifests committed at the root of origin's default branch, for a project on the
+  // default. A clone with no `origin/HEAD` has none to read, and its reading says so.
   const defaultedFiles = Effect.fn("WatchedRepos.defaultedFiles")(function* (
     root: string,
-  ): Effect.fn.Return<Defaulted | null | "unresolved"> {
-    const head = yield* gitOutput(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
-    if (head === null || head === "unresolved") return head;
+  ): Effect.fn.Return<Defaulted | "unresolved"> {
     const tree = yield* gitOutput(root, ["ls-tree", "--name-only", "origin/HEAD"]);
-    if (tree === null || tree === "unresolved") return "unresolved";
+    if (tree === "unresolved") return tree;
+    if (tree === null) return { files: null };
     const names = new Set(tree.split("\n"));
     const shown = (name: string) =>
       names.has(name) ? gitOutput(root, ["show", `origin/HEAD:${name}`]) : Effect.succeed(null);
@@ -202,7 +193,6 @@ export const make = Effect.gen(function* () {
       return "unresolved";
     }
     return {
-      base: head.trim().replace(/^origin\//, ""),
       files: { packageJson, composerJson, lockfiles: LOCKFILES.filter((name) => names.has(name)) },
     };
   });
@@ -264,8 +254,10 @@ export const make = Effect.gen(function* () {
       const repo = `${owner}/${name}`;
       if (onDefault) {
         const defaulted = yield* defaultedFiles(root);
-        if (defaulted === "unresolved") unresolved.push(root);
-        if (defaulted === null || defaulted === "unresolved") continue;
+        if (defaulted === "unresolved") {
+          unresolved.push(root);
+          continue;
+        }
         repos.push({ repo, path: root, title: row.title, defaulted });
       } else {
         repos.push({ repo, path: root, title: row.title });
@@ -275,7 +267,18 @@ export const make = Effect.gen(function* () {
     }
     const active = new Set<string>(rows.map((row) => row.projectId));
     const departed = yield* departures(watchedFrom, active, remember);
-    return { repos, departed, unresolved } satisfies WatchedListing;
+    // A repo that one project opts in is watched from that project: another checkout of it on the
+    // default would only make it ambiguous.
+    const ownBlock = new Set(
+      repos.filter((entry) => entry.defaulted === undefined).map((entry) => asciiLower(entry.repo)),
+    );
+    return {
+      repos: repos.filter(
+        (entry) => entry.defaulted === undefined || !ownBlock.has(asciiLower(entry.repo)),
+      ),
+      departed,
+      unresolved,
+    } satisfies WatchedListing;
   });
 
   return FactoryWatchedRepos.of({
