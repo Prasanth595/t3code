@@ -1,6 +1,6 @@
 // The fork's hook into upstream's app.config.ts: called once on the finished config, it swaps
-// upstream's identity for the fork's and cuts the links to upstream's Expo project and
-// over-the-air updates.
+// upstream's identity for the fork's, cuts the links to upstream's Expo project and
+// over-the-air updates, and adds the fork's native build plugins.
 import type { ExpoConfig } from "expo/config";
 import {
   FORK_APPLE_TEAM_ID,
@@ -39,7 +39,10 @@ export function applyForkMobileIdentity(config: ExpoConfig): void {
     },
   };
   config.android = { ...config.android, package: fork.appId };
-  config.plugins = config.plugins?.map((plugin) => withForkIds(plugin, iosBundleIdentifier));
+  config.plugins = [
+    ...(config.plugins ?? []).map((plugin) => withForkIds(plugin, iosBundleIdentifier)),
+    "./src/factory/withExpoObserveSwift5.cjs",
+  ];
 
   config.updates = { enabled: false };
   delete config.owner;
