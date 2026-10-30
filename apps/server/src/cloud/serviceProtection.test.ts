@@ -167,18 +167,28 @@ it.effect("lowers no score before the manager default is in place, and undoes in
       uid: 1000,
       userUnitDir: NodePath.join(home, ".config", "systemd", "user"),
       remoteAccessUnits: [],
+      systemUnitDir: NodePath.join(home, "system"),
     });
+    const managerDropIn = plan.system.find(({ unit }) => unit === "user@1000.service")!.path;
     const present = () => ({
       managerDefaults: NodeFS.existsSync(plan.managerDefaults.path),
       user: plan.user.filter(({ path }) => NodeFS.existsSync(path)).length,
     });
-    const withSudo = <A, E, R>(effect: Effect.Effect<A, E, R>, exitCode: number) => {
+    const withSudo = <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      exitCode: number,
+      writesManagerDropIn = false,
+    ) => {
       let atSudo: ReturnType<typeof present> | undefined;
       return effect.pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           fakeSudo(exitCode, () => {
             atSudo = present();
+            if (writesManagerDropIn) {
+              NodeFS.mkdirSync(NodePath.dirname(managerDropIn), { recursive: true });
+              NodeFS.writeFileSync(managerDropIn, "[Service]\nOOMScoreAdjust=-900\n");
+            }
           }),
         ),
         Effect.exit,
@@ -189,6 +199,13 @@ it.effect("lowers no score before the manager default is in place, and undoes in
     expect(refused.exit._tag).toBe("Failure");
     expect(refused.atSudo).toEqual({ managerDefaults: true, user: 0 });
     expect(present()).toEqual({ managerDefaults: false, user: 0 });
+
+    // Failing after it lowered the manager, sudo must leave the manager default in place.
+    const partial = yield* withSudo(ServiceProtection.applyProtection(plan), 1, true);
+    expect(partial.exit._tag).toBe("Failure");
+    expect(present()).toEqual({ managerDefaults: true, user: 0 });
+    NodeFS.rmSync(plan.managerDefaults.path);
+    NodeFS.rmSync(managerDropIn);
 
     const applied = yield* withSudo(ServiceProtection.applyProtection(plan), 0);
     expect(applied.atSudo).toEqual({ managerDefaults: true, user: 0 });

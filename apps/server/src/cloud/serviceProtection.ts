@@ -260,11 +260,14 @@ export const applyProtection = Effect.fn("ServiceProtection.apply")(function* (
     .exists(plan.managerDefaults.path)
     .pipe(Effect.orElseSucceed(() => false));
   yield* writeDropIns([plan.managerDefaults]);
-  yield* runPrivileged(renderPrivilegedScript(plan, "apply")).pipe(
-    Effect.tapError(() =>
-      hadManagerDefaults ? Effect.void : removeDropIns([plan.managerDefaults]).pipe(Effect.ignore),
-    ),
-  );
+  // A partial run may already have lowered the manager; its default must then stay.
+  const manager = plan.system.find(({ unit }) => unit.startsWith("user@"));
+  const rollBack = Effect.gen(function* () {
+    if (hadManagerDefaults) return;
+    if (manager !== undefined && (yield* fs.exists(manager.path))) return;
+    yield* removeDropIns([plan.managerDefaults]);
+  }).pipe(Effect.ignore);
+  yield* runPrivileged(renderPrivilegedScript(plan, "apply")).pipe(Effect.tapError(() => rollBack));
   yield* writeDropIns(plan.user);
   yield* reloadUserManager;
 });
