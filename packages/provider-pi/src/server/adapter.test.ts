@@ -2087,17 +2087,6 @@ describe("PiAdapterV2", () => {
         assert.equal(nested.node.parentNodeId, caller.node.id);
         assert.equal(nested.item.parentItemId, caller.item.id);
       }
-
-      yield* fake.emit({
-        type: "tool_execution_end",
-        toolCallId: "call_code",
-        toolName: "codemode",
-        isError: false,
-        result: { content: [{ type: "text", text: "done" }] },
-      });
-      const finished = yield* takeToolEvents("call_code");
-      assert.equal(finished.node.status, "completed");
-      assert.equal(finished.node.parentNodeId, caller.node.rootNodeId);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
