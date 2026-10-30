@@ -38,7 +38,6 @@ export const PullRequestTargetInput = Schema.Struct({
   threadId: Schema.optional(ThreadId).annotate({
     description: "Thread. Default: this thread.",
   }),
-
   url: Schema.optional(TrimmedNonEmptyString),
   repository: Schema.optional(TrimmedNonEmptyString).annotate({
     description: "With `number`, when no `url`.",
