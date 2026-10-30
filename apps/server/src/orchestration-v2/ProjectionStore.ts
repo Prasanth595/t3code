@@ -87,6 +87,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
@@ -3999,7 +4000,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND thread_id IN (${candidates})
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
-        `;
+        `.pipe(
+          // A pure read, on the reader connection: startup recovery must not
+          // take the write lock.
+          NodeSqliteClient.readOnly,
+        );
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
@@ -5273,6 +5278,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       filter,
     ) =>
       sql.withTransaction(readCanonicalProjection(threadId, undefined, fields, filter)).pipe(
+        // The MCP read path runs this for every thread read. It is a pure
+        // read, so it belongs on the reader connection: on the writer it
+        // contends with the writes that the same load is producing.
+        NodeSqliteClient.readOnly,
         Effect.map(
           (projection) =>
             Object.fromEntries([
@@ -6248,7 +6257,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             );
           }),
         )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+        .pipe(
+          // A pure read, on the reader connection: the settlement sweep must
+          // not take the write lock.
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+        );
 
     const getOpenRemoteDelegatedTasks: ProjectionStoreV2Shape["getOpenRemoteDelegatedTasks"] = sql<{
       readonly thread_id: string;
@@ -6626,9 +6640,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
-      sql
-        .withTransaction(readShellSnapshotRows(options))
-        .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+      sql.withTransaction(readShellSnapshotRows(options)).pipe(
+        // A pure read: the shell list is read far more often than it is
+        // written, and on the writer it queues behind the writes.
+        NodeSqliteClient.readOnly,
+        Effect.mapError(shellSnapshotReadError),
+        Effect.flatMap(decodeShellSnapshot),
+      );
 
     const listActiveSubagentThreadIds = Effect.fn("ProjectionStore.listActiveSubagentThreadIds")(
       function* () {
@@ -6877,7 +6895,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             });
           }),
         )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+        .pipe(
+          // A pure read: the shell row for one thread is read on every
+          // thread read, and on the writer it queues behind the writes.
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        );
 
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
