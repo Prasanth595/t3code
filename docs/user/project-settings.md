@@ -46,6 +46,14 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Worktree base branch
+
+New worktrees start from the repository's default branch. If a project's work branches
+from somewhere else, such as `dev`, select the project and enter that branch, tag, or
+commit in **Settings → Worktrees → Base branch**. Leave it empty to go back to the
+repository default. You can still choose a different base for any single thread
+from the branch picker.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

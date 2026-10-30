@@ -18,7 +18,10 @@ import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
-import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
+import {
+  resolveNewDraftStartFromOrigin,
+  shouldResetBranchForNewWorktree,
+} from "../../lib/chatThreadActions";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
@@ -32,7 +35,10 @@ interface ComposerSelectionInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeRuntime: ReturnType<typeof deriveThreadStructureRuntime>;
   readonly activeProjectSettings: {
-    readonly settings: { readonly newWorktreesStartFromOrigin: boolean };
+    readonly settings: {
+      readonly newWorktreesStartFromOrigin: boolean;
+      readonly newWorktreesBaseBranch: string;
+    };
   };
   readonly settings: UnifiedSettings;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
@@ -229,6 +235,13 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
         ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        ...(shouldResetBranchForNewWorktree({
+          currentEnvMode: draftThread?.envMode,
+          nextEnvMode: mode,
+          worktreeBaseBranch: activeProjectSettings.settings.newWorktreesBaseBranch,
+        })
+          ? { branch: null }
+          : {}),
       });
     }
     scheduleComposerFocus();
