@@ -3838,6 +3838,54 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("retries a Windows delete while a stopped provider still holds the worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held");
+        // The first deletes fail the way Windows fails them while an exiting
+        // provider process still has files in the worktree open.
+        let heldAttempts = 2;
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            remove: (target, options) =>
+              Effect.suspend(() =>
+                target === worktreePath && heldAttempts-- > 0
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "Busy",
+                        module: "FileSystem",
+                        method: "remove",
+                        pathOrDescriptor: target,
+                      }),
+                    )
+                  : fileSystem.remove(target, options),
+              ),
+          }),
+          Effect.provide(layerServerConfig),
+        );
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/held",
+        });
+
+        // The retry waits on the real clock.
+        yield* TestClock.withLive(
+          driver
+            .removeWorktree({ cwd, path: worktreePath, force: true })
+            .pipe(Effect.provideService(HostProcess.Platform, "win32")),
+        );
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "held");
+      }),
+    );
+
     it.effect("keeps the junctions of a worktree that git refuses to remove", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
