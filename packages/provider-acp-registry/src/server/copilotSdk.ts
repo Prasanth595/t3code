@@ -53,10 +53,79 @@ export interface CopilotProcess {
   readonly exited: Promise<void>;
   /** SIGKILLs the process directly, for when the SDK no longer tracks it. */
   readonly kill: () => void;
+  /**
+   * Linux and macOS: freezes the CLI and SIGKILLs every process under it, which the SDK's kill
+   * leaves running. Resolves with why it may have missed some.
+   */
+  readonly killDescendants: () => Promise<string | undefined>;
 }
 
 // A grandchild holding an inherited pipe can keep stdio open long after the exit.
 const STDIO_CLOSE_TIMEOUT_MS = 5_000;
+const PROCESS_LIST_TIMEOUT_MS = 5_000;
+
+/** Pids under `rootPid` in a `ps -o pid=,ppid=` listing, each parent before its children. */
+export function descendantPids(listing: string, rootPid: number): ReadonlyArray<number> {
+  const children = new Map<number, Array<number>>();
+  for (const line of listing.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (pid === undefined || ppid === undefined || !(pid > 1) || !Number.isSafeInteger(ppid)) {
+      continue;
+    }
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const found: Array<number> = [];
+  const seen = new Set([rootPid]);
+  const pending = [rootPid];
+  for (let parent = pending.shift(); parent !== undefined; parent = pending.shift()) {
+    for (const child of children.get(parent) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
+      found.push(child);
+      pending.push(child);
+    }
+  }
+  return found;
+}
+
+const listProcesses = () =>
+  new Promise<string>((resolve, reject) => {
+    NodeChildProcess.execFile(
+      "ps",
+      ["-A", "-o", "pid=,ppid="],
+      { timeout: PROCESS_LIST_TIMEOUT_MS },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+
+const signalQuietly = (pid: number, signal: NodeJS.Signals) => {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // Already gone.
+  }
+};
+
+/** SIGKILLs the processes under `rootPid`; stopped first, so none can start another meanwhile. */
+async function killPosixDescendants(rootPid: number): Promise<string | undefined> {
+  signalQuietly(rootPid, "SIGSTOP");
+  const stopped: Array<number> = [];
+  let failure: string | undefined;
+  try {
+    // The second listing catches processes started before the first round of stops landed.
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (const pid of descendantPids(await listProcesses(), rootPid)) {
+        if (pid === process.pid || stopped.includes(pid)) continue;
+        signalQuietly(pid, "SIGSTOP");
+        stopped.push(pid);
+      }
+    }
+  } catch (cause) {
+    failure = `listing Copilot's processes failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+  for (const pid of [...stopped].reverse()) signalQuietly(pid, "SIGKILL");
+  return failure;
+}
 
 /**
  * Tracks the SDK client's CLI child. Its exit alone is too early: notifications can still sit
@@ -81,10 +150,13 @@ export function copilotClientProcess(client: object): CopilotProcess | undefined
     child.once("close", () => resolve());
     child.once("exit", () => setTimeout(resolve, STDIO_CLOSE_TIMEOUT_MS).unref());
   });
+  const pid = child.pid;
   return {
-    id: child.pid,
+    id: pid,
     hasExited,
     kill: () => void child.kill("SIGKILL"),
+    // Once the CLI exited its pid can be recycled, so only a live CLI's tree is ours.
+    killDescendants: () => (hasExited() ? Promise.resolve(undefined) : killPosixDescendants(pid)),
     exited: stdioClosed
       .then(() => (typeof drain === "function" ? Reflect.apply(drain, connection, []) : undefined))
       .then(

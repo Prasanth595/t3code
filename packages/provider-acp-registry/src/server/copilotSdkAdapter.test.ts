@@ -49,6 +49,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import {
   copilotClientProcess,
   copilotSdkCliCandidates,
+  descendantPids,
   type CopilotSdkClient,
   type CopilotSdkClientOptions,
   type CopilotSdkSession,
@@ -125,6 +126,7 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
   const switchFailures: Array<Error> = [];
   // Each entry refuses one permission-mode switch, reporting the mode Copilot kept.
   const permissionRefusals: Array<"allow-all" | "manual"> = [];
+  const modeResults: Array<Awaited<ReturnType<CopilotSdkSession["rpc"]["mode"]["set"]>>> = [];
   const gate = () => {
     let release!: () => void;
     const promise = new Promise<void>((resolve) => {
@@ -171,7 +173,7 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
       mode: {
         set: async (params) => {
           record("mode.set", params);
-          return { status: "applied", modelChanged: false };
+          return modeResults.shift() ?? { status: "applied", modelChanged: false };
         },
       },
       permissions: {
@@ -281,6 +283,10 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
           record("process.kill");
           if (!stopFails) exitProcess();
         },
+        killDescendants: async () => {
+          record("killDescendants");
+          return undefined;
+        },
       },
     };
   };
@@ -330,6 +336,9 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
     },
     refuseNextPermissionMode: (kept: (typeof permissionRefusals)[number]) => {
       permissionRefusals.push(kept);
+    },
+    queueModeResult: (result: (typeof modeResults)[number]) => {
+      modeResults.push(result);
     },
     config: () => config,
     hangAbort: () => {
@@ -1486,7 +1495,9 @@ describe("CopilotSdkAdapterV2", () => {
       const fake = yield* makeFakeCopilot();
       fake.hangAbort();
       const releaseExit = fake.holdExit();
-      const harness = yield* makeHarness(fake);
+      const harness = yield* makeHarness(fake).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
       yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread));
       const turnId = (yield* harness.takeRunningTurn()).id;
       yield* fake.takeCall("sendAndWait");
@@ -1495,8 +1506,10 @@ describe("CopilotSdkAdapterV2", () => {
         .pipe(Effect.forkScoped);
       yield* fake.takeCall("abort");
       yield* TestClock.adjust("30 seconds");
+      // The SDK's SIGKILL reaches only the CLI, so its shells and agents go first.
+      assert.deepInclude(yield* fake.nextCall, { method: "killDescendants" });
       // forceStop has rejected the request; the process has not exited yet.
-      yield* fake.takeCall("forceStop");
+      assert.deepInclude(yield* fake.nextCall, { method: "forceStop" });
       yield* releaseExit;
       yield* Fiber.join(interrupting);
       assert.deepInclude((yield* harness.untilTerminal()).at(-1), {
@@ -1727,8 +1740,51 @@ describe("CopilotSdkAdapterV2", () => {
         args: [{ mode: "allow-all" }],
       });
       assert.deepInclude(yield* fake.nextCall, { method: "sendAndWait" });
+      yield* fake.finishRun();
+      yield* harness.untilTerminal();
+      // Leaving plan mode can restore a model the conversation no longer fits. Copilot asks for
+      // compaction and stays in plan mode, so the prompt must wait and the switch be retried.
+      fake.queueModeResult({
+        status: "confirmation_required",
+        modelChanged: false,
+        confirmation: {
+          targetModelDisplayName: "GPT-5.5",
+          currentTokens: 180000,
+          targetLimit: 128000,
+        },
+      });
+      const leavePlan = yield* harness.runtime
+        .startTurn({ ...gpt, providerTurnOrdinal: 8 })
+        .pipe(Effect.flip);
+      assert.include(makeProviderFailure({ cause: leavePlan }).message, "Send /compact");
+      assert.deepInclude(yield* fake.nextCall, {
+        method: "mode.set",
+        args: [{ mode: "interactive" }],
+      });
+      yield* harness.runtime.startTurn({ ...gpt, providerTurnOrdinal: 8 });
+      assert.deepInclude(yield* fake.nextCall, {
+        method: "mode.set",
+        args: [{ mode: "interactive" }],
+      });
+      yield* fake.takeCall("sendAndWait");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it("lists the processes under Copilot's CLI from a ps listing", () => {
+    const listing = [
+      "  1     0",
+      " 40     1",
+      "100    40",
+      "101   100",
+      "102   101",
+      "103   100",
+      "200     1",
+      "",
+    ];
+    // Breadth first, so killing in reverse reaches children before their parents.
+    assert.deepStrictEqual(descendantPids(listing.join("\n"), 100), [101, 103, 102]);
+    assert.deepStrictEqual(descendantPids(listing.join("\n"), 102), []);
+  });
 
   it.effect(
     "opens Copilot sessions with T3's system message, MCP server, delegation, tier and discovery",

@@ -673,8 +673,8 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
         );
         return created;
       });
-      // The SDK's kill reaches only copilot.exe on Windows; taskkill /T also stops its shells and agents.
-      const killProcessTree = Effect.fnUntraced(function* (pid: number) {
+      // The SDK's kill reaches only the CLI; taskkill /T also stops its shells and agents.
+      const killWindowsProcessTree = Effect.fnUntraced(function* (pid: number) {
         const exitCode = yield* Effect.scoped(
           Effect.gen(function* () {
             const taskkill = yield* spawner.spawn(
@@ -692,10 +692,22 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
       /** Kills the client's process tree; returns why it may not all have stopped. */
       const terminate = Effect.fnUntraced(function* (target: CopilotSdkClient) {
         // Once the process exited its pid can be recycled, so only a live process is ours to kill.
+        const live =
+          target.process !== undefined && !target.process.hasExited() ? target.process : undefined;
         const treeFailure =
-          platform === "win32" && target.process !== undefined && !target.process.hasExited()
-            ? yield* killProcessTree(target.process.id)
-            : undefined;
+          live === undefined
+            ? undefined
+            : platform === "win32"
+              ? yield* killWindowsProcessTree(live.id)
+              : yield* Effect.tryPromise(() => live.killDescendants()).pipe(
+                  Effect.timeoutOption(CLIENT_STOP_TIMEOUT),
+                  Effect.map((killed) =>
+                    Option.isSome(killed)
+                      ? killed.value
+                      : "stopping Copilot's processes did not finish",
+                  ),
+                  Effect.orElseSucceed(() => "stopping Copilot's processes failed"),
+                );
         // forceStop rejects when the CLI outlives its SIGKILL.
         const stopped = yield* Effect.tryPromise(() => target.forceStop()).pipe(
           Effect.timeoutOption(CLIENT_STOP_TIMEOUT),
@@ -2507,6 +2519,20 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
           const switched = yield* call("mode switch", () =>
             target.rpc.mode.set({ mode: settings.mode }),
           );
+          // Leaving plan mode can restore a model the conversation no longer fits; Copilot then
+          // asks for compaction instead of switching, as model.switchTo does below.
+          const confirmation = switched.confirmation;
+          if (confirmation !== undefined) {
+            applied = {};
+            return yield* new CopilotModelSwitchError({
+              model: confirmation.targetModelDisplayName,
+              currentTokens: confirmation.currentTokens,
+              targetLimit: confirmation.targetLimit,
+            });
+          }
+          if (switched.modeApplied === false) {
+            return yield* protocolError(`Copilot did not switch to ${settings.mode} mode`);
+          }
           // A configured plan model can come with the mode; the model switch below sets it back.
           applied = switched.modelChanged
             ? { ...applied, mode: settings.mode, model: undefined, reasoningEffort: undefined }
