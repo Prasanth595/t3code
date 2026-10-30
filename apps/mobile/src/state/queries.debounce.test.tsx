@@ -1,4 +1,5 @@
 import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
+import { RegistryProvider } from "@effect/atom-react";
 import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -7,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   sessionAtom: {},
   searchError: null as string | null,
   searchEntries: vi.fn(() => null),
+  shellState: { generation: 0, status: "synchronizing" },
 }));
 
 vi.mock("./session", () => ({
@@ -25,7 +27,14 @@ vi.mock("./projects", () => ({
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("./orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("./vcs", () => ({ vcsEnvironment: {} }));
-vi.mock("./threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
+vi.mock("./shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentShell: { stateValueAtom: Atom.family(() => Atom.make(mocks.shellState)) } };
+});
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { olderSettledThreads: { olderSettledAtom: () => Atom.make(null) }, threadFamilies: {} };
+});
 vi.mock("./query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data:
@@ -38,7 +47,40 @@ vi.mock("./query", () => ({
   }),
 }));
 
-import { useComposerPathSearch, type ComposerPathSearchTarget } from "./queries";
+import { useComposerPathSearch, useThreadSearch, type ComposerPathSearchTarget } from "./queries";
+
+it.each([
+  { status: "synchronizing", generation: 0, query: "missing", pending: true },
+  { status: "synchronizing", generation: 1, query: "missing", pending: false },
+  { status: "live", generation: 1, query: "missing", pending: false },
+  { status: "cached", generation: 0, query: "missing", pending: false },
+  { status: "empty", generation: 0, query: "missing", pending: false },
+  { status: "synchronizing", generation: 0, query: "", pending: false },
+  { status: "synchronizing", generation: 0, query: "a", pending: false },
+])("reports title search loading for $status generation $generation query '$query'", (state) => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.shellState = { status: state.status, generation: state.generation };
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  let pending: boolean | undefined;
+  function Probe() {
+    const result = useThreadSearch([EnvironmentId.make(JSON.stringify(state))], state.query, {
+      titlesOnly: true,
+    });
+    useLayoutEffect(() => {
+      pending = result.isPending;
+    });
+    return null;
+  }
+  act(() =>
+    root.render(
+      <RegistryProvider>
+        <Probe />
+      </RegistryProvider>,
+    ),
+  );
+  expect(pending).toBe(state.pending);
+});
 
 function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
