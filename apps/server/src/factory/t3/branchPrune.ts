@@ -11,12 +11,12 @@ import * as Schema from "effect/Schema";
 
 import { ledgerCall } from "../ledger/errors.ts";
 import { listUnfinishedRuns } from "../ledger/listRuns.ts";
-import { readRun } from "../ledger/read.ts";
+import { readRun, type Entry } from "../ledger/read.ts";
 import { asciiLower } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { configFlags, HARDENED_GIT_CONFIG, HARDENED_GIT_ENV } from "../gitHardening.ts";
 import { FactoryProcess } from "../process.ts";
-import { readProgress, type Seen } from "../runner/progress.ts";
+import { readProgress, runNames } from "../runner/progress.ts";
 import type { HeadPulls } from "../tracker/github.ts";
 
 const LOCAL_PREFIX = "refs/heads/";
@@ -90,21 +90,13 @@ export const decide = (branch: Branch, facts: Facts): Verdict => {
     : keep("unmerged and recent");
 };
 
-/**
- * The branches a run's ledger names as where its work is or goes, or as its base. `addNamed` in
- * `runner/building.ts` reads the same events: a new event that names a branch goes in both.
- */
-const runBranches = (seen: Seen): ReadonlyArray<string> =>
-  [
-    seen.base,
-    seen.launchBase,
-    seen.lastBranch,
-    seen.resumedFrom,
-    seen.launchResumedFrom,
-    seen.interruption?.branch,
-    seen.relaunch?.branch,
-    ...seen.boundBranches,
-  ].filter((name): name is string => typeof name === "string" && name !== "");
+/** The branches a run's ledger names as its work (`runNames`), or as its base. */
+const runBranches = (entries: ReadonlyArray<Entry>): ReadonlyArray<string> => {
+  const seen = readProgress(entries);
+  return [seen.base, seen.launchBase, ...runNames(entries, seen).branches].filter(
+    (name): name is string => typeof name === "string" && name !== "",
+  );
+};
 
 /** A failure the prune stops on, before it deletes anything more. */
 export class BranchPruneError extends Schema.TaggedError<BranchPruneError>()("BranchPruneError", {
@@ -122,7 +114,7 @@ export const unfinishedRunBranches = (dataDir: string, repo: string) =>
     for (const info of listUnfinishedRuns(dataDir)) {
       if (asciiLower(info.id.repo) !== asciiLower(repo)) continue;
       if (info.unreadable) return null;
-      for (const name of runBranches(readProgress(readRun(dataDir, info.id).entries))) {
+      for (const name of runBranches(readRun(dataDir, info.id).entries)) {
         names.add(name);
       }
     }

@@ -231,7 +231,7 @@ interface World {
   textCheck: TextCheck | GitHubError;
   status: ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
-  /** What each worktree has checked out, by path, null for none, or the failed read of it; a path missing here fails. */
+  /** What each worktree has checked out, by path, or the failed read of it; a path missing here has no worktree. */
   checkouts: Record<string, Checkout | SessionsError | null>;
   /** A thread by id, in place of `thread`. */
   threads: Record<string, Thread | ThreadNotFoundError | SessionsError>;
@@ -474,10 +474,7 @@ const rigFor = (
     },
     worktreeCheckout: (path) => {
       t3Call(`worktreeCheckout ${path}`);
-      const answer =
-        path in world.checkouts
-          ? world.checkouts[path]!
-          : new SessionsError({ operation: "worktree-head", cause: path });
+      const answer = world.checkouts[path] ?? null;
       return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
     },
   };
@@ -3872,16 +3869,24 @@ describe("advance: done on a branch the session made itself", () => {
     }),
   );
 
-  it.effect("is stuck when the worktree's HEAD cannot be read or the worktree is gone", () =>
+  it.effect("is stuck when the worktree is gone", () =>
     Effect.gen(function* () {
-      for (const checkout of [
-        new SessionsError({ operation: "worktree-head", cause: "not a git repo" }),
-        null,
-      ]) {
-        const rig = ownBranchRig();
-        rig.world.checkouts["/t3/wt"] = checkout;
-        assertUnbound(rig, yield* advanceIn(rig));
-      }
+      const rig = ownBranchRig();
+      rig.world.checkouts["/t3/wt"] = null;
+      assertUnbound(rig, yield* advanceIn(rig));
+    }),
+  );
+
+  it.effect("waits a pass when the worktree's HEAD cannot be read", () =>
+    Effect.gen(function* () {
+      const rig = ownBranchRig();
+      rig.world.checkouts["/t3/wt"] = new SessionsError({
+        operation: "worktree-head",
+        cause: "git timed out",
+      });
+      assertWaits(rig, yield* Effect.flip(advanceIn(rig)), "FactorySessionsError");
+      rig.world.checkouts["/t3/wt"] = { head: "abc123", branch: OWN };
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
     }),
   );
 });

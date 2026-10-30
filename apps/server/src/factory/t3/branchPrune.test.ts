@@ -681,7 +681,7 @@ describe("unfinishedRunBranches", () => {
   );
 
   it.effect(
-    "names a run's base and the branches it resumes, relaunches or was interrupted on",
+    "names a run's base, every branch it launched on, and the branches it resumes, relaunches or was interrupted on",
     () =>
       Effect.gen(function* () {
         const dataDir = tempDir("ledger");
@@ -710,13 +710,20 @@ describe("unfinishedRunBranches", () => {
           building,
           ["regate_relaunching", { attempt: 1, branch: "t3/regate", message: "fix it" }],
         ]);
+        writeRun(dataDir, { repo: "acme/widgets", issue: "5", attempt: 1 }, [
+          building,
+          launched("t3/first-launch"),
+          launched("t3/second-launch"),
+        ]);
         const names = yield* unfinishedRunBranches(dataDir, "acme/widgets");
         assert.deepStrictEqual([...names].toSorted(), [
           "t3/earlier",
+          "t3/first-launch",
           "t3/interrupted",
           "t3/planned-base",
           "t3/regate",
           "t3/resume-from",
+          "t3/second-launch",
           "t3/stack-base",
           "t3/stacked",
         ]);

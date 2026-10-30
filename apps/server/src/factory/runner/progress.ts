@@ -8,7 +8,7 @@ import { fallbackOf } from "../cooldown.ts";
 import { isState, type State } from "../domain/lifecycle.ts";
 import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import type { Model } from "../t3/sessions.ts";
+import { launchBranchOf, type Model } from "../t3/sessions.ts";
 import { isCommitId } from "../text.ts";
 import type { CheckStatus } from "../tracker/github.ts";
 
@@ -1069,4 +1069,51 @@ export const attemptsSincePass = (seen: Seen, attempt: number): number => {
   const before = [...seen.passedAttempts].filter((n) => n < attempt);
   const lastPass = before.length === 0 ? 0 : Math.max(...before);
   return attempt - lastPass;
+};
+
+/** The branches and pull requests a run's ledger names as its work (`runNames`). */
+export interface RunNames {
+  readonly branches: ReadonlySet<string>;
+  readonly prs: ReadonlySet<number>;
+}
+
+/**
+ * Every branch and pull request any line of a run's ledger names as its work, not only the newest:
+ * a launch (its branch, resumed-from branch and worktree's launch branch), a planned resume, a
+ * stuck line, an interruption, a relaunch, a bound branch, and a pull request opened or left.
+ */
+export const runNames = (entries: ReadonlyArray<Entry>, seen: Seen): RunNames => {
+  const branches = new Set<string>();
+  const prs = new Set<number>();
+  const addBranch = (branch: unknown) => {
+    if (typeof branch === "string") branches.add(branch);
+  };
+  // A planned resume is a step, not a line of its own.
+  addBranch(seen.launchResumedFrom);
+  for (const entry of entries) {
+    switch (entry.event) {
+      case "session_launched": {
+        addBranch(dataField(entry.data, "branch"));
+        addBranch(dataField(dataField(entry.data, "resumed_from"), "branch"));
+        const worktree = dataField(entry.data, "worktree");
+        addBranch(launchBranchOf(typeof worktree === "string" ? worktree : null));
+        break;
+      }
+      case "stuck":
+      case "session_interrupted":
+      case "session_rate_limited":
+      case "branch_bound":
+      case "regate_relaunching":
+      case "feedback_relaunching":
+        addBranch(dataField(entry.data, "branch"));
+        break;
+      case "pr_opened":
+      case "pr_left": {
+        const pr = dataField(entry.data, "pr");
+        if (typeof pr === "number") prs.add(pr);
+        break;
+      }
+    }
+  }
+  return { branches, prs };
 };

@@ -22,7 +22,7 @@ import { LedgerIoError, ledgerCall as ledger, type LedgerError } from "../ledger
 import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRuns } from "../ledger/listRuns.ts";
-import { field, readRun, type Entry } from "../ledger/read.ts";
+import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
@@ -81,6 +81,7 @@ import {
   RESULT_LINE_REMINDING,
   readProgress,
   regateBranch,
+  runNames,
   type Seen,
 } from "./progress.ts";
 import {
@@ -650,10 +651,7 @@ const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
         cause: "the run cannot be read",
       });
     }
-    const named: Named = { branches: new Set(), prs: new Set() };
-    addNamed(named, record.entries);
-    // A planned resume is a step, not a line of its own.
-    if (seen.launchResumedFrom !== null) named.branches.add(seen.launchResumedFrom);
+    const named = runNames(record.entries, seen);
     if (named.prs.has(pull.number) || named.branches.has(pull.headRef)) return true;
     if (!seen.finished && seen.threadId !== null) live.push(seen.threadId);
   }
@@ -665,9 +663,9 @@ const otherRunHas = Effect.fn("RunnerBuilding.otherRunHas")(function* (
 
 /**
  * Whether `pull` is on a branch the session made: open, in this repo, onto `base`, opened after
- * the claim, no other issue's run has it (`otherRunHas`), and the worktree has its head branch
- * checked out at its head commit. Runs of another machine's factory, and a person's pull request
- * opened during the run, are not seen. No worktree, or a failed read of it, is no proof.
+ * the claim, no other issue's run has it (`otherRunHas`), and the worktree is on its head branch at
+ * its head commit. Another machine's runs and a person's pull request are not seen. No worktree is
+ * no proof; a failed read fails, so the pass asks again while the worktree is still there.
  */
 const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ctx: BuildingContext,
@@ -689,9 +687,7 @@ const madeBySession = Effect.fn("RunnerBuilding.madeBySession")(function* (
   ) {
     return false;
   }
-  const own = yield* ctx.sessions
-    .worktreeCheckout(worktreePath)
-    .pipe(Effect.orElseSucceed(() => null));
+  const own = yield* ctx.sessions.worktreeCheckout(worktreePath);
   if (own === null || own.head !== pull.headSha || own.branch !== pull.headRef) {
     return false;
   }
@@ -1041,49 +1037,6 @@ export const advance = (
 
 const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LINE_REMINDED } };
 
-/** The branches and pull requests a run's ledger names as its work. */
-interface Named {
-  readonly branches: Set<string>;
-  readonly prs: Set<number>;
-}
-
-/**
- * Adds to `named` every branch and pull request any line of `entries` names: a launch (its branch,
- * resumed-from branch and worktree's launch branch), a stuck line, an interruption, a relaunch, a
- * bound branch, and a pull request opened or left. `runBranches` in `branchPrune.ts` reads the
- * same events through `Seen`: a new event that names a branch goes in both.
- */
-const addNamed = (named: Named, entries: ReadonlyArray<Entry>): void => {
-  const addBranch = (branch: unknown) => {
-    if (typeof branch === "string") named.branches.add(branch);
-  };
-  for (const entry of entries) {
-    switch (entry.event) {
-      case "session_launched": {
-        addBranch(field(entry.data, "branch"));
-        addBranch(field(field(entry.data, "resumed_from"), "branch"));
-        const worktree = field(entry.data, "worktree");
-        addBranch(launchBranchOf(typeof worktree === "string" ? worktree : null));
-        break;
-      }
-      case "stuck":
-      case "session_interrupted":
-      case "session_rate_limited":
-      case "branch_bound":
-      case "regate_relaunching":
-      case "feedback_relaunching":
-        addBranch(field(entry.data, "branch"));
-        break;
-      case "pr_opened":
-      case "pr_left": {
-        const pr = field(entry.data, "pr");
-        if (typeof pr === "number") named.prs.add(pr);
-        break;
-      }
-    }
-  }
-};
-
 /**
  * What the attempts before `run` left, from their ledgers (`EarlierAttempts`): every branch their
  * lines name and every pull request they recorded. Nothing is read for a first attempt, and an
@@ -1094,9 +1047,13 @@ export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(funct
   ctx: BuildingContext,
   run: RunId,
 ): Effect.fn.Return<EarlierAttempts, LedgerError> {
-  const named: Named = { branches: new Set(), prs: new Set() };
-  for (const { entries } of yield* earlierRuns(ctx.dataDir, run)) addNamed(named, entries);
-  const { branches, prs } = named;
+  const branches = new Set<string>();
+  const prs = new Set<number>();
+  for (const { entries } of yield* earlierRuns(ctx.dataDir, run)) {
+    const named = runNames(entries, readProgress(entries));
+    for (const branch of named.branches) branches.add(branch);
+    for (const pr of named.prs) prs.add(pr);
+  }
   return { branches: [...branches], prs: [...prs] };
 });
 
