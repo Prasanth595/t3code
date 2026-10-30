@@ -412,12 +412,19 @@ export function markdownWithBlockImages(markdown: string): string {
     )
       return;
     // Container markers become spaces, except ">", so the new paragraphs stay in the list or quote.
-    const markers = markdown
+    const prefix = markdown
       .slice(markdown.lastIndexOf("\n", start - 1) + 1, start)
-      .replace(/\[[ xX]\]\s*$/, "")
-      .replace(/[^>\s]/g, " ");
+      .replace(/\[[ xX]\]\s*$/, "");
+    const markers = prefix.replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
-    const separator = `[ \\t]*(?:\\\\?\\r?\\n(?: {0,3}>){0,${markers.split(">").length - 1}}[ \\t]*)?`;
+    const quotePrefix = prefix
+      .split(">")
+      .slice(0, -1)
+      .reduceRight((suffix, part) => {
+        const indentation = /(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(part) ? part.length : 0;
+        return `(?: {0,${indentation + 3}}>${suffix})?`;
+      }, "");
+    const separator = `[ \\t]*(?:\\\\?\\r?\\n${quotePrefix}[ \\t]*)?`;
     const beforeImage = new RegExp(`(?:^|[^ \\t])(${separator})$`);
     const afterImage = new RegExp(`^${separator}`);
     const editCount = edits.length;
