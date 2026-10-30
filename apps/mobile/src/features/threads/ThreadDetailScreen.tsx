@@ -526,9 +526,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
   const connectionRetrying =
     props.connectionStateLabel === "connecting" || props.connectionStateLabel === "reconnecting";
+  const retryError = connectionRetrying ? props.connectionError : null;
   const retryConnectionError = useDelayedStatus(
-    props.environmentId,
-    connectionRetrying ? props.connectionError : null,
+    `${props.environmentId}:${retryError !== null}`,
+    retryError,
     RECONNECT_ERROR_DELAY_MS,
   );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {

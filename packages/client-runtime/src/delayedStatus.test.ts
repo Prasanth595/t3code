@@ -78,5 +78,14 @@ describe("stepDelayedStatus", () => {
     const other = step(shown, "syncing", 500, "thread-2");
     expect(shownDelayedStatus(other, "thread-2")).toBeNull();
     expect(delayedStatusDeadline(other)).toBe(900);
+    const cleared = step(shown, null, 500, "cleared");
+    expect(shownDelayedStatus(cleared, "cleared")).toBeNull();
+    const retry = stepDelayedStatus(
+      cleared,
+      { key: "thread-1", value: "failed", deadlinePassed: false, showDelayMs: 5_000 },
+      () => 501,
+    );
+    expect(shownDelayedStatus(retry, "thread-1")).toBeNull();
+    expect(delayedStatusDeadline(retry)).toBe(5_501);
   });
 });
