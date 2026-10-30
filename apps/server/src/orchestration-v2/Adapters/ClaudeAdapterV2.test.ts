@@ -9044,6 +9044,77 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("closes an approval card when Claude withdraws its permission request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-withdrawn-approval"),
+            text: "Run the probe.",
+            attachments: [],
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/workspace",
+            }),
+          }),
+        );
+        // The CLI cancels a request once a PermissionRequest hook has answered it.
+        // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, withdraws the request.
+        const withdrawal = new AbortController();
+        const permission = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "echo probe" },
+            {
+              signal: withdrawal.signal,
+              toolUseID: "toolu_01WithdrawnApproval",
+              requestId: "request-withdrawn-approval",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const pending = (yield* Queue.take(harness.runtimeRequestReceipts)).runtimeRequest;
+        assert.equal(pending.status, "pending");
+
+        withdrawal.abort();
+
+        assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
+        // Events arrive in order, so the turn's end follows anything the withdrawal emitted.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000790", result: "Done." }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        const statusOf = (type: "runtime_request.updated" | "node.updated" | "turn_item.updated") =>
+          harness.events
+            .flatMap((event): Array<{ readonly type: string; readonly status: string }> =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.id === pending.id
+                ? [{ type: event.type, status: event.runtimeRequest.status }]
+                : event.type === "node.updated" && event.node.id === pending.nodeId
+                  ? [{ type: event.type, status: event.node.status }]
+                  : event.type === "turn_item.updated" && event.turnItem.nodeId === pending.nodeId
+                    ? [{ type: event.type, status: event.turnItem.status }]
+                    : [],
+            )
+            .findLast((entry) => entry.type === type)?.status;
+        assert.equal(statusOf("runtime_request.updated"), "cancelled");
+        assert.equal(statusOf("node.updated"), "cancelled");
+        assert.equal(statusOf("turn_item.updated"), "cancelled");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("releases output held for a prompt echo when the stream ends", () =>
     Effect.scoped(
       Effect.gen(function* () {
