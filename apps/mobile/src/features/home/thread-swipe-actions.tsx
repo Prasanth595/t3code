@@ -21,7 +21,7 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { Pressable, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -50,7 +50,6 @@ const ACTION_ICON_SIZE = 15;
 const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
 
-const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
 const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
@@ -75,8 +74,8 @@ interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
   readonly tone: "primary" | "secondary" | "danger";
 }
 
-function swipeActionsWidth(hasSecondaryAction: boolean) {
-  return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+function swipeActionsWidth(hasSecondaryAction: boolean, itemWidth: number) {
+  return itemWidth * (hasSecondaryAction ? 2 : 1);
 }
 
 function resolveSecondaryAction(input: {
@@ -237,9 +236,11 @@ interface ThreadSwipeableProps {
 }
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
+  const { fontScale } = useWindowDimensions();
+  const actionItemWidth = ACTION_ITEM_WIDTH * Math.max(1, fontScale);
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
-  const actionsWidth = swipeActionsWidth(hasSecondaryAction);
+  const actionsWidth = swipeActionsWidth(hasSecondaryAction, actionItemWidth);
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
@@ -430,6 +431,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     methods: SwipeableMethods,
   ) => {
     const deps = [
+      actionItemWidth,
       dormant,
       translation,
       methods,
@@ -458,6 +460,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       >
         <ThreadSwipeActions
           backgroundColor={backgroundColor}
+          itemWidth={actionItemWidth}
           compact={compactActions}
           fullSwipeAction={fullSwipeAction}
           fullSwipeThreshold={fullSwipeThreshold}
@@ -476,7 +479,16 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     rightActions.current = { deps, element };
     return element;
   };
-  const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
+  const childrenContainerStyle = useMemo(
+    () => ({
+      backgroundColor,
+      minHeight:
+        (compactActions ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE) +
+        14 * Math.max(1, fontScale) +
+        (compactActions ? 8 : 10),
+    }),
+    [backgroundColor, compactActions, fontScale],
+  );
   const swipeableContainerStyle = useMemo(
     () => [{ backgroundColor }, containerStyle],
     [backgroundColor, containerStyle],
@@ -525,6 +537,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string;
   readonly actionsWidth: number;
+  readonly itemWidth: number;
   readonly tone: "primary" | "secondary" | "danger";
   readonly compact: boolean;
   readonly entryRange: readonly [number, number];
@@ -680,11 +693,7 @@ function SwipeActionButton(props: {
           labelStyle,
         ]}
       >
-        <Text
-          adjustsFontSizeToFit
-          className="text-3xs font-t3-medium text-foreground-muted"
-          numberOfLines={1}
-        >
+        <Text className="text-3xs font-t3-medium text-foreground-muted" numberOfLines={1}>
           {props.label}
         </Text>
       </Animated.View>
@@ -698,7 +707,7 @@ function SwipeActionButton(props: {
           alignItems: "center",
           height: "100%",
           justifyContent: "center",
-          width: ACTION_ITEM_WIDTH,
+          width: props.itemWidth,
           zIndex: props.stretchesOnFullSwipe ? 2 : 1,
         },
         actionStyle,
@@ -722,6 +731,7 @@ function SwipeActionButton(props: {
 
 function ThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
+  readonly itemWidth: number;
   readonly compact: boolean;
   readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeThreshold: number;
@@ -732,7 +742,7 @@ function ThreadSwipeActions(props: {
 }) {
   const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
-  const actionsWidth = swipeActionsWidth(secondaryAction !== null);
+  const actionsWidth = swipeActionsWidth(secondaryAction !== null, props.itemWidth);
   useAnimatedReaction(
     () => -translation.value >= fullSwipeThreshold,
     (armed, previous) => {
@@ -755,12 +765,13 @@ function ThreadSwipeActions(props: {
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
         actionsWidth={actionsWidth}
+        itemWidth={props.itemWidth}
         tone={props.primaryAction.destructive === true ? "danger" : "primary"}
         compact={props.compact}
         entryRange={
           secondaryAction === null
-            ? [8, ACTION_ITEM_WIDTH * 0.72]
-            : [ACTION_ITEM_WIDTH * 0.55, THREAD_SWIPE_ACTIONS_WIDTH * 0.85]
+            ? [8, props.itemWidth * 0.72]
+            : [props.itemWidth * 0.55, actionsWidth * 0.85]
         }
         fullSwipeThreshold={props.fullSwipeThreshold}
         icon={props.primaryAction.icon}
@@ -773,9 +784,10 @@ function ThreadSwipeActions(props: {
         <SwipeActionButton
           accessibilityLabel={secondaryAction.accessibilityLabel}
           actionsWidth={actionsWidth}
+          itemWidth={props.itemWidth}
           tone={secondaryAction.tone}
           compact={props.compact}
-          entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
+          entryRange={[8, props.itemWidth * 0.72]}
           fullSwipeThreshold={props.fullSwipeThreshold}
           icon={secondaryAction.icon}
           label={secondaryAction.label}
