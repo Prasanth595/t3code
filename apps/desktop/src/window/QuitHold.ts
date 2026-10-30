@@ -25,6 +25,8 @@ export interface QuitHoldKeyInput {
 export interface QuitShortcutOptions {
   readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
+  /** Latest known mode; preventDefault must be decided before getMode settles. */
+  readonly peekMode: () => QuitConfirmationMode | undefined;
   readonly notify: (event: QuitShortcutHintEvent) => void;
   readonly concealWindow: () => void;
   readonly quit: () => void;
@@ -129,6 +131,16 @@ export function makeQuitShortcutHandler(
       return;
     }
 
+    if (options.peekMode() === "off") {
+      // Passing Cmd+Q through would reach the macOS app menu's Quit accelerator.
+      if (options.platform === "darwin") event.preventDefault();
+      if (!input.isAutoRepeat) {
+        lastPressAt = 0;
+        release();
+      }
+      return;
+    }
+
     event.preventDefault();
 
     if (input.isAutoRepeat) {
@@ -158,6 +170,10 @@ export function makeQuitShortcutHandler(
     void options.getMode().then(
       (resolvedMode) => {
         if (generation !== pressGeneration) return;
+        if (resolvedMode === "off") {
+          release();
+          return;
+        }
         if (resolvedMode === "direct") {
           quitNow();
           return;

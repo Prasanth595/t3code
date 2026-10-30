@@ -137,6 +137,7 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
   direct: "Direct",
   hold: "Hold",
   "double-click": "Double press",
+  off: "Off",
 };
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -766,6 +767,10 @@ export function GeneralSettingsPanel() {
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
+  const isMac = isMacPlatform(navigator.platform);
+  const quitConfirmationModes = Object.entries(QUIT_CONFIRMATION_MODE_LABELS).filter(
+    ([value]) => !isMac || value !== "off",
+  );
 
   return (
     <SettingsPageContainer>
@@ -967,7 +972,11 @@ export function GeneralSettingsPanel() {
         {isElectron ? (
           <SettingsRow
             {...searchableSetting("quit-confirmation")}
-            description="Hold mode also quits on two quick presses."
+            description={
+              isMac
+                ? "Hold mode also quits on two quick presses."
+                : "Hold mode also quits on two quick presses. Off frees Ctrl+Q for keybindings."
+            }
             resetAction={
               settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
                 <SettingResetButton
@@ -982,7 +991,12 @@ export function GeneralSettingsPanel() {
               <Select
                 value={settings.confirmQuit}
                 onValueChange={(value) => {
-                  if (value === "direct" || value === "hold" || value === "double-click") {
+                  if (
+                    value === "direct" ||
+                    value === "hold" ||
+                    value === "double-click" ||
+                    value === "off"
+                  ) {
                     updateSettings({ confirmQuit: value });
                   }
                 }}
@@ -995,7 +1009,7 @@ export function GeneralSettingsPanel() {
                   <SelectValue>{QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
+                  {quitConfirmationModes.map(([value, label]) => (
                     <SelectItem hideIndicator key={value} value={value}>
                       {label}
                     </SelectItem>

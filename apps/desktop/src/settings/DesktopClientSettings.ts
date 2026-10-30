@@ -66,6 +66,8 @@ export class DesktopClientSettings extends Context.Service<
   DesktopClientSettings,
   {
     readonly get: Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError>;
+    /** Latest settings read or written, for callers that must decide synchronously. */
+    readonly peek: Effect.Effect<Option.Option<ClientSettings>>;
     readonly set: (
       settings: ClientSettings,
     ) => Effect.Effect<void, DesktopClientSettingsWriteError>;
@@ -189,30 +191,50 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const latestRef = yield* Ref.make(Option.none<ClientSettings>());
+  // Each write starts a generation; a read or write publishes only if no newer write began.
+  const generationRef = yield* Ref.make(0);
+  const publish = (generation: number, settings: Option.Option<ClientSettings>) =>
+    Ref.get(generationRef).pipe(
+      Effect.flatMap((current) =>
+        current === generation ? Ref.set(latestRef, settings) : Effect.void,
+      ),
+    );
 
   return DesktopClientSettings.of({
-    get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
+    get: Ref.get(generationRef).pipe(
+      Effect.flatMap((generation) =>
+        readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
+          Effect.tap((settings) => publish(generation, settings)),
+        ),
+      ),
       Effect.withSpan("desktop.clientSettings.get"),
     ),
+    peek: Ref.get(latestRef),
     set: Effect.fn("desktop.clientSettings.set")(function (settings) {
-      return crypto.randomUUIDv4().pipe(
-        Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError(
-          (cause) =>
-            new DesktopClientSettingsWriteError({
-              operation: "create-temporary-file-name",
-              path: environment.clientSettingsPath,
-              cause,
-            }),
-        ),
-        Effect.flatMap((suffix) =>
-          writeClientSettings({
-            fileSystem,
-            path,
-            settingsPath: environment.clientSettingsPath,
-            settings,
-            suffix,
-          }),
+      return Ref.updateAndGet(generationRef, (generation) => generation + 1).pipe(
+        Effect.flatMap((generation) =>
+          crypto.randomUUIDv4().pipe(
+            Effect.map((uuid) => uuid.replace(/-/g, "")),
+            Effect.mapError(
+              (cause) =>
+                new DesktopClientSettingsWriteError({
+                  operation: "create-temporary-file-name",
+                  path: environment.clientSettingsPath,
+                  cause,
+                }),
+            ),
+            Effect.flatMap((suffix) =>
+              writeClientSettings({
+                fileSystem,
+                path,
+                settingsPath: environment.clientSettingsPath,
+                settings,
+                suffix,
+              }),
+            ),
+            Effect.andThen(publish(generation, Option.some(settings))),
+          ),
         ),
       );
     }),
@@ -228,6 +250,7 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
       const settingsRef = yield* Ref.make(initialSettings);
       return DesktopClientSettings.of({
         get: Ref.get(settingsRef),
+        peek: Ref.get(settingsRef),
         set: Effect.fn("DesktopClientSettings.set")(function (settings) {
           return Ref.set(settingsRef, Option.some(settings));
         }),

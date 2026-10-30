@@ -234,6 +234,27 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
+  it.effect("leaves Ctrl+Q to the quit shortcut setting on Windows and Linux", () =>
+    Effect.gen(function* () {
+      for (const platform of ["linux", "win32"] as const) {
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+          platform,
+        });
+
+        const fileMenu = (yield* Deferred.await(applicationMenuTemplate)).find(
+          (item) => item.label === "File",
+        );
+        if (!Array.isArray(fileMenu?.submenu)) {
+          throw new Error("Expected File menu submenu to be an array.");
+        }
+        const quitItem = fileMenu.submenu.find((item) => item.role === "quit");
+        assert.isFalse(quitItem?.registerAccelerator, platform);
+      }
+    }),
+  );
+
   it.effect("reloads the main window even while a browser page has focus", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

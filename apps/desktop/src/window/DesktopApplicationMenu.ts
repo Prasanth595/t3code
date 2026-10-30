@@ -203,7 +203,8 @@ export const make = Effect.gen(function* () {
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
             ? { label: "Close Window", click: (_item, window) => window?.close() }
-            : { role: "quit" },
+            : // Linux's role accelerator would bypass the quit shortcut setting; QuitHold owns Ctrl+Q.
+              { role: "quit", registerAccelerator: false },
         ],
       },
       {

@@ -262,7 +262,7 @@ export const NotificationMode = Schema.Literals([
 ]);
 export type NotificationMode = typeof NotificationMode.Type;
 
-export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click"]);
+export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click", "off"]);
 export type QuitConfirmationMode = typeof QuitConfirmationMode.Type;
 const DEFAULT_QUIT_CONFIRMATION_MODE: QuitConfirmationMode = "hold";
 

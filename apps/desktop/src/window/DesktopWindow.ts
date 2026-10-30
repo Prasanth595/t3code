@@ -302,6 +302,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -619,6 +620,8 @@ export const make = Effect.gen(function* () {
       }
     });
 
+    // Fills clientSettings.peek before the first key press.
+    runFork(Effect.ignore(clientSettings.get));
     const quitShortcutHandler = makeQuitShortcutHandler({
       platform: environment.platform,
       getMode: () =>
@@ -631,6 +634,7 @@ export const make = Effect.gen(function* () {
             }),
           ),
         ),
+      peekMode: () => Option.getOrUndefined(runSync(clientSettings.peek))?.confirmQuit,
       notify: (hint) => {
         if (!window.isDestroyed()) {
           window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);

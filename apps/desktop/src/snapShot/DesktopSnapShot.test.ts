@@ -503,6 +503,7 @@ const layerTest = (
           DesktopClientSettings.DesktopClientSettings,
           DesktopClientSettings.DesktopClientSettings.of({
             get: settingsGet,
+            peek: Effect.succeedNone,
             set: () => Effect.void,
           }),
         ),

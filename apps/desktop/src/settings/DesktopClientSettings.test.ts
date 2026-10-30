@@ -5,7 +5,9 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   type ClientSettings,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -153,6 +155,7 @@ describe("DesktopClientSettings", () => {
           onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
         };
         yield* settings.set(savedSettings);
+        assert.deepEqual(yield* settings.peek, Option.some(savedSettings));
         const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
         const cause = PlatformError.systemError({
           _tag: failure.reason,
@@ -179,6 +182,7 @@ describe("DesktopClientSettings", () => {
         assert.equal(error.operation, "read-file");
         assert.equal(error.path, environment.clientSettingsPath);
         assert.strictEqual(error.cause, cause);
+        assert.deepEqual(yield* retryableSettings.peek, Option.none());
         assert.equal(
           yield* fileSystem.readFileString(environment.clientSettingsPath),
           savedContents,
@@ -186,6 +190,83 @@ describe("DesktopClientSettings", () => {
 
         failRead = false;
         assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
+        assert.deepEqual(yield* retryableSettings.peek, Option.some(savedSettings));
+      }),
+    ),
+  );
+
+  it.effect("keeps a newer write when an older read finishes after it", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const holdSettings = { ...clientSettings, confirmQuit: "hold" as const };
+        const offSettings = { ...clientSettings, confirmQuit: "off" as const };
+        yield* settings.set(holdSettings);
+        const readStarted = yield* Deferred.make<void>();
+        const releaseRead = yield* Deferred.make<void>();
+        let delayRead = true;
+        const raceSettings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path) =>
+                fileSystem
+                  .readFileString(path)
+                  .pipe(
+                    Effect.tap(() =>
+                      delayRead
+                        ? Deferred.succeed(readStarted, undefined).pipe(
+                            Effect.andThen(Deferred.await(releaseRead)),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+            }),
+          ),
+        );
+
+        const staleRead = yield* Effect.forkChild(raceSettings.get);
+        yield* Deferred.await(readStarted);
+        delayRead = false;
+        yield* raceSettings.set(offSettings);
+        yield* Deferred.succeed(releaseRead, undefined);
+
+        assert.deepEqual(yield* Fiber.join(staleRead), Option.some(holdSettings));
+        assert.deepEqual(yield* raceSettings.peek, Option.some(offSettings));
+      }),
+    ),
+  );
+
+  it.effect("keeps the cached settings when a write fails", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* settings.set(clientSettings);
+        const failingSettings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              writeFileString: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "writeFileString",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            }),
+          ),
+        );
+        yield* failingSettings.get;
+
+        yield* failingSettings.set({ ...clientSettings, confirmQuit: "off" }).pipe(Effect.flip);
+
+        assert.deepEqual(yield* failingSettings.peek, Option.some(clientSettings));
       }),
     ),
   );

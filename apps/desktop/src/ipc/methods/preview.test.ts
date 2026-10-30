@@ -61,6 +61,7 @@ describe("preview IPC methods", () => {
         ),
         Effect.provideService(DesktopClientSettings.DesktopClientSettings, {
           get: Effect.succeedNone,
+          peek: Effect.succeedNone,
           set: () => Effect.void,
         }),
       ),
