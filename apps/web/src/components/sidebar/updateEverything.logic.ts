@@ -41,10 +41,15 @@ export function collectRestartingMachines(
   const updated = new Set(servers.map((server) => server.environmentId));
   return machines.flatMap((machine) => {
     const config = machine.serverConfig;
+    const owner = config?.environment.desktopHost?.environmentId;
     if (
       config === null ||
       !machine.connected ||
-      !(updated.has(machine.environmentId) || (installsLocal && machine.hostedByThisApp))
+      !(
+        updated.has(machine.environmentId) ||
+        (owner !== undefined && updated.has(owner)) ||
+        (installsLocal && machine.hostedByThisApp)
+      )
     ) {
       return [];
     }
@@ -98,6 +103,10 @@ export function collectServerUpdateTargets(
       skip(unavailable ?? "not connected");
       continue;
     }
+    if (config.environment.desktopHost !== undefined) {
+      skip("update its owning desktop app");
+      continue;
+    }
     const selfUpdate = resolveServerSelfUpdateCapability(config);
     const desktopAppUpdate = supportsDesktopAppUpdate(config);
     if (selfUpdate === null) {
@@ -134,7 +143,24 @@ export function collectServerUpdateTargets(
       waitForNpm.push(target);
     }
   }
-  return { targets, skipped, waitForNpm };
+  const updatingDesktops = new Set(
+    targets
+      .filter((target) => target.selfUpdate === "desktop-managed")
+      .map((target) => target.environmentId),
+  );
+  const coveredSecondaries = new Set(
+    machines
+      .filter((machine) => {
+        const owner = machine.serverConfig?.environment.desktopHost?.environmentId;
+        return owner !== undefined && updatingDesktops.has(owner);
+      })
+      .map((machine) => machine.environmentId),
+  );
+  return {
+    targets,
+    skipped: skipped.filter((machine) => !coveredSecondaries.has(machine.environmentId)),
+    waitForNpm,
+  };
 }
 
 function unavailableReason(machine: UpdateEverythingMachine): string | null {
