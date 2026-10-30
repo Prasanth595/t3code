@@ -944,6 +944,88 @@ describe("a waiting update", () => {
     await expect.poll(() => banner(page)?.textContent).toContain("Update waiting.");
   });
 
+  it("asks before Update now when T3 cannot say whether threads are at work, or a run is unreadable", async () => {
+    using _state = await setup();
+    const deployNow = vi.fn();
+    __setFactoryApiForTests(api({ deployNow }));
+    const desktop = withUpdate(
+      [statusRun(7, { state: "pr-open", unreadable: true, title: "Torn ledger" })],
+      {
+        threads: { running: null },
+      },
+    );
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain("Torn ledger");
+    expect(dialog()!.textContent).toContain(
+      "T3 could not say whether an agent is at work in a thread; any that is will be interrupted.",
+    );
+    expect(deployNow).not.toHaveBeenCalled();
+  });
+
+  it("does not open the dialog again for a later build", async () => {
+    using _state = await setup();
+    const belt = props({ environments: [withUpdate([statusRun(2)])] });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Update now")!);
+    await expect.poll(() => dialog()).not.toBeNull();
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...belt,
+        environments: [withUpdate([statusRun(2)], { deploy_pending: null })],
+      }),
+    );
+    const next = waiting({ commit: "fedcba9876543210", since: iso(at(14, 50)) });
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...belt,
+        environments: [withUpdate([statusRun(2)], { deploy_pending: next })],
+      }),
+    );
+    await expect.poll(() => banner(page)?.textContent).toContain("Build fedcba9");
+    expect(dialog()).toBeNull();
+  });
+
+  it("disables both buttons while an Update now post is in flight", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(api({ deployNow: () => new Promise(() => {}) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(true);
+    expect(page.button("Update now")!.disabled).toBe(true);
+  });
+
+  it("drops the updating note once a different build is waiting", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({ deployNow: async () => ({ commit: SHA, kicked: false, message: "next tick" }) }),
+    );
+    const belt = props({ environments: [withUpdate([])] });
+    await using page = await render(createElement(FactoryBelt, belt));
+    await page.click(page.button("Update now")!);
+    expect(banner(page)?.textContent).toBe("Updating within 10 minutes.");
+    // Main moved on before autodeploy's tick, so it dropped the request and waits on the new build.
+    await page.rerender(
+      createElement(FactoryBelt, {
+        ...belt,
+        environments: [withUpdate([], { deploy_pending: waiting({ commit: "fedcba9876543210" }) })],
+      }),
+    );
+    await expect.poll(() => banner(page)?.textContent).toContain("Update waiting.Build fedcba9");
+  });
+
+  it("says only that claims hold until the install when no install time is known", async () => {
+    using _state = await setup();
+    const desktop = withUpdate([statusRun(2)], { deploy_pending: waiting({ deploy_by: null }) });
+    await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toContain(
+      "The factory claims no new work until it installs.Snooze",
+    );
+  });
+
   it("shows the message of an Update now the server refuses", async () => {
     using _state = await setup();
     __setFactoryApiForTests(
