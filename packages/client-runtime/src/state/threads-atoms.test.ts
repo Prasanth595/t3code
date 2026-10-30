@@ -3,6 +3,7 @@ import {
   EventId,
   ORCHESTRATION_V2_WS_METHODS,
   TurnItemId,
+  type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -33,7 +34,7 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
-import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { v2Projection, v2ThreadId, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { createEnvironmentThreadStateAtoms, type EnvironmentThreadState } from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -54,6 +55,8 @@ const SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = { snapshotSequence: 7, pro
 const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?: {
   readonly snapshot?: OrchestrationV2ThreadDetailSnapshot;
   readonly snapshotUnavailable?: boolean;
+  readonly snapshotMissing?: boolean;
+  readonly threadNotCreated?: boolean;
 }) {
   const subscriptions = yield* Queue.unbounded<{
     readonly afterSequence: number | undefined;
@@ -66,6 +69,10 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     readonly closed: Deferred.Deferred<void>;
   }>();
   const snapshot = options?.snapshot ?? SNAPSHOT;
+  let threadCreated = options?.threadNotCreated !== true;
+  const shellSnapshotAtom = Atom.make<OrchestrationV2ShellSnapshot | null>(
+    threadCreated ? v2ShellSnapshot : { ...v2ShellSnapshot, threads: [] },
+  );
   let httpLoads = 0;
   let diskLoads = 0;
   let opened = 0;
@@ -191,6 +198,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
           load: () =>
             Effect.sync(() => {
               httpLoads += 1;
+              if (!threadCreated || options?.snapshotMissing) return { _tag: "missing" as const };
               if (options?.snapshotUnavailable === true) {
                 return { _tag: "unavailable" as const };
               }
@@ -212,7 +220,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       ),
     ),
   );
-  const raw = createEnvironmentThreadStateAtoms(runtime);
+  const raw = createEnvironmentThreadStateAtoms(runtime, () => shellSnapshotAtom);
   const details = createEnvironmentThreadDetailAtoms(raw.stateAtom);
   const ref = { environmentId: TARGET.environmentId, threadId: THREAD_ID };
   const stateAtom = details.stateAtom(ref);
@@ -224,6 +232,11 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
 
   return {
     registry,
+    shellSnapshotAtom,
+    createThread: () => {
+      threadCreated = true;
+      registry.set(shellSnapshotAtom, v2ShellSnapshot);
+    },
     makeRegistry,
     rawAtoms: raw,
     stateAtom,
@@ -261,11 +274,87 @@ describe("createEnvironmentThreadStateAtoms", () => {
     vi.restoreAllMocks();
   });
 
+  it.effect.each(["mounted", "reopened"] as const)(
+    "loads a thread created after an earlier missing snapshot while %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ threadNotCreated: true });
+        const unmount = h.registry.mount(h.stateAtom);
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+        expect(h.counts().httpLoads).toBe(1);
+        expect(h.counts().opened).toBe(0);
+        if (mode === "reopened") unmount();
+
+        h.createThread();
+        const remount = mode === "reopened" ? h.registry.mount(h.stateAtom) : unmount;
+        const subscription = yield* Queue.take(h.subscriptions);
+        yield* Queue.offer(subscription.events, { kind: "synchronized" });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+        expect(currentThread(h.registry, h.stateAtom)).toEqual(THREAD);
+        expect(h.counts().httpLoads).toBe(2);
+
+        h.registry.set(h.shellSnapshotAtom, { ...v2ShellSnapshot, snapshotSequence: 20 });
+        expect(h.counts().opened).toBe(1);
+        remount();
+        yield* Deferred.await(subscription.closed);
+      }),
+  );
+
+  it.effect("uses the socket when the shell already contains a missing HTTP snapshot", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ snapshotMissing: true });
+      const unmount = h.registry.mount(h.stateAtom);
+      const subscription = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(subscription.events, {
+        kind: "snapshot",
+        snapshotSequence: SNAPSHOT.snapshotSequence,
+        projection: THREAD,
+      });
+      yield* Queue.offer(subscription.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      expect(currentThread(h.registry, h.stateAtom)).toEqual(THREAD);
+      expect(h.counts().httpLoads).toBe(1);
+      unmount();
+      yield* Deferred.await(subscription.closed);
+    }),
+  );
+
+  it.effect(
+    "keeps authoritative deletions parked even while the shell still contains the thread",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const unmount = h.registry.mount(h.stateAtom);
+        const subscription = yield* Queue.take(h.subscriptions);
+        yield* Queue.offer(subscription.events, {
+          kind: "event",
+          sequence: 8,
+          event: {
+            id: EventId.make("deleted"),
+            type: "thread.deleted",
+            threadId: THREAD_ID,
+            occurredAt: THREAD.thread.updatedAt,
+            payload: { ...THREAD.thread, deletedAt: THREAD.thread.updatedAt },
+          },
+        });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+        unmount();
+        yield* Deferred.await(subscription.closed);
+        const remount = h.registry.mount(h.stateAtom);
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+        expect(h.counts().httpLoads).toBe(1);
+        expect(h.counts().opened).toBe(1);
+        remount();
+      }),
+  );
+
   it.effect("keeps warm data and resumes a completed cursor without loading another snapshot", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       const unmount = h.registry.mount(h.stateAtom);
       const first = yield* Queue.take(h.subscriptions);
+      h.registry.set(h.shellSnapshotAtom, { ...v2ShellSnapshot, threads: [] });
+      h.registry.set(h.shellSnapshotAtom, v2ShellSnapshot);
       yield* Queue.offer(first.events, {
         kind: "event",
         sequence: 8,
