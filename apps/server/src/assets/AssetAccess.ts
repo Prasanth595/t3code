@@ -113,6 +113,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
+    entryRelativePath: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -518,10 +519,14 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             version: 1 as const,
             kind: "workspace-file" as const,
             workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
+            // Workspace-relative URLs keep parent references beneath the signed token.
+            baseRelativePath: ".",
+            entryRelativePath: resolved.relativePath,
             expiresAt: input.expiresAt,
           },
-      fileName: path.basename(resolved.relativePath),
+      fileName: /\.html?$/i.test(resolved.relativePath)
+        ? resolved.relativePath
+        : path.basename(resolved.relativePath),
       imageDimensions,
       fileRevision: undefined,
     };
@@ -606,6 +611,43 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
         : input.resource.path;
       if (path.isAbsolute(hostPath)) {
+        // Contained HTML drafts need the same dependency grant as relative drafts.
+        // Keep outside-workspace files (including escaping symlinks) exact-file scoped.
+        if (/\.html?$/i.test(hostPath)) {
+          const workspaceRoot = yield* workspacePaths
+            .normalizeWorkspaceRoot(draftWorkspaceRoot)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetWorkspaceRootNormalizationError({ resource: input.resource, cause }),
+              ),
+            );
+          const requestedPath = path.resolve(hostPath);
+          if (isWithinRoot(path, requestedPath, workspaceRoot)) {
+            const canonicalFile = yield* resolveCanonicalWorkspaceFile({
+              workspaceRoot,
+              relativePath: path.relative(workspaceRoot, requestedPath),
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+              ),
+            );
+            if (canonicalFile) {
+              const finalized = yield* finalizeWorkspaceFileAsset({
+                workspaceRoot,
+                requestedPath,
+                resource: input.resource,
+                expiresAt,
+              });
+              claims = finalized.claims;
+              fileName = finalized.fileName;
+              imageDimensions = finalized.imageDimensions;
+              fileRevision = finalized.fileRevision;
+              break;
+            }
+          }
+        }
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
           requestedPath: hostPath,
           workspaceRoot: draftWorkspaceRoot,
@@ -868,8 +910,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
+  // Preserve nesting so browser-normalized parent references stay under the signed token.
+  const urlPath =
+    claims.kind === "workspace-file"
+      ? fileName.split("/").map(encodeURIComponent).join("/")
+      : encodeURIComponent(fileName);
   return {
-    relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(fileName)}`,
+    relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${urlPath}`,
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
@@ -1023,11 +1070,30 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
       : null;
   }
+  // The selected entry may itself have a hidden filename.
+  if (decodedPath === claims.entryRelativePath) {
+    const entryFile = yield* resolveCanonicalWorkspaceFileForRequest({
+      workspaceRoot: claims.workspaceRoot,
+      relativePath: claims.entryRelativePath,
+    });
+    return entryFile ? ({ kind: "file", path: entryFile } satisfies ResolvedAsset) : null;
+  }
   const segments = decodedPath.split(/[\\/]/);
+  const entryDirectorySegments = claims.entryRelativePath?.split(/[\\/]/).slice(0, -1);
+  const withinEntryDirectory = entryDirectorySegments?.every(
+    (segment, index) => segments[index] === segment,
+  );
   if (
     decodedPath.length === 0 ||
     decodedPath.includes("\0") ||
-    segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
+    segments.some(
+      (segment, index) =>
+        segment === "." ||
+        segment === ".." ||
+        (segment.startsWith(".") &&
+          // Only the signed entry directory can authorize hidden dependency prefixes.
+          (!withinEntryDirectory || index >= entryDirectorySegments!.length)),
+    ) ||
     !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase())
   ) {
     return null;
