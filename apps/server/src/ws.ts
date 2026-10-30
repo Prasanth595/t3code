@@ -502,6 +502,7 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   readonly failure: FilesystemBrowseFailure;
   readonly parentPath?: string;
   readonly platform?: string;
+  readonly pathMissing?: boolean;
 } {
   switch (error._tag) {
     case "WorkspaceEntriesWindowsPathUnsupportedError":
@@ -509,7 +510,11 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
     case "WorkspaceEntriesCurrentProjectRequiredError":
       return { failure: "current_project_required" };
     case "WorkspaceEntriesReadDirectoryError":
-      return { failure: "read_directory_failed", parentPath: error.parentPath };
+      return {
+        failure: "read_directory_failed",
+        parentPath: error.parentPath,
+        ...(error.pathMissing ? { pathMissing: true } : {}),
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
