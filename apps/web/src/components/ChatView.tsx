@@ -354,7 +354,7 @@ import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
-import { ThreadNow } from "./chat/ThreadNow";
+import { ThreadNow, ThreadNowLine } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
@@ -2515,7 +2515,6 @@ export default function ChatView(props: ChatViewProps) {
         })
       : null;
   const composerBannerItems = (() => {
-    const goalItems = goalNow === null ? [] : [{ ...goalNow, variant: "default" as const }];
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
       draftDefaultModelSelection ??
@@ -2572,7 +2571,6 @@ export default function ChatView(props: ChatViewProps) {
         ...usageLimitsItems,
         ...projectCloneItems,
         ...systemComposerBannerItems,
-        ...goalItems,
       ];
     }
     return [
@@ -2582,7 +2580,6 @@ export default function ChatView(props: ChatViewProps) {
       ...usageLimitsItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
-      ...goalItems,
       branchMismatchBannerItem({
         mismatchKey: activeBranchMismatchKey,
         mismatch: localCheckoutBranchMismatch,
@@ -3447,6 +3444,11 @@ export default function ChatView(props: ChatViewProps) {
                         aria-busy={queuedRunEdit.isSaving}
                       >
                         <div className="relative z-10">
+                          {goalNow ? (
+                            <div className="px-3 pt-3">
+                              <ThreadNowLine item={goalNow} />
+                            </div>
+                          ) : null}
                           {showProviderSubagentBar ? (
                             <ProviderSubagentBar
                               provider={selectedProviderEntry ?? null}
