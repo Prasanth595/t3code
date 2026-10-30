@@ -3088,7 +3088,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerGoal = presentComposerGoalBar({
     goal: props.activeThreadShell?.goal ?? null,
     working: props.threadWorking,
-    prompt: activePendingProgress ? activePendingProgress.customAnswer : prompt,
+    // A pending answer advances that question. It does not send `/goal`.
+    prompt: activePendingProgress ? "" : prompt,
     canPauseResume: selectedProvider === "codex",
     hasAttachments: composerImages.length + composerFiles.length > 0,
   });
