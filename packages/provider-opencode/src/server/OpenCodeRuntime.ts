@@ -49,6 +49,15 @@ const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(S
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
+// Older servers load built-in plugins despite OPENCODE_DISABLE_DEFAULT_PLUGINS, and a stored ChatGPT
+// login's plugin would send requests around the proxy.
+const MINIMUM_PROXIED_OPENCODE_VERSION = "1.14.49";
+
+/** The oldest server a spawn may accept, given its environment. */
+export const minimumOpenCodeVersionFor = (environment: NodeJS.ProcessEnv | undefined): string =>
+  environment?.OPENCODE_DISABLE_DEFAULT_PLUGINS === "1"
+    ? MINIMUM_PROXIED_OPENCODE_VERSION
+    : MINIMUM_OPENCODE_VERSION;
 const OPENCODE_HEALTH_TIMEOUT = "5 seconds";
 
 const OpenCodeHealthSchema = Schema.Struct({
@@ -212,6 +221,7 @@ export const runOpenCodeSdk = <A>(
 
 export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (
   client: OpencodeClient,
+  minimumVersion: string = MINIMUM_OPENCODE_VERSION,
 ) {
   const healthOption = yield* runOpenCodeSdk("global.health", (signal) =>
     client.global.health({ signal }),
@@ -239,10 +249,10 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
       detail: `OpenCode server returned an invalid version. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
     });
   }
-  if (compareSemverVersions(health.version, MINIMUM_OPENCODE_VERSION) < 0) {
+  if (compareSemverVersions(health.version, minimumVersion) < 0) {
     return yield* new OpenCodeRuntimeError({
       operation: "global.health",
-      detail: `OpenCode v${health.version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+      detail: `OpenCode v${health.version} is too old. Upgrade to v${minimumVersion} or newer.`,
     });
   }
   return health.version;
@@ -738,6 +748,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             directory: input.directory,
             ...(serverPassword !== undefined ? { serverPassword } : {}),
           }),
+          minimumOpenCodeVersionFor(input.environment),
         )
     );
 

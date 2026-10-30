@@ -79,4 +79,19 @@ describe("verifyOpenCodeServerVersion", () => {
       expect(error.detail).toContain("v1.14.18 is too old");
     }),
   );
+
+  effectIt.effect("rejects a proxied server that cannot suppress its built-in plugins", () =>
+    Effect.gen(function* () {
+      const proxied = OpenCodeRuntime.applyOpenCodeProxyEnvironment(
+        {},
+        { url: "http://proxy:8317", apiKey: "sk" },
+      );
+      const error = yield* OpenCodeRuntime.verifyOpenCodeServerVersion(
+        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.48" } })),
+        OpenCodeRuntime.minimumOpenCodeVersionFor(proxied),
+      ).pipe(Effect.flip);
+      expect(error.detail).toBe("OpenCode v1.14.48 is too old. Upgrade to v1.14.49 or newer.");
+      expect(OpenCodeRuntime.minimumOpenCodeVersionFor({})).toBe("1.14.19");
+    }),
+  );
 });
