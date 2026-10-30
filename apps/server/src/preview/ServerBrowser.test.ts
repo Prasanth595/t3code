@@ -919,6 +919,45 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      let event = yield* PubSub.take(events);
+      while (
+        event.type !== "navigated" ||
+        event.tabId !== tabId ||
+        event.snapshot.navStatus._tag !== "Success"
+      ) {
+        event = yield* PubSub.take(events);
+      }
+      expect(event.type === "navigated" && event.snapshot.navStatus).toMatchObject({
+        _tag: "Success",
+        title: "test page",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("only the controlling viewer's copy and cut keys reach its clipboard", () =>
   Effect.scoped(
     Effect.gen(function* () {
