@@ -1044,7 +1044,6 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  // regression: #22806 Copilot rejects T3's stdio MCP bridge
   it.effect("gives Copilot T3's MCP server over HTTP when it advertises HTTP", () =>
     Effect.gen(function* () {
       const selfInvocation = yield* resolveSelfInvocation();
@@ -1155,6 +1154,14 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(
         yield* sessionMcpServers({ agentId: "github-copilot-cli" }, { T3_ACP_MCP_HTTP: "1" }),
         { new: http("Bearer opened-token"), load: http("Bearer rotated-token") },
+      );
+      const acp = [{ type: "acp", name: "t3-code", serverId: "t3-code" }];
+      assert.deepEqual(
+        yield* sessionMcpServers(
+          { agentId: "github-copilot-cli" },
+          { T3_ACP_MCP_HTTP: "1", T3_ACP_MCP_ACP: "1" },
+        ),
+        { new: acp, load: acp },
       );
       assert.deepEqual(yield* sessionMcpServers({ agentId: "github-copilot-cli" }), {
         new: stdio("Bearer opened-token"),
