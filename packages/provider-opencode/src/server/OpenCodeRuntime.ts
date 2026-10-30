@@ -304,8 +304,27 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
 
 const PROXY_ROUTED_OPENCODE_PROVIDERS = ["anthropic", "openai"] as const;
 
-const providerBaseUrl = (config: unknown, providerId: string): unknown =>
-  asRecord(asRecord(asRecord(asRecord(config).provider)[providerId]).options).baseURL;
+const routedProvider = (config: unknown, providerId: string) =>
+  asRecord(asRecord(asRecord(config).provider)[providerId]);
+
+const hasAuthHeader = (headers: unknown) =>
+  Object.keys(asRecord(headers)).some((name) => AUTH_HEADER_PATTERN.test(name));
+
+/** The provider sends exactly the proxy's endpoint and token, with no other credential. */
+const routesOnlyToProxy = (effective: unknown, requested: unknown, providerId: string) => {
+  const provider = routedProvider(effective, providerId);
+  const options = asRecord(provider.options);
+  const wanted = asRecord(routedProvider(requested, providerId).options);
+  return (
+    options.baseURL === wanted.baseURL &&
+    options.apiKey === wanted.apiKey &&
+    !("authToken" in options) &&
+    !hasAuthHeader(options.headers) &&
+    Object.values(asRecord(provider.models)).every(
+      (model) => !hasAuthHeader(asRecord(model).headers),
+    )
+  );
+};
 
 /**
  * Organization and managed configs merge after OPENCODE_CONFIG_CONTENT and can point a routed
@@ -340,10 +359,10 @@ export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting"
     });
   }
   for (const providerId of PROXY_ROUTED_OPENCODE_PROVIDERS) {
-    if (providerBaseUrl(effective.data, providerId) !== providerBaseUrl(requested, providerId)) {
+    if (!routesOnlyToProxy(effective.data, requested, providerId)) {
       return yield* new OpenCodeRuntimeError({
         operation: "config.get",
-        detail: `OpenCode's ${providerId} provider points somewhere other than the proxy, likely from an organization or managed config. Remove that override or turn off Use proxy.`,
+        detail: `OpenCode's ${providerId} provider uses an endpoint or credential other than the proxy's, likely from an organization or managed config. Remove that override or turn off Use proxy.`,
       });
     }
   }

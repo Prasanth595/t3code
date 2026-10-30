@@ -78,7 +78,27 @@ describe("verifyOpenCodeProxyRouting", () => {
         }),
         environment,
       ).pipe(Effect.flip);
-      expect(error.detail).toContain("openai provider points somewhere other than the proxy");
+      expect(error.detail).toContain("openai provider uses an endpoint or credential other");
+
+      // A later config can keep the proxy URL but restore a direct credential.
+      for (const override of [
+        { apiKey: "sk-ant-direct" },
+        { authToken: "direct" },
+        { headers: { "X-Api-Key": "sk-ant-direct" } },
+      ]) {
+        const anthropic = requested.provider.anthropic;
+        const restored = yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(
+          clientWith({
+            ...requested,
+            provider: {
+              ...requested.provider,
+              anthropic: { ...anthropic, options: { ...anthropic.options, ...override } },
+            },
+          }),
+          environment,
+        ).pipe(Effect.flip);
+        expect(restored.detail).toContain("anthropic provider uses an endpoint or credential");
+      }
 
       const widened = yield* OpenCodeRuntime.verifyOpenCodeProxyRouting(
         clientWith({ ...requested, enabled_providers: ["anthropic", "openai", "openrouter"] }),
