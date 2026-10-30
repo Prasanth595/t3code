@@ -1233,8 +1233,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
-      // Pi 0.84.x and 0.85.x run queued steers and follow-ups as soon as abort lands, so Stop
-      // clears them first. Pi before 0.84.4 rejects clear_queue and keeps that behavior.
+      // Abort leaves queued steers and follow-ups for Pi's next prompt, and Pi before 0.86 starts them
+      // as soon as abort lands, so Stop clears them first. Pi before 0.84.4 rejects clear_queue.
       const clearNativeQueue = Effect.fnUntraced(function* (turn: ActivePiTurn) {
         const cleared = yield* request({ type: "clear_queue" }, 2_000).pipe(
           Effect.map((data) =>
@@ -1255,7 +1255,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 `queue-cleared:${turn.providerTurn.id}`,
                 [
                   `Stop cleared ${cleared.length} queued ${cleared.length === 1 ? "message" : "messages"} Pi had not read:`,
-                  ...cleared,
+                  // Image-only messages come back as empty text.
+                  ...cleared.filter((text) => text.length > 0),
                 ]
                   .join("\n\n")
                   .slice(0, 2_000),

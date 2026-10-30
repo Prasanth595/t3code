@@ -3893,9 +3893,9 @@ describe("PiAdapterV2", () => {
   it.effect.each([
     {
       pi: "clears its native queue",
-      clearQueue: { steering: ["Use the other file"], followUp: ["Then summarize"] },
+      clearQueue: { steering: ["Use the other file", ""], followUp: ["Then summarize"] },
       notices: [
-        "Stop cleared 2 queued messages Pi had not read:\n\nUse the other file\n\nThen summarize",
+        "Stop cleared 3 queued messages Pi had not read:\n\nUse the other file\n\nThen summarize",
       ],
     },
     { pi: "predates clear_queue", clearQueue: "unknown_command", notices: [] },
