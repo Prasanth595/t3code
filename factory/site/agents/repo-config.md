@@ -63,7 +63,7 @@ With the machine config's `default_project` set, a T3 project whose GitHub-origi
 | ------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `instructors`       | `default_project.instructors`                                                                                 |
 | `limits`            | `default_project.limits`, with its defaults                                                                   |
-| `base`              | The checkout's `origin/HEAD` branch                                                                           |
+| `base`              | The repo's default branch on GitHub                                                                           |
 | `required_checks`   | `[]`                                                                                                          |
 | `autonomy`          | `pr`                                                                                                          |
 | `provision`, `gate` | Inferred from the files committed at the root of `origin/HEAD`, read with `git` in the checkout on every pass |
@@ -78,7 +78,9 @@ With the machine config's `default_project` set, a T3 project whose GitHub-origi
 
 A repo with both manifests gets both: composer first in `provision` and in `gate`. With more than one lockfile, the first row that matches wins. A `package.json` with no lockfile infers nothing.
 
-No gate inferred (no manifest, or no matching script): the repo is watched, its reading is one error saying no gate could be inferred and a `factory` block in `.dw/config.yml` is needed, and its issues are not claimed. A clone with no `origin/HEAD` is not watched; a `git` that times out leaves the checkout unresolved for that pass.
+Each pass reads `.dw/config.yml` on the default branch on GitHub first: if it has a `factory` block, that block is used as for any repo, even though the checkout showed none.
+
+No gate inferred (no manifest, or no matching script): the repo is watched, its reading is one error saying no gate could be inferred and a `factory` block in `.dw/config.yml` is needed, and its issues are not claimed. A clone with no `origin/HEAD` is watched with one error saying to run `git remote set-head origin --auto`. A `git` that times out leaves the checkout unresolved for that pass. A checkout T3 cannot name (no remote) is not watched. When another project of the same repo has its own `factory` block, the defaulted checkout is dropped, so the repo is not ambiguous.
 
 ## Gate
 

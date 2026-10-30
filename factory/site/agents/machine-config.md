@@ -20,7 +20,7 @@ File: `<base dir>/factory/config.yml`, by default `~/.config/t3fac/factory/confi
 | `prune_branches_dry_run`    | boolean      | no       | `false` | The prune decides and logs `would prune` lines, and deletes nothing.                                                                                        |
 | `default_project`           | mapping      | no       | none    | The block a T3 project with no `factory` block is watched with. See below.                                                                                  |
 
-`default_project` keys. Any other key, there or under `limits`, is an error `default_project.<key>: unknown key`. A settings save keeps the block.
+`default_project` keys. Any other key is an error `default_project.<key>: unknown key`, or `default_project.limits.<key>: unknown key` under `limits`. A settings save keeps the block.
 
 | Key                           | Type            | Required | Default | Rule                                  |
 | ----------------------------- | --------------- | -------- | ------- | ------------------------------------- |

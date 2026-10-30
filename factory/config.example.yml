@@ -74,8 +74,17 @@ notify: true
 # A version from before this key rejects it, so delete it before rolling back that far.
 # keep_versions: 3
 
+# A T3 project whose checkout has no `factory` block is watched on this block when it is set,
+# with its provision and gate inferred from the package.json or composer.json on its default
+# branch. A repo with its own block uses that block alone. Unset, such a project is not watched.
+# A version from before this key rejects it, so delete it before rolling back that far.
+# default_project:
+#   instructors: [your-login]
+#   limits: { gate_retries: 2 }
+
 # There is no `repos` key (retired by #106). The factory watches the T3 projects of this
-# server whose checkout has a .dw/config.yml with a `factory` block. To add a repo, add its
+# server whose checkout has a .dw/config.yml with a `factory` block, or with
+# `default_project` set every one with a GitHub origin. To add a repo, add its
 # clone as a project on this server once (the sidebar, or `t3 project add <path>`). The clone
 # is one of its own, never the one the Rust factory uses. A clone with an `upstream` remote is
 # not watched, since T3 names it by that remote. Take a repo out of the Rust factory's
