@@ -202,11 +202,14 @@ it.effect.each([
     const provider = yield* ForgejoPullRequestProvider.make;
     const readChecks = provider.getChangeRequestChecks;
     if (readChecks === undefined) return yield* Effect.die("checks read missing");
-    const { checks } = yield* readChecks(requiredChecksInput);
-    assert.deepStrictEqual(
-      checks.map((check) => [check.name, check.status]),
-      [["ci/required-build", "success"]],
-    );
+    const summary = yield* readChecks(requiredChecksInput);
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status]),
+        [["ci/required-build", "success"]],
+      );
+    }
   }).pipe(Effect.provide(requiredChecksLayer(Effect.succeed({}), statuses))),
 );
 

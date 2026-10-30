@@ -36,20 +36,6 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
   );
 }
 
-function supersedes(
-  entry: { readonly at: string | null; readonly sequence?: number },
-  kept: { readonly at: string | null; readonly sequence?: number },
-): boolean {
-  if (!isAtLeastAsNew(entry.at, kept.at)) return false;
-  const tied = isAtLeastAsNew(kept.at, entry.at);
-  return (
-    !tied ||
-    entry.sequence === undefined ||
-    kept.sequence === undefined ||
-    entry.sequence >= kept.sequence
-  );
-}
-
 export function sortChecks(
   checks: ReadonlyArray<PullRequestCheck>,
 ): ReadonlyArray<PullRequestCheck> {
@@ -77,7 +63,17 @@ export function dedupeChecks(
   for (const entry of entries) {
     const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
     const kept = newestByCheck.get(key);
-    if (kept === undefined || supersedes(entry, kept)) newestByCheck.set(key, entry);
+    if (kept !== undefined) {
+      if (!isAtLeastAsNew(entry.at, kept.at)) continue;
+      if (
+        entry.sequence !== undefined &&
+        kept.sequence !== undefined &&
+        entry.sequence < kept.sequence &&
+        isAtLeastAsNew(kept.at, entry.at)
+      )
+        continue;
+    }
+    newestByCheck.set(key, entry);
   }
   const survivors = [...newestByCheck.values()];
   const countsByName = new Map<string, number>();
