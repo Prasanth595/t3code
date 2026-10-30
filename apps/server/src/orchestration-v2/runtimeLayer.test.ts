@@ -1453,6 +1453,118 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("records an MCP question once and queues its answer as a message", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-mcp-question");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-mcp-question-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-mcp-question-project"),
+        title: "MCP question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-mcp-question-message"),
+        threadId,
+        messageId: MessageId.make("runtime-mcp-question-message"),
+        text: "Pick a database for me.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "not under test",
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const requestId = RuntimeRequestId.make("runtime-mcp-question-request");
+      const requestNodeId = NodeId.make("runtime-mcp-question-node");
+      const turnItemId = TurnItemId.make("runtime-mcp-question-item");
+      const record = (commandId: string, itemId = turnItemId) =>
+        orchestrator.dispatch({
+          type: "user_input_request.record",
+          commandId: CommandId.make(commandId),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId!,
+          requestNodeId,
+          requestId,
+          turnItemId: itemId,
+          questions: [
+            {
+              id: "question-1",
+              header: "Database",
+              question: "Which database?",
+              options: [
+                { label: "Postgres", description: "Postgres" },
+                { label: "SQLite", description: "SQLite" },
+              ],
+            },
+          ],
+        });
+      yield* record("runtime-mcp-question-record");
+      const asked = yield* orchestrator.getThreadProjection(threadId);
+      yield* record("runtime-mcp-question-record-again");
+      assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), asked);
+      const request = asked.runtimeRequests.find((row) => row.id === requestId);
+      assert.equal(request?.status, "pending");
+      assert.deepEqual(request?.responseCapability, { type: "message" });
+      const node = asked.nodes.find((row) => row.id === requestNodeId);
+      assert.equal(node?.kind, "user_input_request");
+      assert.equal(node?.parentNodeId, run.rootNodeId);
+      assert.equal(node?.status, "waiting");
+      const item = asked.turnItems.find((row) => row.id === turnItemId);
+      assert.equal(item?.type, "user_input_request");
+      assert.equal(item?.status, "waiting");
+
+      const commandId = CommandId.make("runtime-mcp-question-answer");
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        answers: { "question-1": "SQLite" },
+      });
+      const answered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        answered.runtimeRequests.find((row) => row.id === requestId)?.status,
+        "resolved",
+      );
+      assert.equal(answered.nodes.find((row) => row.id === requestNodeId)?.status, "completed");
+      assert.equal(
+        answered.messages.find((message) => message.id === `async-answer:${requestId}`)?.text,
+        "Which database?\nSQLite",
+      );
+      assert.notInclude(
+        (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
+        "runtime-request.respond",
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("runtime-mcp-question-stop"),
+        threadId,
+      });
+      const late = yield* record(
+        "runtime-mcp-question-after-stop",
+        TurnItemId.make("runtime-mcp-question-late-item"),
+      ).pipe(Effect.flip);
+      assert.include(String(late.cause), "not active");
+    }),
+  );
+
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

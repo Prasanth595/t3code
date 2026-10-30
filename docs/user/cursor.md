@@ -37,6 +37,8 @@ The adapter supports:
 - changing the model and model parameters between turns;
 - assistant text, reasoning, tool activity, plans, and todo streaming;
 - thread-scoped T3 Code MCP tools;
+- multiple-choice questions in T3 Code's question card, through the `ask_user_question` MCP tool.
+  Cursor ends its turn after asking, and your answer arrives as the next message;
 - image attachments;
 - interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
 - provider conversation snapshots through `Agent.messages.list()`;

@@ -769,6 +769,34 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
 
+export const OrchestratorMcpAskUserQuestionInput = Schema.Struct({
+  questions: Schema.Array(
+    Schema.Struct({
+      header: TrimmedNonEmptyString.annotate({ description: "Short tag, such as 'Database'." }),
+      question: TrimmedNonEmptyString,
+      options: Schema.Array(
+        Schema.Struct({
+          label: TrimmedNonEmptyString,
+          description: Schema.optional(Schema.String),
+        }),
+      ).check(Schema.isMinLength(2), Schema.isMaxLength(5)),
+      multiSelect: Schema.optional(Schema.Boolean),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description: "Retry key for this ask.",
+  }),
+});
+export type OrchestratorMcpAskUserQuestionInput = typeof OrchestratorMcpAskUserQuestionInput.Type;
+
+export const OrchestratorMcpAskUserQuestionResult = Schema.Struct({
+  status: Schema.Literal("asked").annotate({
+    description: "Shown to the user. End your turn; the answers arrive as the next user message.",
+  }),
+  requestId: RuntimeRequestId,
+});
+export type OrchestratorMcpAskUserQuestionResult = typeof OrchestratorMcpAskUserQuestionResult.Type;
+
 export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId).annotate({
     description:

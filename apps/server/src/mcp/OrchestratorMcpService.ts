@@ -25,6 +25,9 @@ import {
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
+  type OrchestratorMcpAskUserQuestionInput,
+  type OrchestratorMcpAskUserQuestionResult,
+  RuntimeRequestId,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
@@ -189,6 +192,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  readonly askUserQuestion: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpAskUserQuestionInput,
+  ) => Effect.Effect<OrchestratorMcpAskUserQuestionResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -2107,6 +2114,57 @@ const make = Effect.gen(function* () {
       return { status, secretRef: secretRef.value };
     }),
 
+    askUserQuestion: Effect.fn("OrchestratorMcpService.askUserQuestion")(function* (scope, input) {
+      if (!scope.capabilities.has("questions")) {
+        return yield* failure(
+          "invalid_request",
+          "This provider has its own question tool. Use it instead.",
+        );
+      }
+      const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "ask_user_question");
+      const threadId = threadScope.thread.threadId;
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Asking a question requires an active run owned by this MCP provider session.",
+        );
+      }
+      const key = yield* requestKey(input.clientRequestId);
+      const idPart = `${stablePart(threadId)}:${stablePart(key)}`;
+      const requestId = RuntimeRequestId.make(`runtime-request:mcp-question:${idPart}`);
+      yield* threadManagement
+        .dispatch({
+          type: "user_input_request.record",
+          commandId: stableCommandId({ scope, requestKey: key, operation: "ask-question" }),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          requestNodeId: NodeId.make(`node:mcp-question:${idPart}`),
+          requestId,
+          turnItemId: TurnItemId.make(`turn-item:mcp-question:${idPart}`),
+          questions: input.questions.map((question, index) => ({
+            id: `question-${index + 1}`,
+            header: question.header,
+            question: question.question,
+            options: question.options.map((option) => ({
+              label: option.label,
+              description: option.description?.trim() || option.label,
+            })),
+            multiSelect: question.multiSelect === true,
+          })),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Could not ask the question: ${errorMessage(error)}`),
+          ),
+        );
+      return { status: "asked" as const, requestId };
+    }),
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope);
       const providers = yield* loadProviders;

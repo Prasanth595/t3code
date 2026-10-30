@@ -16,6 +16,8 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
+  OrchestratorMcpAskUserQuestionInput,
+  OrchestratorMcpAskUserQuestionResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
@@ -207,6 +209,19 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Title, "Request a secret from the user")
   .annotate(Tool.Destructive, false);
 
+const AskUserQuestionTool = Tool.make("ask_user_question", {
+  description:
+    "Ask the user 1-4 multiple-choice questions in a card instead of asking in chat. The user can also type their own answer. Then end your turn: the answers arrive as the next user message.",
+  parameters: OrchestratorMcpAskUserQuestionInput,
+  success: OrchestratorMcpAskUserQuestionResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Ask the user a question")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutQuestions);
+
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create new top-level threads in this checkout. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit.",
@@ -358,6 +373,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  AskUserQuestionTool,
   CreateThreadsTool,
   ThreadListTool,
   ThreadReadTool,

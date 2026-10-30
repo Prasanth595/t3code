@@ -3484,6 +3484,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
+  /** Records questions an agent asked through T3's MCP server; answers arrive as a message. */
+  Schema.Struct({
+    type: Schema.Literal("user_input_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    requestNodeId: NodeId,
+    requestId: RuntimeRequestId,
+    turnItemId: TurnItemId,
+    questions: Schema.Array(OrchestrationV2UserInputQuestion),
+  }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no
    * client can mark a request linked without the link being made.

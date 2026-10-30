@@ -500,6 +500,24 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .requestSecret(makeScope(), { label: "Secret", reason: "requires a run" })
       .pipe(Effect.flip);
     expect(secret.code).toBe("parent_not_active");
+    const questions = [
+      {
+        header: "Database",
+        question: "Which database?",
+        options: [{ label: "Postgres" }, { label: "SQLite" }],
+      },
+    ];
+    const nativeQuestions = yield* service
+      .askUserQuestion(makeScope(), { questions })
+      .pipe(Effect.flip);
+    expect(nativeQuestions.code).toBe("invalid_request");
+    const question = yield* service
+      .askUserQuestion(
+        { ...makeScope(), capabilities: new Set(["orchestration", "questions"]) },
+        { questions },
+      )
+      .pipe(Effect.flip);
+    expect(question.code).toBe("parent_not_active");
 
     parentShell = { ...parentShell, providerInstanceId: customCodexInstanceId };
     const switchedScope = {
