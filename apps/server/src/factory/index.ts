@@ -202,6 +202,8 @@ const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>
 /** A project config that could not be had: the pass's error, and the same problems per field. */
 interface ProjectReadError extends PassError {
   readonly errors: ReadonlyArray<ConfigError>;
+  /** Set once the read knows whether the repo runs on the default or on its own block. */
+  readonly onDefault?: boolean;
 }
 
 /** The checkout's own `.dw/config.yml`, for a repo whose default branch `branch` has none on GitHub. */
@@ -263,8 +265,19 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
       kind: "config",
       message: resolved.failure.map(formatConfigError).join("; "),
       errors: resolved.failure,
+      onDefault: true,
     });
   }
+  return yield* ownBlock(found, checkout).pipe(
+    Effect.mapError((error): ProjectReadError => ({ ...error, onDefault: false })),
+  );
+});
+
+/** The repo's own `factory` block: GitHub's copy, else the checkout's, naming the default branch. */
+const ownBlock = Effect.fn("Factory.ownBlock")(function* (
+  found: { readonly branch: string; readonly text: string | null },
+  checkout: string,
+) {
   const { file, text } =
     found.text !== null
       ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
@@ -649,7 +662,11 @@ export const liveWorld = (
           lastGoodCopy(lastGood, watched.repo, "project", error) !== undefined
             ? Effect.void
             : Effect.sync(() =>
-                onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
+                onProject?.(watched.repo, {
+                  kind: "errors",
+                  errors: error.errors,
+                  ...(error.onDefault !== undefined && { onDefault: error.onDefault }),
+                }),
               ),
         ),
         Effect.mapError((error): PassError => ({

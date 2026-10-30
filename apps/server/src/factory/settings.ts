@@ -183,9 +183,11 @@ const watchedReport = (
   const ambiguous = ambiguousRepos(watched.success.repos);
   const repos = watched.success.repos.map(({ repo, path, title, defaulted }) => {
     const reading = readings.get(repo);
-    // What the pass ran on, once it has: a checkout that showed no block can have one on GitHub.
+    // What the pass read, once it knows: a checkout that showed no block can have one on GitHub.
     const default_config =
-      reading?.kind === "ok" ? reading.onDefault === true : defaulted !== undefined;
+      reading?.kind === "ok"
+        ? reading.onDefault === true
+        : (reading?.onDefault ?? defaulted !== undefined);
     const paths = ambiguous.get(asciiLower(repo));
     if (paths !== undefined) {
       // The pass loaded neither checkout, so there is no reading to show.

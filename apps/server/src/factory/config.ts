@@ -99,7 +99,12 @@ export type RepoConfigReading =
       /** The project config is the machine's `default_project`, resolved for the repo. */
       readonly onDefault?: true;
     }
-  | { readonly kind: "errors"; readonly errors: ReadonlyArray<ConfigError> };
+  | {
+      readonly kind: "errors";
+      readonly errors: ReadonlyArray<ConfigError>;
+      /** Whether the errors are the default's or the repo's own block's; absent when neither was read. */
+      readonly onDefault?: boolean;
+    };
 
 export interface WatchedRepo {
   readonly repo: string;
