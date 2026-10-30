@@ -95,7 +95,11 @@ import {
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
 } from "./clientTerminals.ts";
-import { ACP_EMPTY_OPTION_VALUE, ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
+import {
+  ACP_EMPTY_OPTION_VALUE,
+  ACP_SESSION_MODE_OPTION_ID,
+  flattenSelectChoices,
+} from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
   t3AcpPromptWithInstructions,
@@ -5814,6 +5818,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     Effect.void
                 );
               }
+              if (notification.update.sessionUpdate === "config_option_update") {
+                const selection = yield* Ref.get(activeSelection);
+                const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+                const model =
+                  selection === null
+                    ? undefined
+                    : (flavor.resolveModelId?.(selection) ?? selection.model);
+                if (
+                  model !== undefined &&
+                  modelOption?.type === "select" &&
+                  !flattenSelectChoices(modelOption.options).some(
+                    (choice) => choice.value === model,
+                  )
+                ) {
+                  yield* Ref.set(activeSelection, null);
+                }
+              }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
@@ -6697,10 +6718,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (modelOption?.type === "select") {
               if (
                 isCustomModel ||
-                modelOption.options.some((entry) =>
-                  "value" in entry
-                    ? entry.value === requestedModel
-                    : entry.options.some((choice) => choice.value === requestedModel),
+                flattenSelectChoices(modelOption.options).some(
+                  (choice) => choice.value === requestedModel,
                 )
               ) {
                 yield* runtime

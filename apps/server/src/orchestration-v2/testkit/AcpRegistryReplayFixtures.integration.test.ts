@@ -32,15 +32,11 @@ describe("ACP registry replay fixtures", () => {
     { name: "open", firstTurn: false, code: -32602 },
     { name: "switch", firstTurn: true, code: -32602 },
     { name: "authentication", firstTurn: false, code: -32000 },
-    { name: "restricted-config", firstTurn: false, code: -32602 },
-    { name: "restricted-legacy", firstTurn: false, code: -32602 },
   ])("preserves the ACP model-write $name failure through orchestration", (testCase) =>
     Effect.gen(function* () {
       const name = `acp_model_write_${testCase.name}`;
       const sessionId = "grok-replay-session-1";
       const rejectedModel = "replay-model-b";
-      const restricted = testCase.name.startsWith("restricted-");
-      const legacy = testCase.name === "restricted-legacy";
       const modelSelection = {
         instanceId: ProviderInstanceId.make("acpRegistry"),
         model: rejectedModel,
@@ -65,63 +61,48 @@ describe("ACP registry replay fixtures", () => {
               method: "session/new",
               result: {
                 sessionId,
-                configOptions: legacy
-                  ? []
-                  : [
-                      {
-                        id: "model",
-                        name: "Model",
-                        category: "model",
-                        type: "select",
-                        currentValue: "replay-model-a",
-                        options: [
-                          { value: "replay-model-a", name: "Model A" },
-                          ...(!restricted ? [{ value: rejectedModel, name: "Model B" }] : []),
-                        ],
-                      },
+                configOptions: [
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select",
+                    currentValue: "replay-model-a",
+                    options: [
+                      { value: "replay-model-a", name: "Model A" },
+                      { value: rejectedModel, name: "Model B" },
                     ],
-                ...(legacy
-                  ? {
-                      models: {
-                        currentModelId: "replay-model-a",
-                        availableModels: [{ modelId: "replay-model-a", name: "Model A" }],
-                      },
-                    }
-                  : {}),
+                  },
+                ],
               },
             },
           },
-          ...(testCase.firstTurn || restricted
+          ...(testCase.firstTurn
             ? recorded.entries
                 .slice(sessionIndex + 1)
                 .filter((entry) => entry.type !== "runtime_exit")
             : []),
-          ...(!restricted
-            ? [
-                {
-                  type: "expect_outbound" as const,
-                  label: "session.set_model",
-                  frame: {
-                    kind: "request",
-                    method: "session/set_config_option",
-                    params: { sessionId, configId: "model", value: rejectedModel },
-                  },
-                },
-                {
-                  type: "emit_inbound" as const,
-                  label: "session.set_model.rejected",
-                  frame: {
-                    kind: "response",
-                    method: "session/set_config_option",
-                    error: {
-                      code: testCase.code,
-                      message:
-                        testCase.code === -32602 ? "Invalid provider" : "Authentication required",
-                    },
-                  },
-                },
-              ]
-            : []),
+          {
+            type: "expect_outbound",
+            label: "session.set_model",
+            frame: {
+              kind: "request",
+              method: "session/set_config_option",
+              params: { sessionId, configId: "model", value: rejectedModel },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "session.set_model.rejected",
+            frame: {
+              kind: "response",
+              method: "session/set_config_option",
+              error: {
+                code: testCase.code,
+                message: testCase.code === -32602 ? "Invalid provider" : "Authentication required",
+              },
+            },
+          },
         ],
       } satisfies ProviderReplayTranscript;
       const materialized = yield* materializeFixtureInput({

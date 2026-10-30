@@ -28,6 +28,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
@@ -466,6 +467,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly rejectedModel?: string;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -603,7 +605,19 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.push(published);
           current = target;
         }
-      }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            assert.isDefined(input.rejectedModel);
+            assert.equal(
+              makeProviderFailure({ cause: error }).message,
+              `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
+            );
+          },
+          onSuccess: () => assert.isUndefined(input.rejectedModel),
+        }),
+        Effect.scoped,
+      );
       yield* Effect.all(agentExits, { discard: true });
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
@@ -767,6 +781,45 @@ describe("AcpRegistryAdapterV2", () => {
               { models: ["hermes", "auto", "default"], current: "hermes" },
             ],
           );
+        }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect.each(["config", "legacy", "updated-config"] as const)(
+      "rejects an unavailable explicit model in a %s catalog before inference",
+      (catalog) =>
+        openWithStoredPicks({
+          setup:
+            catalog === "legacy"
+              ? {
+                  models: {
+                    currentModelId: "other",
+                    availableModels: [{ modelId: "other", name: "Other" }],
+                  },
+                }
+              : {
+                  configOptions: [
+                    {
+                      ...modelOption("model", "hermes"),
+                      options: [{ value: "hermes", name: "Hermes" }],
+                    },
+                  ],
+                },
+          storedModel: catalog === "updated-config" ? "hermes" : "missing",
+          ...(catalog === "updated-config" ? { turnModels: ["hermes", "hermes"] } : {}),
+          rejectedModel: catalog === "updated-config" ? "hermes" : "missing",
+          pickFrames:
+            catalog === "updated-config"
+              ? [
+                  ...prompt(
+                    configOptionUpdate([
+                      {
+                        ...modelOption("model", "other"),
+                        options: [{ value: "other", name: "Other" }],
+                      },
+                    ]),
+                  ),
+                ]
+              : [],
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
