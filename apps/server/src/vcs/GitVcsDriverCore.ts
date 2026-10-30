@@ -3312,6 +3312,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ]),
     delay: Effect.yieldNow,
     collectWhile: (entries) => entries.size < 4,
+    // Named child spans cover batch I/O.
     runAll: Effect.fnUntraced(
       function* (entries) {
         const input = entries[0].request.input;
@@ -3380,6 +3381,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.scoped,
     ),
   });
+  // readReviewDiffPreview already provides the operation span.
   const getReviewDiffPreview = Effect.fnUntraced(function* (input: ReviewDiffPreviewInput) {
     if (!input.file) return yield* readReviewDiffPreview(input);
     const released = yield* Deferred.make<void>();
