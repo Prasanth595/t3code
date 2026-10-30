@@ -44,8 +44,14 @@ const TABLE_START_PATTERN = /^\s*<table\b/iu;
 const TABLE_END_PATTERN = /<\/table>\s*$/iu;
 const TABLE_OPEN_PATTERN = /<table\b/giu;
 const TABLE_CLOSE_PATTERN = /<\/table\s*>/giu;
-/** `[^<>]` stops each attempt at the next `<`, so a run of unterminated tags stays linear. */
-const TABLE_STRUCTURE_TAG_PATTERN = /<(\/?)(table|thead|tbody|tfoot|tr|td|th)\b[^<>]*>/giu;
+/**
+ * Quoted attribute values may hold `>`. The alternatives start on disjoint characters and an
+ * unquoted run stops at the next `<`, so a run of unterminated tags stays linear.
+ */
+const TABLE_STRUCTURE_TAG_PATTERN =
+  /<(\/?)(table|thead|tbody|tfoot|tr|td|th)\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+/** Rows are laid out independently, so a spanning cell would shift the cells after it. */
+const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
 function isWebUrl(url: string): boolean {
   try {
@@ -104,7 +110,7 @@ function tableRows(html: string): TableRows | null {
         if (closing) rows.push(row!);
         row = closing ? null : [];
       } else if (tag === "td" || tag === "th") {
-        if (closing || row === null) return null;
+        if (closing || row === null || CELL_SPAN_PATTERN.test(match[3]!)) return null;
         cell = { tag, contentStart: match.index + match[0].length };
       } else if (!tableOpen || row !== null) {
         return null;

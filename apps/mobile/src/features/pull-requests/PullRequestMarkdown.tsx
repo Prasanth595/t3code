@@ -92,16 +92,21 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
+  const mediaContext = useContext(PullRequestMediaContext);
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
-  const imageGroupMarkdown = props.imageGroupMarkdown ?? props.markdown;
+  const gallery: FilePreviewItem[] = markdownImageSources(
+    props.imageGroupMarkdown ?? props.markdown,
+  )
+    .filter(
+      (uri) =>
+        /^https?:\/\//i.test(uri) &&
+        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
+    )
+    .map((uri) => pullRequestImageSource(uri, mediaContext));
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) => (
-        <PullRequestBodySegmentView
-          key={segment.id}
-          segment={segment}
-          imageGroupMarkdown={imageGroupMarkdown}
-        />
+        <PullRequestBodySegmentView key={segment.id} segment={segment} gallery={gallery} />
       ))}
     </View>
   );
@@ -109,16 +114,11 @@ export function PullRequestMarkdown(props: {
 
 function PullRequestBodySegmentView(props: {
   readonly segment: PullRequestBodySegment;
-  readonly imageGroupMarkdown: string;
+  readonly gallery: FilePreviewItem[];
 }) {
   const { segment } = props;
   if (segment.kind === "markdown") {
-    return (
-      <PullRequestMarkdownContent
-        markdown={segment.text}
-        imageGroupMarkdown={props.imageGroupMarkdown}
-      />
-    );
+    return <PullRequestMarkdownContent markdown={segment.text} gallery={props.gallery} />;
   }
   if (segment.kind === "attachment") {
     return <PullRequestMedia url={segment.url} kind={segment.media} />;
@@ -135,7 +135,7 @@ function PullRequestBodySegmentView(props: {
                 <PullRequestBodySegmentView
                   key={cellSegment.id}
                   segment={cellSegment}
-                  imageGroupMarkdown={props.imageGroupMarkdown}
+                  gallery={props.gallery}
                 />
               ))}
             </View>
@@ -148,7 +148,7 @@ function PullRequestBodySegmentView(props: {
 
 function PullRequestMarkdownContent(props: {
   readonly markdown: string;
-  readonly imageGroupMarkdown?: string;
+  readonly gallery: FilePreviewItem[];
 }) {
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
@@ -157,22 +157,13 @@ function PullRequestMarkdownContent(props: {
   const openLink = (href: string) => {
     void openPullRequest(href);
   };
-  const gallery: FilePreviewItem[] = markdownImageSources(
-    props.imageGroupMarkdown ?? props.markdown,
-  )
-    .filter(
-      (uri) =>
-        /^https?:\/\//i.test(uri) &&
-        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
-    )
-    .map((uri) => pullRequestImageSource(uri, mediaContext));
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage: MarkdownImageRenderer = (image) => (
     <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />
   );
   const styles = useMarkdownPreviewStyles();
   return (
-    <FilePreviewGallery value={gallery}>
+    <FilePreviewGallery value={props.gallery}>
       <SelectableMarkdownText
         markdown={markdown}
         textStyle={styles.nativeTextStyle}

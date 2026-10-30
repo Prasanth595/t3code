@@ -155,6 +155,16 @@ describe("media tables", () => {
     ]);
   });
 
+  it("keeps a quoted `>` inside a cell's attributes out of its text", () => {
+    const [table] = splitPullRequestBody(
+      `<table>\n<tr><td title="Before > after">Caption</td><td>\n\n${video}\n\n</td></tr>\n</table>`,
+    );
+    expect(table).toMatchObject({
+      kind: "table",
+      rows: [[{ segments: [{ kind: "markdown", text: "Caption" }] }, {}]],
+    });
+  });
+
   it("leaves a table without media links as markdown", () => {
     const body = "<table>\n<tr><td>a</td><td>b</td></tr>\n</table>";
     expect(splitPullRequestBody(body)).toEqual([
@@ -176,6 +186,7 @@ describe("media tables", () => {
       "</td></tr>\n</table>\n</td></tr>\n</table>",
     ],
     ["an unclosed table", "<table>\n<tr><td>", ""],
+    ["a spanning cell", '<table>\n<tr><td colspan="2">', "</td></tr>\n</table>"],
   ])("splits a media table with %s line by line, as before", (_name, open, close) => {
     expect(splitPullRequestBody(`${open}\n\n${video}\n\n${close}`)).toEqual([
       { id: "markdown:0", kind: "markdown", text: open },
