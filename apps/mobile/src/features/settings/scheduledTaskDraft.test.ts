@@ -99,8 +99,8 @@ describe("scheduleFromDraft", () => {
     });
   });
 
-  it.each(["0,5", "2,5,0"])(
-    "rejects intervals that cannot be written as safe whole milliseconds: %s",
+  it.each(["0,5", "2,5,0", "Infinity", "150119987580", ""])(
+    "rejects invalid interval minutes: %s",
     (intervalMinutes) => {
       expect(
         scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes }),
