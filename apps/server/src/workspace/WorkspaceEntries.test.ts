@@ -388,6 +388,44 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("excludes directories hidden by .git/info/exclude from every query", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-info-exclude-", git: true });
+        yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n/build/\n");
+        yield* writeTextFile(cwd, ".worktrees/feature/src/needle.ts", "export const needle = 1;");
+        yield* writeTextFile(cwd, "build/needle.js", "export const needle = 2;");
+        yield* writeTextFile(cwd, "src/build/needle.ts", "export const needle = 3;");
+        yield* writeTextFile(cwd, "src/needle.ts", "export const needle = 4;");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "needle", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+        const contents = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        const expected = ["src/build/needle.ts", "src/needle.ts"];
+        expect(
+          searched.entries.map((entry) => entry.path).filter((path) => path.endsWith(".ts")),
+        ).toEqual(expect.arrayContaining(expected));
+        expect(
+          listed.entries.map((entry) => entry.path).filter((path) => /needle\.[jt]s$/.test(path)),
+        ).toEqual(expected);
+        expect(contents.matches.map((match) => match.path).toSorted()).toEqual(expected);
+        for (const paths of [searched.entries, listed.entries].map((result) =>
+          result.map((entry) => entry.path),
+        )) {
+          expect(paths.some((path) => path.startsWith(".worktrees"))).toBe(false);
+          expect(paths.some((path) => path.startsWith("build"))).toBe(false);
+        }
+      }),
+    );
+
     it.effect("excludes tracked paths that match ignore rules", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({
