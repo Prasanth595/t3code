@@ -124,7 +124,8 @@ export function applyOpenCodeProxyEnvironment(
   const providers = asRecord(base.provider);
   const routed = (id: string) => {
     const provider = asRecord(providers[id]);
-    const options = asRecord(provider.options);
+    // A configured authToken is a direct credential, and the Anthropic SDK rejects it next to apiKey.
+    const { authToken: _authToken, ...options } = asRecord(provider.options);
     return {
       ...provider,
       options: {

@@ -18,6 +18,7 @@ describe("applyOpenCodeProxyEnvironment", () => {
               options: {
                 timeout: 60_000,
                 apiKey: "sk-ant-direct",
+                authToken: "direct-oauth-token",
                 headers: { Authorization: "Bearer direct", "X-Trace": "1" },
               },
               models: { "claude-x": { headers: { "x-api-key": "sk-ant-direct", "X-Tier": "a" } } },
