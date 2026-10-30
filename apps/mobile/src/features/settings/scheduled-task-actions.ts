@@ -64,7 +64,8 @@ export function useScheduledTaskActions(environmentId: EnvironmentId) {
     setBusyTaskId(null);
     if (result._tag === "Failure" && action === "toggle") setRequested(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Dialog.alert(FAILURE_TITLES[action], String(squashAtomCommandFailure(result)));
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(FAILURE_TITLES[action], error instanceof Error ? error.message : "Try again.");
     }
   };
   return { canOperate: permitted && busyTaskId === null, isEnabled, act };
