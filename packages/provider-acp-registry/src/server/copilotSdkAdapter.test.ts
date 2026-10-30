@@ -123,6 +123,8 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
   const switchResults: Array<Awaited<ReturnType<CopilotSdkSession["rpc"]["model"]["switchTo"]>>> =
     [];
   const switchFailures: Array<Error> = [];
+  // Each entry refuses one permission-mode switch, reporting the mode Copilot kept.
+  const permissionRefusals: Array<"allow-all" | "manual"> = [];
   const gate = () => {
     let release!: () => void;
     const promise = new Promise<void>((resolve) => {
@@ -175,7 +177,10 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
       permissions: {
         setMode: async (params) => {
           record("permissions.setMode", params);
-          return { success: true, mode: params.mode };
+          const kept = permissionRefusals.shift();
+          return kept === undefined
+            ? { success: true, mode: params.mode }
+            : { success: false, mode: kept };
         },
         handlePendingPermissionRequest: async (params) => {
           record("permissions.handlePendingPermissionRequest", params);
@@ -322,6 +327,9 @@ const makeFakeCopilot = Effect.fnUntraced(function* () {
     },
     queueSwitchResult: (result: (typeof switchResults)[number]) => {
       switchResults.push(result);
+    },
+    refuseNextPermissionMode: (kept: (typeof permissionRefusals)[number]) => {
+      permissionRefusals.push(kept);
     },
     config: () => config,
     hangAbort: () => {
@@ -1604,10 +1612,11 @@ describe("CopilotSdkAdapterV2", () => {
           { id: "reasoning_effort", value: "high" },
         ]),
       );
+      // The mode goes first: Copilot can switch to a configured plan model with it.
+      assert.deepStrictEqual((yield* fake.takeCall("mode.set")).args, [{ mode: "autopilot" }]);
       assert.deepStrictEqual((yield* fake.takeCall("model.switchTo")).args, [
         { modelId: "claude-sonnet-4.5", reasoningEffort: "high", contextTier: "long_context" },
       ]);
-      assert.deepStrictEqual((yield* fake.takeCall("mode.set")).args, [{ mode: "autopilot" }]);
       assert.deepStrictEqual((yield* fake.takeCall("permissions.setMode")).args, [
         { mode: "allow-all" },
       ]);
@@ -1682,6 +1691,42 @@ describe("CopilotSdkAdapterV2", () => {
       yield* harness.runtime.startTurn({ ...gpt, providerTurnOrdinal: 5 });
       assert.deepStrictEqual((yield* fake.takeCall("model.switchTo")).args, switchToGpt);
       yield* fake.takeCall("sendAndWait");
+      yield* fake.finishRun();
+      yield* harness.untilTerminal();
+      const planInput = yield* turnInput(
+        harness.providerThread,
+        [
+          { id: "mode", value: "https://agentclientprotocol.com/protocol/session-modes#plan" },
+          { id: "allow_all", value: true },
+        ],
+        6,
+      );
+      const plan = {
+        ...planInput,
+        modelSelection: { ...planInput.modelSelection, model: "gpt-5.5" },
+      };
+      yield* harness.runtime.startTurn(plan);
+      yield* fake.takeCall("sendAndWait");
+      yield* fake.finishRun();
+      yield* harness.untilTerminal();
+      // Copilot kept allow-all: a prompt now would auto-approve what T3 should ask about.
+      fake.refuseNextPermissionMode("allow-all");
+      const kept = yield* harness.runtime
+        .startTurn({ ...gpt, providerTurnOrdinal: 7 })
+        .pipe(Effect.flip);
+      assert.isTrue(Predicate.isTagged(kept.cause, "CopilotPromptNotSentError"));
+      assert.deepStrictEqual((yield* fake.takeCall("mode.set")).args, [{ mode: "interactive" }]);
+      assert.deepStrictEqual((yield* fake.takeCall("permissions.setMode")).args, [
+        { mode: "manual" },
+      ]);
+      // Copilot did leave plan mode, so going back to the earlier settings switches again.
+      yield* harness.runtime.startTurn({ ...plan, providerTurnOrdinal: 7 });
+      assert.deepInclude(yield* fake.nextCall, { method: "mode.set", args: [{ mode: "plan" }] });
+      assert.deepInclude(yield* fake.nextCall, {
+        method: "permissions.setMode",
+        args: [{ mode: "allow-all" }],
+      });
+      assert.deepInclude(yield* fake.nextCall, { method: "sendAndWait" });
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

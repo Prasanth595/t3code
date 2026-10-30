@@ -2496,14 +2496,27 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
             catch: (cause) => protocolError(`Copilot ${operation} failed`, cause),
           }),
         );
+      // Each setting is unknown while its call is out, so a failed or refused call is retried on
+      // the next turn instead of being skipped as already applied.
       const applySettings = Effect.fnUntraced(function* (
         target: CopilotSdkSession,
         settings: CopilotSessionSettings,
       ) {
+        if (applied.mode !== settings.mode) {
+          applied = { ...applied, mode: undefined };
+          const switched = yield* call("mode switch", () =>
+            target.rpc.mode.set({ mode: settings.mode }),
+          );
+          // A configured plan model can come with the mode; the model switch below sets it back.
+          applied = switched.modelChanged
+            ? { ...applied, mode: settings.mode, model: undefined, reasoningEffort: undefined }
+            : { ...applied, mode: settings.mode };
+        }
         if (
           applied.model !== settings.model ||
           applied.reasoningEffort !== settings.reasoningEffort
         ) {
+          applied = { ...applied, model: undefined, reasoningEffort: undefined };
           // null clears an effort override; an omitted effort would keep the previous one.
           const switched = yield* call("model switch", () =>
             target.rpc.model.switchTo({
@@ -2527,7 +2540,6 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
             yield* Effect.logWarning("Copilot queued the model switch instead of applying it", {
               model: settings.model,
             });
-            applied = { ...applied, model: undefined, reasoningEffort: undefined };
           } else {
             applied = {
               ...applied,
@@ -2536,15 +2548,20 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
             };
           }
         }
-        if (applied.mode !== settings.mode) {
-          yield* call("mode switch", () => target.rpc.mode.set({ mode: settings.mode }));
-        }
         if (applied.allowAll !== settings.allowAll) {
-          yield* call("permission mode switch", () =>
-            target.rpc.permissions.setMode({ mode: settings.allowAll ? "allow-all" : "manual" }),
+          applied = { ...applied, allowAll: undefined };
+          const requested = settings.allowAll ? "allow-all" : "manual";
+          const result = yield* call("permission mode switch", () =>
+            target.rpc.permissions.setMode({ mode: requested }),
           );
+          // Running the prompt in another permission mode could auto-approve tools T3 should ask about.
+          if (!result.success || result.mode !== requested) {
+            return yield* protocolError(
+              `Copilot stayed in permission mode ${result.mode} instead of ${requested}`,
+            );
+          }
+          applied = { ...applied, allowAll: settings.allowAll };
         }
-        applied = { ...applied, mode: settings.mode, allowAll: settings.allowAll };
         currentSettings = settings;
         providerSession = { ...providerSession, model: settings.model };
       });
