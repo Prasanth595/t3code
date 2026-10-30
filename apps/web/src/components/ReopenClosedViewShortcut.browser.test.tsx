@@ -1,4 +1,8 @@
-import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  PreviewForwardedShortcut,
+  ResolvedKeybindingsConfig,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -12,7 +16,7 @@ const state = vi.hoisted(() => ({
   workspaceAvailable: true,
   navigate: vi.fn(),
   openPreview: vi.fn(),
-  setShortcuts: vi.fn(async () => undefined),
+  setShortcuts: vi.fn(async (_shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => undefined),
   toast: vi.fn(),
 }));
 
