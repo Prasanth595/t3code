@@ -35,8 +35,8 @@ export interface ResizableWidthHandlers {
 /** Persist on drag end to avoid a storage write on every animation frame. */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
-  readonly handlers: ResizableWidthHandlers;
   readonly setWidth: (width: number) => void;
+  readonly handlers: ResizableWidthHandlers;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
 
@@ -62,10 +62,11 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   const clampedWidth = clamp(widthState.width);
 
-  const commitWidth = (key: string, width: number) => {
-    setWidthState({ storageKey: key, width });
+  const commitWidth = (nextStorageKey: string, nextWidth: number) => {
+    // Resizing remains usable for this session when browser storage is unavailable.
+    setWidthState({ storageKey: nextStorageKey, width: nextWidth });
     try {
-      setLocalStorageItem(key, width, WidthSchema);
+      setLocalStorageItem(nextStorageKey, nextWidth, WidthSchema);
     } catch (error) {
       console.error("Could not persist panel width.", error);
     }
@@ -105,6 +106,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   return {
     width: clampedWidth,
+    setWidth: (value) => commitWidth(storageKey, clamp(value)),
     handlers: {
       ref: drag.ref,
       onPointerDown: drag.onPointerDown,
@@ -113,6 +115,5 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       onPointerCancel: drag.onPointerCancel,
       onLostPointerCapture: drag.onLostPointerCapture,
     },
-    setWidth: (width) => commitWidth(storageKey, clamp(width)),
   };
 }
