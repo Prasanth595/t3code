@@ -89,42 +89,46 @@ export function descendantPids(listing: string, rootPid: number): ReadonlyArray<
   return found;
 }
 
-/** `pid ppid` lines from /proc, so Linux needs no `ps`, which slim images leave out. */
-async function listLinuxProcesses(): Promise<string> {
-  const entries = await NodeFSP.readdir("/proc");
-  const lines = await Promise.all(
-    entries
-      .filter((entry) => /^[1-9][0-9]*$/.test(entry))
-      .map(async (entry) => {
-        try {
-          // The command name in parentheses may hold spaces; the parent pid follows its state.
-          const stat = await NodeFSP.readFile(`/proc/${entry}/stat`, "utf8");
-          return `${entry} ${stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] ?? ""}`;
-        } catch {
-          return "";
-        }
-      }),
-  );
-  return lines.join("\n");
+/** A process's parent pid from /proc; undefined once it is gone. */
+async function linuxParentOf(pid: string | number): Promise<string | undefined> {
+  try {
+    // The command name in parentheses may hold spaces; the parent pid follows its state.
+    const stat = await NodeFSP.readFile(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1];
+  } catch {
+    return undefined;
+  }
 }
 
-const listProcesses = async (): Promise<string> => {
-  if (
-    await NodeFSP.access("/proc/self/stat").then(
-      () => true,
-      () => false,
-    )
-  ) {
-    return listLinuxProcesses();
-  }
-  return new Promise<string>((resolve, reject) => {
-    NodeChildProcess.execFile(
-      "ps",
-      ["-A", "-o", "pid=,ppid="],
-      { timeout: PROCESS_LIST_TIMEOUT_MS },
-      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+const hasProc = () =>
+  NodeFSP.access("/proc/self/stat").then(
+    () => true,
+    () => false,
+  );
+
+const runPs = (args: ReadonlyArray<string>) =>
+  new Promise<string>((resolve, reject) => {
+    NodeChildProcess.execFile("ps", args, { timeout: PROCESS_LIST_TIMEOUT_MS }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout),
     );
   });
+
+/** `pid ppid` lines; Linux reads /proc, so slim images without `ps` work too. */
+const listProcesses = async (): Promise<string> => {
+  if (!(await hasProc())) return runPs(["-A", "-o", "pid=,ppid="]);
+  const entries = (await NodeFSP.readdir("/proc")).filter((entry) => /^[1-9][0-9]*$/.test(entry));
+  const parents = await Promise.all(entries.map(linuxParentOf));
+  return entries.map((entry, index) => `${entry} ${parents[index] ?? ""}`).join("\n");
+};
+
+const parentOf = async (pid: number): Promise<number | undefined> => {
+  const parent = (await hasProc())
+    ? await linuxParentOf(pid)
+    : await runPs(["-o", "ppid=", "-p", String(pid)]).then(
+        (stdout) => stdout.trim(),
+        () => undefined,
+      );
+  return parent === undefined || parent === "" ? undefined : Number(parent);
 };
 
 const signalQuietly = (pid: number, signal: NodeJS.Signals) => {
@@ -146,32 +150,36 @@ export async function stopProcessTree(input: {
   readonly rootPid: number;
   readonly rootExited: () => boolean;
   readonly list: () => Promise<string>;
+  readonly parentOf: (pid: number) => Promise<number | undefined>;
   readonly signal: (pid: number, signal: NodeJS.Signals) => void;
   readonly selfPid: number;
 }): Promise<string | undefined> {
-  // Discovery order, parents first; a frozen process cannot exit, so its pid stays its own.
+  // Each was a child of the CLI or of a frozen process when frozen, and a frozen process
+  // cannot exit, so every pid here stays Copilot's on every path below.
   const frozen: Array<number> = [];
   const killFrozen = (failure: string | undefined) => {
     for (const pid of [...frozen].reverse()) input.signal(pid, "SIGKILL");
     return failure;
   };
+  const exitedFailure = "Copilot exited before all of its processes were found";
   input.signal(input.rootPid, "SIGSTOP");
   try {
     for (let pass = 0; pass < MAX_FREEZE_PASSES; pass += 1) {
       const listing = await input.list();
       // Once the CLI exited its pid can be reused, so this listing may show another tree.
-      if (input.rootExited()) {
-        return killFrozen("Copilot exited before all of its processes were found");
-      }
-      const tree = descendantPids(listing, input.rootPid);
-      // Not in the frozen tree: reused between a listing and its SIGSTOP, so not Copilot's.
-      for (const pid of frozen.filter((frozenPid) => !tree.includes(frozenPid))) {
-        input.signal(pid, "SIGCONT");
-        frozen.splice(frozen.indexOf(pid), 1);
-      }
-      const fresh = tree.filter((pid) => pid !== input.selfPid && !frozen.includes(pid));
+      if (input.rootExited()) return killFrozen(exitedFailure);
+      const fresh = descendantPids(listing, input.rootPid).filter(
+        (pid) => pid !== input.selfPid && !frozen.includes(pid),
+      );
       if (fresh.length === 0) return killFrozen(undefined);
+      // Parents come first, so each one's parent is frozen by the time it is checked.
       for (const pid of fresh) {
+        // A listed pid can exit and be reused before its SIGSTOP; its parent tells them apart.
+        const parent = await input.parentOf(pid);
+        if (input.rootExited()) return killFrozen(exitedFailure);
+        if (parent !== input.rootPid && (parent === undefined || !frozen.includes(parent))) {
+          continue;
+        }
         input.signal(pid, "SIGSTOP");
         frozen.push(pid);
       }
@@ -219,6 +227,7 @@ export function copilotClientProcess(client: object): CopilotProcess | undefined
             rootPid: pid,
             rootExited: hasExited,
             list: listProcesses,
+            parentOf,
             signal: signalQuietly,
             selfPid: process.pid,
           }),

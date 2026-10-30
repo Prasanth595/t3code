@@ -1374,6 +1374,29 @@ describe("CopilotSdkAdapterV2", () => {
       if (early?.type !== "turn.terminal") return assert.fail("no terminal");
       assert.strictEqual(early.status, "failed");
       assert.include(early.failure?.message, "Rate limit exceeded");
+
+      // Copilot aborts such an early follow-up; the request settling afterwards must not turn
+      // that into a completed turn.
+      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, autopilot, 8));
+      yield* fake.takeCall("sendAndWait");
+      yield* fake.emit({
+        ...event,
+        type: "session.autopilot_stopped",
+        ephemeral: true,
+        data: { reason: "completed", requestId: "request" },
+      });
+      yield* fake.emit({ ...event, type: "assistant.turn_start", data: { turnId: "9" } });
+      yield* fake.emit({
+        ...event,
+        type: "session.autopilot_stopped",
+        ephemeral: true,
+        data: { reason: "aborted", requestId: "follow-up" },
+      });
+      yield* fake.finishRun();
+      assert.deepInclude((yield* harness.untilTerminal()).at(-1), {
+        type: "turn.terminal",
+        status: "cancelled",
+      });
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -1795,15 +1818,38 @@ describe("CopilotSdkAdapterV2", () => {
 
   it("freezes every generation of Copilot's processes before killing them", async () => {
     const signals: Array<string> = [];
-    const stop = (listings: Array<string>, rootExited: () => boolean = () => false) =>
-      stopProcessTree({
+    // Each listing is a `pid ppid` table, or an Error for a listing that fails. The last one
+    // repeats once the queue runs out. Parents come from the latest table unless reassigned.
+    const stop = (
+      listings: Array<string | Error>,
+      options: {
+        readonly onList?: (count: number) => void;
+        readonly rootExited?: () => boolean;
+        readonly reassigned?: ReadonlyMap<number, number>;
+      } = {},
+    ) => {
+      let current = "";
+      let count = 0;
+      return stopProcessTree({
         rootPid: 100,
-        rootExited,
-        // The last listing repeats once the queue runs out.
-        list: async () => (listings.length > 1 ? listings.shift() : listings[0]) ?? "",
+        rootExited: options.rootExited ?? (() => false),
+        list: async () => {
+          options.onList?.((count += 1));
+          const next = (listings.length > 1 ? listings.shift() : listings[0]) ?? "";
+          if (next instanceof Error) throw next;
+          current = next;
+          return next;
+        },
+        parentOf: async (pid) =>
+          options.reassigned?.get(pid) ??
+          current
+            .split("\n")
+            .map((line) => line.trim().split(/\s+/).map(Number))
+            .find(([listed]) => listed === pid)?.[1],
         signal: (pid, name) => void signals.push(`${name} ${pid}`),
         selfPid: 1,
       });
+    };
 
     // 101 forks 102 before its SIGSTOP lands, and 102 forks 103 before its own.
     const grown = await stop(["101 100", "101 100\n102 101", "101 100\n102 101\n103 102"]);
@@ -1821,19 +1867,24 @@ describe("CopilotSdkAdapterV2", () => {
     // The CLI exited during the second listing, so its pid may be another process's now. That
     // listing is not trusted: 202 is never signalled, and only the frozen 101 is killed.
     signals.length = 0;
-    let listed = 0;
-    const exited = await stop(["101 100", "101 100\n202 100"], () => {
-      listed += 1;
-      return listed > 1;
+    let exitedNow = false;
+    const exited = await stop(["101 100", "101 100\n202 100"], {
+      onList: (count) => {
+        exitedNow = count > 1;
+      },
+      rootExited: () => exitedNow,
     });
     assert.include(exited, "exited");
     assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101", "SIGKILL 101"]);
 
-    // 101 left the tree after its listing: that pid was reused before the SIGSTOP, so the
-    // process it stopped is resumed, not killed.
+    // 101 exited after its listing and another process took its pid before the SIGSTOP. Its
+    // parent shows that, so it is never stopped, even when the next listing fails.
     signals.length = 0;
-    assert.isUndefined(await stop(["101 100", ""]));
-    assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101", "SIGCONT 101"]);
+    const reused = await stop(["101 100", new Error("ps timed out")], {
+      reassigned: new Map([[101, 999]]),
+    });
+    assert.include(reused, "ps timed out");
+    assert.deepStrictEqual(signals, ["SIGSTOP 100"]);
   });
 
   it("lists the processes under Copilot's CLI from a ps listing", () => {

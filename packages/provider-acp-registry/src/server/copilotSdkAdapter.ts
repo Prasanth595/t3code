@@ -350,6 +350,8 @@ interface ActiveTurn {
   requestRunEnded: boolean;
   /** A follow-up run's error that arrived before the request settled. */
   followUpFailure: CopilotError | undefined;
+  /** Copilot aborted a follow-up run before the request settled; the turn ends with it. */
+  followUpAborted: boolean;
   /** Autopilot settled; the turn waits for Copilot's background work to drain. */
   draining: boolean;
   /** A drain returned with work still running; the next background-task change re-checks. */
@@ -2086,6 +2088,8 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
             // Autopilot idles between continuations; autopilot_stopped ends its runs, as the
             // SDK's own sendAndWait decides.
             if (!root || event.data.mode === "autopilot") return;
+            // The request's own abort reaches T3 through sendAndWait; a follow-up's only here.
+            if (event.data.aborted === true && turn.followUpRunning) turn.followUpAborted = true;
             turn.requestRunEnded = true;
             turn.followUpRunning = false;
             if (turn.requestSettled && event.data.aborted === true) {
@@ -2094,6 +2098,9 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
             return yield* complete(turn);
           case "session.autopilot_stopped":
             if (!root) return;
+            if (event.data.reason === "aborted" && turn.followUpRunning) {
+              turn.followUpAborted = true;
+            }
             turn.requestRunEnded = true;
             turn.followUpRunning = false;
             if (!turn.requestSettled) return;
@@ -2123,6 +2130,9 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
         if (!turn.requestSettled || turn.steers.size > 0 || turn.followUpRunning) return;
         if (turn.followUpFailure !== undefined) {
           return yield* release(turn, "failed", turn.followUpFailure.message);
+        }
+        if (turn.followUpAborted) {
+          return yield* release(turn, turn.interruptRequested ? "interrupted" : "cancelled");
         }
         if (turn.mode !== "autopilot") return yield* finish(turn, "completed");
         if (turn.draining) return;
@@ -2674,6 +2684,7 @@ export const makeCopilotSdkAdapterV2 = Effect.fn("makeCopilotSdkAdapterV2")(func
           requestSettled: false,
           requestRunEnded: false,
           followUpFailure: undefined,
+          followUpAborted: false,
           draining: false,
           drainWaiting: false,
           tasksChanged: false,
