@@ -225,8 +225,12 @@ const hubSdkEnvironment = Effect.fn("LocalDeviceHost.hubSdkEnvironment")(functio
   }
   // The hub resolves adb inside an SDK even when the distro installs it separately on PATH.
   const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(sdk.root).pipe(Effect.option);
+  if (Option.isNone(info) || info.value.type !== "Directory") return environment;
+  const entries = yield* fs.readDirectory(sdk.root).pipe(Effect.option);
+  if (Option.isNone(entries)) return environment;
   const root = yield* fs.makeTempDirectoryScoped({ directory, prefix: "android-sdk-" });
-  for (const entry of yield* fs.readDirectory(sdk.root)) {
+  for (const entry of entries.value) {
     if (entry === "platform-tools") continue;
     yield* fs.symlink(path.resolve(sdk.root, entry), path.join(root, entry));
   }

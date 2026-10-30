@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -456,6 +457,84 @@ it.effect("never prepares a temporary SDK view on Windows", () =>
     ),
     Effect.provide(NodePath.layerWin32),
   ),
+);
+
+it.effect.each([
+  { name: "missing", statError: "NotFound", type: "Directory", readError: "NotFound" },
+  { name: "not a directory", statError: undefined, type: "File", readError: "BadResource" },
+  {
+    name: "inaccessible",
+    statError: "PermissionDenied",
+    type: "Directory",
+    readError: "PermissionDenied",
+  },
+  { name: "unreadable", statError: undefined, type: "Directory", readError: "PermissionDenied" },
+  {
+    name: "removed before listing",
+    statError: undefined,
+    type: "Directory",
+    readError: "NotFound",
+  },
+] as const)(
+  "does not prepare an SDK view when the root is $name",
+  ({ statError, type, readError }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-unavailable-sdk-" });
+      const info = yield* fs.stat(directory);
+      const environment = { ANDROID_HOME: "/unavailable-sdk", PATH: "/usr/bin" };
+      let views = 0;
+      let listings = 0;
+      const result = yield* LocalDeviceHost.__testing
+        .hubSdkEnvironment(
+          environment,
+          { root: environment.ANDROID_HOME, adbPath: "/usr/bin/adb" },
+          directory,
+        )
+        .pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              stat: () =>
+                statError
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: statError,
+                        module: "FileSystem",
+                        method: "stat",
+                      }),
+                    )
+                  : Effect.succeed({ ...info, type }),
+              readDirectory: () => {
+                listings++;
+                return Effect.fail(
+                  PlatformError.systemError({
+                    _tag: readError,
+                    module: "FileSystem",
+                    method: "readDirectory",
+                  }),
+                );
+              },
+              makeTempDirectoryScoped: (options) =>
+                fs.makeTempDirectoryScoped(options).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      views++;
+                    }),
+                  ),
+                ),
+            }),
+          ),
+        );
+      expect(result).toBe(environment);
+      expect(views).toBe(0);
+      expect(listings).toBe(statError || type !== "Directory" ? 0 : 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provide(NodePath.layerPosix),
+    ),
 );
 
 it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
