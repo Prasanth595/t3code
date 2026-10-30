@@ -27,6 +27,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { Attention } from "../attention.ts";
 import { FactoryLoop } from "../index.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
+import { DeployKick } from "./deployKick.ts";
 import * as ServerExitService from "./exit.ts";
 import { FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -146,6 +147,7 @@ const statusCall = (
     const dir = tempDir("factory");
     const context = Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
       Context.add(ServerExitService.ServerExit, ServerExitService.make(Effect.sync(() => {}))),
+      Context.add(DeployKick, { kick: Effect.succeed(false) }),
       Context.add(
         FactoryLoop,
         FactoryLoop.of({

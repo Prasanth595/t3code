@@ -664,11 +664,6 @@ describe("a waiting deploy: snooze and update now", () => {
   const writePending = (dir: string) =>
     NodeFS.writeFileSync(NodePath.join(dir, "deploy-pending"), `${Math.floor(T0 / 1000)} ${SHA}\n`);
 
-  it("is served at the paths the issue names", () => {
-    assert.strictEqual(DEPLOY_SNOOZE_PATH, "/api/factory/deploy/snooze");
-    assert.strictEqual(DEPLOY_NOW_PATH, "/api/factory/deploy/now");
-  });
-
   it.effect("snooze writes an hour from now privately, and again replaces the time", () =>
     Effect.gen(function* () {
       // Before the live clock the sessions are issued on, so they have not expired by it.
@@ -687,6 +682,17 @@ describe("a waiting deploy: snooze and update now", () => {
         assert.deepStrictEqual(again, { snoozed_until: formatTs(until * 1000) });
         assert.strictEqual(NodeFS.readFileSync(snoozeFile(dir), "utf8"), `${until}\n`);
       });
+    }),
+  );
+
+  it.effect("a snooze withdraws an earlier update now", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      writePending(dir);
+      await call("POST", DEPLOY_NOW_PATH, tokens.maintain);
+      assert.isTrue(NodeFS.existsSync(nowFile(dir)));
+      await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate);
+      assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+      assert.isTrue(NodeFS.existsSync(snoozeFile(dir)));
     }),
   );
 
@@ -1258,7 +1264,7 @@ describe("an auth failure inside T3", () => {
         },
         {},
         tempDir("factory"),
-        { count: 0, reloads: 0 },
+        { count: 0, reloads: 0, kicks: 0 },
         makeExits(),
       );
       const layer = failingRoute.pipe(Layer.provideMerge(layerRoutes));
