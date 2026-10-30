@@ -32,9 +32,23 @@ notify: true
 
 Any other key is an error, and the factory stays idle until it is fixed. A version from before `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` or the `prune_branches_*` keys rejects that key as unknown, so delete it before you roll back that far. Three keys from older versions, `model_instance`, `model` and `repos`, load with a warning instead: the current version ignores them, and a save from Settings → Factory keeps them, so a rollback to a version that needs them still starts. Delete them once you won't roll back that far.
 
+## A default for every repo
+
+`default_project` makes every T3 project with a GitHub `origin` a watched repo, even one with no `factory` block in its `.dw/config.yml`:
+
+```yaml
+default_project:
+  instructors: [alice, bob]
+  limits: { gate_retries: 2 }
+```
+
+`instructors` is required, with at least one login. `limits` takes the same keys as a repo's ([Add a repo](/guide/add-a-repo#_1-commit-the-factory-block)), and `gate_retries` defaults to `2` here. Any other key in the block is an error. A repo on the default uses its default branch as `base`, `pr` autonomy and no required checks, and the factory infers its `provision` and `gate` from the manifests on that branch each pass, so a script you add there shows up without a restart. A repo whose own `.dw/config.yml` has a `factory` block uses that block and nothing from here.
+
+Without `default_project`, only repos with a `factory` block are watched.
+
 ## Changing it
 
-Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates` and `feedback_seconds`. Edit `notify`, `min_free_gib`, `max_load_per_core`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
+Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates` and `feedback_seconds`. Edit `default_project`, `notify`, `min_free_gib`, `max_load_per_core`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
 
 The server reads the file when it starts and each time Settings → Factory saves it. It doesn't watch the file, so a hand edit takes effect at the next save from the page or the next restart.
 

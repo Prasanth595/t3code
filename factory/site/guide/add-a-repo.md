@@ -7,6 +7,8 @@ The factory watches a repo when two things are true:
 
 There is no list of repos to edit. Adding the project is the switch, and deleting the project is how the repo leaves.
 
+With `default_project` in the [machine config](/guide/machine-config#a-default-for-every-repo), adding the T3 project is the whole step: a checkout with no `factory` block is watched on that default, and the factory works out its `provision` and `gate` from the repo's `package.json` or `composer.json` ([the inference table](/agents/repo-config#the-default-block)). Skip to [step 2](#_2-add-the-clone-as-a-t3-project). Commit a `factory` block only to override the default; a repo with its own block uses that block alone.
+
 ## 1. Commit the factory block
 
 Add `.dw/config.yml` to the repo and commit it on its default branch:
@@ -59,7 +61,7 @@ The factory names the repo by the clone's `origin` remote. Watch out for these:
 
 ## 3. Check it is watched
 
-Open Settings → Factory. Each watched repo is listed with its workspace root and the factory block as the last pass read it, along with any config errors. A repo the factory couldn't settle (an unreadable or half-merged `.dw/config.yml`, a checkout T3 can't name) appears under "Not settled on the last read". [Watch runs](/guide/watching-runs) has more on the page.
+Open Settings → Factory. Each watched repo is listed with its workspace root and the factory block as the last pass read it, along with any config errors. A repo on the default is marked "Default config" and shows the block it resolved to, inferred gate included. If no gate could be inferred, the repo shows that error and its issues are not picked up until you commit a `factory` block. A repo the factory couldn't settle (an unreadable or half-merged `.dw/config.yml`, a checkout T3 can't name) appears under "Not settled on the last read". [Watch runs](/guide/watching-runs) has more on the page.
 
 ## 4. Create the labels
 
