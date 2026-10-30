@@ -1,5 +1,6 @@
 import {
   PullRequestListInput,
+  SourceControlProviderKind,
   type EnvironmentId,
   type ProjectId,
   type PullRequestProviderSummary,
@@ -413,7 +414,7 @@ describe("one server per repository", () => {
         ...project("a1", "env-1", "forge.example/team/repo"),
         repositoryIdentity: {
           canonicalKey: "forge.example/team/repo",
-          provider: "forgejo",
+          provider: SourceControlProviderKind.make("forgejo"),
           locator: {
             source: "git-remote",
             remoteName: "origin",
@@ -425,7 +426,7 @@ describe("one server per repository", () => {
         ...project("a2", "env-2", "forge.example/team/repo"),
         repositoryIdentity: {
           canonicalKey: "forge.example/team/repo",
-          provider: "forgejo",
+          provider: SourceControlProviderKind.make("forgejo"),
           locator: {
             source: "git-remote",
             remoteName: "origin",
@@ -456,7 +457,7 @@ describe("one server per repository", () => {
       ...project(`a-${environmentId}`, environmentId, "ssh.forge.example/team/repo"),
       repositoryIdentity: {
         canonicalKey: "ssh.forge.example/team/repo",
-        provider: "forgejo",
+        provider: SourceControlProviderKind.make("forgejo"),
         locator: {
           source: "git-remote" as const,
           remoteName: "origin",

@@ -85,7 +85,7 @@ describe("PullRequestListResult", () => {
     };
     const codec = Schema.toCodecJson(PullRequestListResult);
     expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toStrictEqual(result);
-    expect(Schema.decodeSync(codec)(LIST_RESULT)).toStrictEqual(LIST_RESULT);
+    expect(Schema.decodeUnknownSync(codec)(LIST_RESULT)).toStrictEqual(LIST_RESULT);
   });
 
   it("carries list observations through both typed errors' JSON codecs", () => {
