@@ -15,6 +15,7 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -93,6 +94,11 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
+        // A guest that is hidden mid-transition never paints the frame a still waits for.
+        if ((input as { format: string }).format === "jpeg" && stallStills) {
+          onStalledStill?.();
+          return new Promise<never>(() => {});
+        }
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
@@ -268,6 +274,8 @@ let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
+let stallStills = false;
+let onStalledStill: (() => void) | undefined;
 const desktopDetaches = new NodeEvents.EventEmitter();
 const desktopTabs = new Set<string>();
 const desktopRenders = (tabId: string) => {
@@ -380,6 +388,8 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   desktopRendersNext = false;
+  stallStills = false;
+  onStalledStill = undefined;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
@@ -644,6 +654,44 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+// The viewer still's deadline is a signal the test aborts; later deadlines never fire.
+const viewerStill = new AbortController();
+const neverAborts = new AbortController().signal;
+
+it.effect("a viewer still that never paints does not hold up the agent's snapshot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const timeout = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockImplementationOnce(() => viewerStill.signal)
+        .mockImplementation(() => neverAborts);
+      yield* Effect.addFinalizer(() => Effect.sync(() => timeout.mockRestore()));
+      const stillStarted = yield* Deferred.make<void>();
+      onStalledStill = () => Deferred.doneUnsafe(stillStarted, Effect.void);
+      stallStills = true;
+      const attaching = yield* browser
+        .attachViewer(viewerInput(tabId, false))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(stillStarted);
+
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({
+          scope,
+          operation: "snapshot",
+          input: {},
+          tabId,
+        })
+        .pipe(Effect.forkScoped);
+      viewerStill.abort(new DOMException("timed out", "TimeoutError"));
+      const snapshot = yield* Fiber.join(snapshotting);
+
+      expect(snapshot.accessibilityTree).toContain('button "delete"');
+      yield* Fiber.join(attaching);
     }),
   ).pipe(Effect.provide(layer)),
 );

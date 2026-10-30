@@ -232,7 +232,7 @@ const pageChanged = () =>
     "The page changed while capturing its snapshot. Take another snapshot.",
   );
 
-const tooBusy = () =>
+export const tooBusy = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
