@@ -388,7 +388,7 @@ export function markdownWithTableBreaks(markdown: string): string {
 
 // Matches up to where a backslash escapes a heading, quote, list or thematic break marker.
 const BLOCK_MARKER =
-  /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*[ \t]|([*_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)))/;
+  /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*(?:[ \t\r\n]|$)|([*_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)))/;
 
 /** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
 export function markdownWithBlockImages(markdown: string): string {
@@ -417,6 +417,9 @@ export function markdownWithBlockImages(markdown: string): string {
       .replace(/\[[ xX]\]\s*$/, "")
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
+    const afterImage = new RegExp(
+      `^[ \\t]*(?:\\\\?\\r?\\n(?:[ \\t]*>){${markers.split(">").length - 1}}[ \\t]*)?`,
+    );
     const editCount = edits.length;
     let previousEnd = start;
     for (const [index, child] of node.children.entries()) {
@@ -439,7 +442,7 @@ export function markdownWithBlockImages(markdown: string): string {
       if (imageStart > previousEnd)
         edits.push({ start: imageStart - before.length, end: imageStart, content: paragraphBreak });
       if (imageEnd < end) {
-        const after = /^[ \t]*(?:\\?\r?\n[ \t>]*)?/.exec(markdown.slice(imageEnd, end))![0];
+        const after = afterImage.exec(markdown.slice(imageEnd, end))![0];
         previousEnd = imageEnd + after.length;
         edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
         // The text after the image now starts a paragraph, where a leading marker would open a block.

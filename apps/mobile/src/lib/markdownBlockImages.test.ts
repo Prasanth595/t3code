@@ -23,6 +23,11 @@ describe("images inside running text", () => {
     );
     expect(markdownWithBlockImages("> Quoted ![a](a.png)")).toBe("> Quoted\n>\n> ![a](a.png)");
     expect(markdownWithBlockImages("- [x] Done ![a](a.png)")).toBe("- [x] Done\n\n  ![a](a.png)");
+    const continued = parseMarkdownDocument(markdownWithBlockImages("See ![a](a.png)\n    > keep"));
+    expect(continued.children.at(-1)).toMatchObject({
+      type: "paragraph",
+      children: [{ type: "text", value: "> keep" }],
+    });
   });
 
   it("keeps text after an image from opening a block", () => {
@@ -30,6 +35,7 @@ describe("images inside running text", () => {
       ["# x", "\\# x"],
       ["- x", "\\- x"],
       ["* x", "\\* x"],
+      ["*", "\\*"],
       ["2. x", "2\\. x"],
       ["> x", "\\> x"],
       ["---", "\\---"],
