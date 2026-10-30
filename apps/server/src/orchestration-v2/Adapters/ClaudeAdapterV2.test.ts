@@ -7972,24 +7972,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.skipIf(process.getuid === undefined)(
-    "tails foreground Bash output under the cwd the query launched in, not the session's",
+    "tails foreground Bash output under the physical cwd the query launched in",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const launchCwd = yield* fileSystem.makeTempDirectoryScoped({
+          const root = yield* fileSystem.makeTempDirectoryScoped({
             prefix: "t3-claude-task-output-cwd-",
           });
+          const physicalCwd = path.join(root, "real", "project");
+          const launchCwd = path.join(root, "link");
+          yield* fileSystem.makeDirectory(physicalCwd, { recursive: true });
+          yield* fileSystem.symlink(physicalCwd, launchCwd);
           // The session opens in /workspace; a relative TMPDIR puts Claude's
           // task files under whichever cwd the CLI was launched in. Linux,
           // because Claude Code's macOS build ignores TMPDIR.
-          const harness = yield* makeWakeHarnessWithOptions({ environment: { TMPDIR: "tmp" } });
+          const harness = yield* makeWakeHarnessWithOptions({ environment: { TMPDIR: "../tmp" } });
           const now = yield* DateTime.now;
           const toolUseId = "toolu_foreground_bash";
           const taskId = "foreground-bash-task";
           const tasks = path.join(
-            launchCwd,
+            root,
+            "real",
             "tmp",
             `claude-${process.getuid?.()}`,
             "project",

@@ -10006,7 +10006,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
-              turnInput.runtimePolicy.cwd,
+              yield* fileSystem
+                .realPath(turnInput.runtimePolicy.cwd ?? ".")
+                .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd)),
               hostPlatform,
             ),
           };
