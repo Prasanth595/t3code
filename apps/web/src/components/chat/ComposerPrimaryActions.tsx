@@ -364,6 +364,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           Compact
+          <span className="text-muted-foreground tabular-nums">{compactTokens}</span>
           {/* A label would focus the hidden input and steal focus from the composer. */}
           <span className="relative inline-flex h-7 w-11 shrink-0 items-center justify-center">
             <Switch
