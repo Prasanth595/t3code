@@ -17,6 +17,10 @@ describe("AgentAlerts", () => {
     Effect.gen(function* () {
       const alerts = yield* AgentAlerts.AgentAlerts;
       expect(yield* alerts.offer(alert)).toEqual({ local: false, phone: false });
+      yield* alerts.registerPhone({
+        publish: () => Effect.succeed(false),
+      });
+      expect(yield* alerts.offer(alert)).toEqual({ local: false, phone: false });
     }).pipe(Effect.provide(AgentAlerts.layer)),
   );
 
@@ -30,10 +34,12 @@ describe("AgentAlerts", () => {
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* alerts.registerPhone({
-        armed: Effect.succeed(true),
-        publish: (item) => Deferred.succeed(published, item).pipe(Effect.asVoid),
+        publish: (item) => Deferred.succeed(published, item).pipe(Effect.as(true)),
       });
       expect(yield* alerts.offer(alert)).toEqual({ local: true, phone: true });
+      expect(yield* Queue.take(received)).toEqual(alert);
+      yield* alerts.registerPhone({ publish: () => Effect.die("relay unavailable") });
+      expect(yield* alerts.offer(alert)).toEqual({ local: true, phone: false });
       expect(yield* Queue.take(received)).toEqual(alert);
       expect(yield* Deferred.await(published)).toEqual(alert);
     }).pipe(Effect.provide(AgentAlerts.layer), Effect.scoped),

@@ -880,19 +880,12 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const phoneArmed = Effect.gen(function* () {
-    const [relayConfig, publishEnabled] = yield* Effect.all([
-      readRelayConfig.pipe(Effect.orElseSucceed(() => null)),
-      readPublishAgentActivityEnabled.pipe(Effect.orElseSucceed(() => false)),
-    ]);
-    return relayConfig !== null && publishEnabled;
-  });
   const publishPhone = Effect.fn("AgentAwarenessRelay.publishAgentAlert")(function* (
     alert: AgentAlert,
   ) {
     const relayConfig = yield* readRelayConfig;
     const publishEnabled = yield* readPublishAgentActivityEnabled;
-    if (!relayConfig || !publishEnabled) return;
+    if (!relayConfig || !publishEnabled) return false;
     if (
       phoneRelayConfig?.url !== relayConfig.url ||
       phoneRelayConfig.issuer !== relayConfig.issuer ||
@@ -924,25 +917,17 @@ export const make = Effect.gen(function* () {
       alert: phoneAlert,
       jti: yield* crypto.randomUUIDv4(),
     });
-    yield* relayClient.server
+    const response = yield* relayClient.server
       .publishAgentAlert({
         params: { environmentId, threadId: alert.threadId },
         payload: { alert: phoneAlert, proof },
       })
       .pipe(Effect.timeout("10 seconds"));
+    return response.ok && response.deliveries.some((delivery) => delivery.ok);
   });
   if (Option.isSome(agentAlerts)) {
     yield* agentAlerts.value.registerPhone({
-      armed: phoneArmed,
-      publish: (alert) =>
-        publishPhone(alert).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("agent alert phone push failed", {
-              threadId: alert.threadId,
-              cause,
-            }),
-          ),
-        ),
+      publish: (alert) => publishPhone(alert).pipe(Effect.orElseSucceed(() => false)),
     });
   }
 

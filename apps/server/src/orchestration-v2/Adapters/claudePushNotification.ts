@@ -1,6 +1,6 @@
 import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 
-export const CLAUDE_PUSH_NOTIFICATION_TOOL = "PushNotification";
+const CLAUDE_PUSH_NOTIFICATION_TOOL = "PushNotification";
 const MAX_PUSH_NOTIFICATION_LENGTH = 200;
 
 export interface ClaudePushChannels {

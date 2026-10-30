@@ -9,8 +9,7 @@ import * as Stream from "effect/Stream";
 import type { ClaudePushChannels } from "../orchestration-v2/Adapters/claudePushNotification.ts";
 
 export interface AgentAlertPhoneDelivery {
-  readonly armed: Effect.Effect<boolean>;
-  readonly publish: (alert: AgentAlert) => Effect.Effect<void>;
+  readonly publish: (alert: AgentAlert) => Effect.Effect<boolean>;
 }
 
 export class AgentAlerts extends Context.Service<
@@ -23,7 +22,6 @@ export class AgentAlerts extends Context.Service<
 >()("t3/notifications/AgentAlerts") {}
 
 const make = Effect.gen(function* () {
-  const scope = yield* Effect.scope;
   const subscribers = yield* Ref.make(0);
   const alerts = yield* PubSub.unbounded<AgentAlert>();
   const phone = yield* Ref.make<AgentAlertPhoneDelivery | null>(null);
@@ -43,23 +41,21 @@ const make = Effect.gen(function* () {
 
   const offer: AgentAlerts["Service"]["offer"] = Effect.fn("AgentAlerts.offer")(function* (alert) {
     const delivery = yield* Ref.get(phone);
-    const [local, phoneArmed] = yield* Effect.all(
-      [
-        Ref.get(subscribers).pipe(Effect.map((count) => count > 0)),
-        delivery === null ? Effect.succeed(false) : delivery.armed,
-      ],
-      { concurrency: 2 },
-    );
+    const local = (yield* Ref.get(subscribers)) > 0;
     if (local) yield* PubSub.publish(alerts, alert);
-    if (phoneArmed && delivery !== null) {
-      yield* delivery.publish(alert).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("agent alert phone delivery failed", { cause }),
-        ),
-        Effect.forkIn(scope),
-      );
-    }
-    return { local, phone: phoneArmed };
+    const phoneAccepted =
+      delivery === null
+        ? false
+        : yield* delivery
+            .publish(alert)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("agent alert phone delivery failed", { cause }).pipe(
+                  Effect.as(false),
+                ),
+              ),
+            );
+    return { local, phone: phoneAccepted };
   });
 
   return AgentAlerts.of({
