@@ -89,7 +89,52 @@ export interface CodexAppServerProviderSnapshot {
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly storedLogin?: CodexStoredChatGptLogin | undefined;
 }
+
+interface CodexStoredChatGptLogin {
+  readonly email: string;
+  readonly accountId: string;
+}
+
+const decodeCodexAuthFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ tokens: Schema.Struct({ id_token: Schema.String }) })),
+);
+const decodeCodexIdTokenClaims = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      email: Schema.String,
+      "https://api.openai.com/auth": Schema.Struct({ chatgpt_account_id: Schema.String }),
+    }),
+  ),
+);
+
+/**
+ * A model provider that does not require OpenAI auth makes `account/read`
+ * answer with no account, yet usage still comes from the saved ChatGPT login.
+ * Its id_token is only an identity hint, so callers must match it against the
+ * account the backend reports.
+ */
+const readCodexStoredChatGptLogin = Effect.fn("readCodexStoredChatGptLogin")(function* (
+  codexHome: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fileSystem
+    .readFileString(path.join(codexHome, "auth.json"))
+    .pipe(Effect.option);
+  return Option.flatMap(text, decodeCodexAuthFile).pipe(
+    Option.flatMap(({ tokens }) => Option.fromNullishOr(tokens.id_token.split(".")[1])),
+    Option.map((payload) => Buffer.from(payload, "base64url").toString("utf8")),
+    Option.flatMap(decodeCodexIdTokenClaims),
+    Option.flatMap((claims): Option.Option<CodexStoredChatGptLogin> => {
+      const email = claims.email.trim();
+      const accountId = claims["https://api.openai.com/auth"].chatgpt_account_id.trim();
+      return email && accountId ? Option.some({ email, accountId }) : Option.none();
+    }),
+    Option.getOrUndefined,
+  );
+});
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
@@ -534,7 +579,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, config, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -551,7 +596,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         deadlineMs,
         CODEX_CONFIG_PROBE_TIMEOUT_MS,
       ).pipe(
-        Effect.map((response) => response?.config.service_tier ?? undefined),
+        Effect.map((response) => response?.config),
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
@@ -584,13 +629,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  // Keyring storage can leave a stale auth.json behind, so only the file store names the account in use.
+  const credentialStore = config?.cli_auth_credentials_store ?? "file";
+  const storedLogin =
+    accountResponse.account || !config || credentialStore !== "file"
+      ? undefined
+      : yield* readCodexStoredChatGptLogin(initialize.codexHome);
+
   return {
     account: accountResponse,
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
+    serviceTier: config?.service_tier ?? undefined,
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
+    ...(storedLogin ? { storedLogin } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -648,15 +701,18 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
   });
 });
 
-function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
+function accountProbeStatus({ account, rateLimits, storedLogin }: CodexAppServerProviderSnapshot): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
 } {
   const authLabel = codexAccountAuthLabel(account.account);
-  const authEmail = codexAccountEmail(account.account);
   const workspaceId =
     rateLimits && "accountId" in rateLimits ? rateLimits.accountId?.trim() : undefined;
+  // Limits merge hosts by email, so a proxied login without one shows once per host.
+  const authEmail =
+    codexAccountEmail(account.account) ??
+    (workspaceId && storedLogin?.accountId === workspaceId ? storedLogin.email : undefined);
   const auth = {
     status: account.account ? ("authenticated" as const) : ("unknown" as const),
     ...(account.account?.type ? { type: account.account?.type } : {}),
