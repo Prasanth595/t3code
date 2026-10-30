@@ -5,6 +5,10 @@ import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
@@ -12,7 +16,14 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -25,6 +36,7 @@ import {
 } from "@t3tools/contracts";
 import {
   projectScriptCwd,
+  projectScriptReservesPort,
   projectScriptRuntimeEnv,
   projectScriptTerminalInput,
   resolveProjectScripts,
@@ -83,6 +95,7 @@ import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-
 import { threadEnvironment, useThreadFamily } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
+import { projectEnvironment } from "../../state/projects";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
@@ -385,6 +398,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const runScript = useAtomCommand(projectEnvironment.runScript, { reportFailure: false });
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const loadEarlierHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
@@ -456,6 +470,14 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const currentRouteThreadIdentityRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed route identity to a ref that pending action results check before opening
+  useLayoutEffect(() => {
+    currentRouteThreadIdentityRef.current = routeThreadIdentity;
+    return () => {
+      currentRouteThreadIdentityRef.current = null;
+    };
+  }, [routeThreadIdentity]);
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -744,6 +766,53 @@ function ThreadRouteContent(
       return;
     }
 
+    const preferredWorktreePath = resolvePreferredThreadWorktreePath({
+      threadShellWorktreePath: selectedThread.worktreePath ?? null,
+      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
+    });
+    const cwd = projectScriptCwd({
+      project: { cwd: selectedThreadProject.workspaceRoot },
+      worktreePath: preferredWorktreePath,
+    });
+    if (projectScriptReservesPort(script)) {
+      const result = await runScript({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          projectId: selectedThreadProject.id,
+          worktreePath: preferredWorktreePath,
+          scriptId: script.id,
+        },
+      });
+      if (!navigation.isFocused() || currentRouteThreadIdentityRef.current !== routeThreadIdentity)
+        return;
+      if (result._tag !== "Success") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Dialog.alert(
+            "Couldn't run script",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return;
+      }
+      if (result.value.status === "no-script") {
+        Dialog.alert(
+          "Couldn't run script",
+          `"${script.name}" is no longer available. Check the action and try again.`,
+        );
+        return;
+      }
+      if (result.value.threadId === selectedThread.id) {
+        handleOpenTerminal(result.value.terminalId);
+      } else {
+        Dialog.alert(
+          "Already running",
+          `${script.name} is running in another thread for this checkout.`,
+        );
+      }
+      return;
+    }
     const targetTerminalId = resolveProjectScriptTerminalId({
       existingTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
       ...(knownTerminalSessions === null ||
@@ -753,14 +822,6 @@ function ThreadRouteContent(
       hasRunningTerminal: terminalMenuSessions.some(
         (session) => session.status === "running" || session.status === "starting",
       ),
-    });
-    const preferredWorktreePath = resolvePreferredThreadWorktreePath({
-      threadShellWorktreePath: selectedThread.worktreePath ?? null,
-      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
-    });
-    const cwd = projectScriptCwd({
-      project: { cwd: selectedThreadProject.workspaceRoot },
-      worktreePath: preferredWorktreePath,
     });
     const env = projectScriptRuntimeEnv({
       project: { cwd: selectedThreadProject.workspaceRoot },

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
@@ -81,6 +81,16 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   projectWorkspaceRoot: TrimmedNonEmptyString,
   defaultStartFromOrigin: Schema.Boolean.annotate({
     description: "`startFromOrigin` default for `t3_worktree_handoff`.",
+  }),
+  scriptPreviews: Schema.Array(
+    Schema.Struct({
+      scriptId: TrimmedNonEmptyString,
+      name: TrimmedNonEmptyString,
+      port: PortSchema,
+      url: TrimmedNonEmptyString,
+    }),
+  ).annotate({
+    description: "Reserved preview ports and resolved URLs for this thread's project scripts.",
   }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;

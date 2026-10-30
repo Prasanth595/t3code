@@ -105,7 +105,12 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptCwd,
+  projectScriptReservesPort,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
+import { projectEnvironment } from "../state/projects";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -1136,7 +1141,32 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const handleFilePendingChangeStable = useStableCallback(handleFilePendingChange);
-  const configuredPreviewUrls = getConfiguredPreviewUrls(activeProjectScripts);
+  const previewScriptIds = activeProjectScripts
+    .filter(projectScriptReservesPort)
+    .map((script) => script.id);
+  const scriptPorts = useEnvironmentQuery(
+    isServerThread &&
+      canOperateTerminal &&
+      activeThreadRef &&
+      activeProject &&
+      previewScriptIds.length > 0
+      ? projectEnvironment.scriptPorts({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            cwd: projectScriptCwd({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThread?.worktreePath ?? null,
+            }),
+            scriptIds: previewScriptIds,
+          },
+        })
+      : null,
+  );
+  const configuredPreviewUrls = getConfiguredPreviewUrls(
+    activeProjectScripts,
+    scriptPorts.data?.ports,
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops file surfaces from the right panel store once bootstrap shows the thread has no workspace
   useEffect(() => {
@@ -1869,6 +1899,8 @@ export default function ChatView(props: ChatViewProps) {
     toggleTerminalVisibilityStable,
     shortcuts: terminalShortcuts,
   } = useChatTerminalActions({
+    routeThreadKey,
+    currentRouteThreadKeyRef,
     environmentId,
     composerRef,
     terminalUiState,

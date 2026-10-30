@@ -207,7 +207,7 @@ function makeHarness(options: HarnessOptions = {}) {
       removeWorktree,
       ...options.git,
     }),
-    Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+    Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: runSetup,
     }),
     Layer.mock(TextGeneration.TextGeneration)({
