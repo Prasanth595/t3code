@@ -162,6 +162,22 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+const layerBeforeSubagentWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        writeIfSubagentActive: (input) =>
+          Ref.getAndSet(before, Effect.void).pipe(
+            Effect.flatten,
+            Effect.andThen(delegate.writeIfSubagentActive(input)),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
@@ -479,6 +495,7 @@ function layerTest(input: {
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly beforeSubagentWrite?: Ref.Ref<Effect.Effect<void>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -502,9 +519,11 @@ function layerTest(input: {
         ? layerPausingAttachEventSink(input.pauseAttachWrite)
         : input.beforeUnchangedWrite !== undefined
           ? layerBeforeUnchangedWriteEventSink(input.beforeUnchangedWrite)
-          : input.failReleaseEventWrites
-            ? layerFailingReleaseEventSink
-            : layerTestEventSink;
+          : input.beforeSubagentWrite !== undefined
+            ? layerBeforeSubagentWriteEventSink(input.beforeSubagentWrite)
+            : input.failReleaseEventWrites
+              ? layerFailingReleaseEventSink
+              : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -2697,6 +2716,33 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a native subagent resumed after release read it, until the commit",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeSubagentWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, subagents, writeSubagent, subagentStatuses } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-resumed-before-commit");
+        const resumedAt = DateTime.add(yield* DateTime.now, { seconds: 1 });
+        yield* Ref.set(
+          beforeSubagentWrite,
+          writeSubagent(subagents[0]!, resumedAt).pipe(Effect.orDie),
+        );
+
+        yield* manager.close(providerSessionId);
+
+        assert.deepStrictEqual(yield* subagentStatuses, [allRunning, allRunning]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeSubagentWrite })),
+      );
+    }),
 );
 
 it.effect(

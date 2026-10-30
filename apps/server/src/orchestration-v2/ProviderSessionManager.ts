@@ -866,43 +866,41 @@ export const layerWithOptions = (
           }),
         );
 
-      // A replacement process can resume a subagent before release records land; a new start keeps it.
+      // A replacement process can resume a subagent at any point before this commits; a new start keeps it.
+      // Each subagent and its child turns commit together, guarded by the start this release read.
       const writeReleasedNativeSubagentEvents = (released: ReadonlyArray<ReleasedNativeSubagent>) =>
         Effect.forEach(
-          new Set(released.map((subagent) => subagent.threadId)),
-          (threadId) =>
+          released,
+          ({ threadId, subagentId, providerSessionId, startedAt }) =>
             Effect.gen(function* () {
               const projection = yield* readRecoveryProjection(threadId);
               if (projection === null) return;
+              const subagent = projection.subagents.find(
+                (candidate) => candidate.id === subagentId,
+              );
+              if (
+                subagent === undefined ||
+                startedAtMillis(subagent.startedAt) !== startedAtMillis(startedAt)
+              ) {
+                return;
+              }
               const now = yield* DateTime.now;
               const events: Array<OrchestrationV2DomainEvent> = [];
-              for (const { subagentId, providerSessionId, startedAt } of released.filter(
-                (entry) => entry.threadId === threadId,
-              )) {
-                const subagent = projection.subagents.find(
-                  (candidate) => candidate.id === subagentId,
-                );
-                if (
-                  subagent === undefined ||
-                  startedAtMillis(subagent.startedAt) !== startedAtMillis(startedAt)
-                ) {
-                  continue;
-                }
-                events.push(
-                  ...(yield* endOrphanedNativeSubagent({
-                    projection,
-                    subagentId,
-                    status: "interrupted",
-                    now,
-                    emitted: events,
-                    allocateEventId: () =>
-                      idAllocator.allocate.event({ threadId, providerSessionId }),
-                  })),
-                );
-                const childThreadId = subagent.childThreadId;
-                if (childThreadId === null) continue;
-                const child = yield* readRecoveryProjection(childThreadId);
-                if (child === null) continue;
+              events.push(
+                ...(yield* endOrphanedNativeSubagent({
+                  projection,
+                  subagentId,
+                  status: "interrupted",
+                  now,
+                  emitted: events,
+                  allocateEventId: () =>
+                    idAllocator.allocate.event({ threadId, providerSessionId }),
+                })),
+              );
+              const childThreadId = subagent.childThreadId;
+              const child =
+                childThreadId === null ? null : yield* readRecoveryProjection(childThreadId);
+              if (childThreadId !== null && child !== null) {
                 events.push(
                   ...(yield* endRunlessRootTurns({
                     threadId: childThreadId,
@@ -917,7 +915,7 @@ export const layerWithOptions = (
                 );
               }
               if (events.length > 0) {
-                yield* eventSink.write({ events });
+                yield* eventSink.writeIfSubagentActive({ expected: subagent, events });
               }
             }),
           { discard: true },
