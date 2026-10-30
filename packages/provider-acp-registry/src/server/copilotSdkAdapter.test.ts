@@ -50,6 +50,7 @@ import {
   copilotClientProcess,
   copilotSdkCliCandidates,
   descendantPids,
+  stopProcessTree,
   type CopilotSdkClient,
   type CopilotSdkClientOptions,
   type CopilotSdkSession,
@@ -1351,6 +1352,28 @@ describe("CopilotSdkAdapterV2", () => {
         ),
       );
       assert.deepInclude(followed.at(-1), { type: "turn.terminal", status: "completed" });
+
+      // That follow-up can start in the same batch as the request's autopilot_stopped, before
+      // sendAndWait settles. Its failure must still fail the turn the request then settles.
+      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, autopilot, 7));
+      yield* fake.takeCall("sendAndWait");
+      yield* fake.emit({
+        ...event,
+        type: "session.autopilot_stopped",
+        ephemeral: true,
+        data: { reason: "completed", requestId: "request" },
+      });
+      yield* fake.emit({ ...event, type: "assistant.turn_start", data: { turnId: "8" } });
+      yield* fake.emit({
+        ...event,
+        type: "session.error",
+        data: { errorType: "rate_limit", message: "Rate limit exceeded" },
+      });
+      yield* fake.finishRun();
+      const early = (yield* harness.untilTerminal()).at(-1);
+      if (early?.type !== "turn.terminal") return assert.fail("no terminal");
+      assert.strictEqual(early.status, "failed");
+      assert.include(early.failure?.message, "Rate limit exceeded");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -1769,6 +1792,49 @@ describe("CopilotSdkAdapterV2", () => {
       yield* fake.takeCall("sendAndWait");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it("freezes every generation of Copilot's processes before killing them", async () => {
+    const signals: Array<string> = [];
+    const stop = (listings: Array<string>, rootExited: () => boolean = () => false) =>
+      stopProcessTree({
+        rootPid: 100,
+        rootExited,
+        // The last listing repeats once the queue runs out.
+        list: async () => (listings.length > 1 ? listings.shift() : listings[0]) ?? "",
+        signal: (pid, name) => void signals.push(`${name} ${pid}`),
+        selfPid: 1,
+      });
+
+    // 101 forks 102 before its SIGSTOP lands, and 102 forks 103 before its own.
+    const grown = await stop(["101 100", "101 100\n102 101", "101 100\n102 101\n103 102"]);
+    assert.isUndefined(grown);
+    assert.deepStrictEqual(signals, [
+      "SIGSTOP 100",
+      "SIGSTOP 101",
+      "SIGSTOP 102",
+      "SIGSTOP 103",
+      "SIGKILL 103",
+      "SIGKILL 102",
+      "SIGKILL 101",
+    ]);
+
+    // The CLI exited during the second listing, so its pid may be another process's now. That
+    // listing is not trusted: 202 is never signalled, and only the frozen 101 is killed.
+    signals.length = 0;
+    let listed = 0;
+    const exited = await stop(["101 100", "101 100\n202 100"], () => {
+      listed += 1;
+      return listed > 1;
+    });
+    assert.include(exited, "exited");
+    assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101", "SIGKILL 101"]);
+
+    // 101 left the tree after its listing: that pid was reused before the SIGSTOP, so the
+    // process it stopped is resumed, not killed.
+    signals.length = 0;
+    assert.isUndefined(await stop(["101 100", ""]));
+    assert.deepStrictEqual(signals, ["SIGSTOP 100", "SIGSTOP 101", "SIGCONT 101"]);
+  });
 
   it("lists the processes under Copilot's CLI from a ps listing", () => {
     const listing = [

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Windows path math must run on any host for the shim lookup, and the SDK's child is a Node ChildProcess. The SDK seam is Promise-based, outside an Effect runtime.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import type {
   CopilotSession,
@@ -64,7 +65,7 @@ export interface CopilotProcess {
 const STDIO_CLOSE_TIMEOUT_MS = 5_000;
 const PROCESS_LIST_TIMEOUT_MS = 5_000;
 
-/** Pids under `rootPid` in a `ps -o pid=,ppid=` listing, each parent before its children. */
+/** Pids under `rootPid` in a `pid ppid` listing, each parent before its children. */
 export function descendantPids(listing: string, rootPid: number): ReadonlyArray<number> {
   const children = new Map<number, Array<number>>();
   for (const line of listing.split("\n")) {
@@ -88,8 +89,35 @@ export function descendantPids(listing: string, rootPid: number): ReadonlyArray<
   return found;
 }
 
-const listProcesses = () =>
-  new Promise<string>((resolve, reject) => {
+/** `pid ppid` lines from /proc, so Linux needs no `ps`, which slim images leave out. */
+async function listLinuxProcesses(): Promise<string> {
+  const entries = await NodeFSP.readdir("/proc");
+  const lines = await Promise.all(
+    entries
+      .filter((entry) => /^[1-9][0-9]*$/.test(entry))
+      .map(async (entry) => {
+        try {
+          // The command name in parentheses may hold spaces; the parent pid follows its state.
+          const stat = await NodeFSP.readFile(`/proc/${entry}/stat`, "utf8");
+          return `${entry} ${stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] ?? ""}`;
+        } catch {
+          return "";
+        }
+      }),
+  );
+  return lines.join("\n");
+}
+
+const listProcesses = async (): Promise<string> => {
+  if (
+    await NodeFSP.access("/proc/self/stat").then(
+      () => true,
+      () => false,
+    )
+  ) {
+    return listLinuxProcesses();
+  }
+  return new Promise<string>((resolve, reject) => {
     NodeChildProcess.execFile(
       "ps",
       ["-A", "-o", "pid=,ppid="],
@@ -97,6 +125,7 @@ const listProcesses = () =>
       (error, stdout) => (error ? reject(error) : resolve(stdout)),
     );
   });
+};
 
 const signalQuietly = (pid: number, signal: NodeJS.Signals) => {
   try {
@@ -106,25 +135,52 @@ const signalQuietly = (pid: number, signal: NodeJS.Signals) => {
   }
 };
 
-/** SIGKILLs the processes under `rootPid`; stopped first, so none can start another meanwhile. */
-async function killPosixDescendants(rootPid: number): Promise<string | undefined> {
-  signalQuietly(rootPid, "SIGSTOP");
-  const stopped: Array<number> = [];
-  let failure: string | undefined;
+// Each pass freezes one more generation; a tree still growing after this many is reported.
+const MAX_FREEZE_PASSES = 16;
+
+/**
+ * Freezes `rootPid` and every process under it, then SIGKILLs the descendants. A listing that
+ * finds nothing new proves the frozen tree complete. Resolves with why it may have missed some.
+ */
+export async function stopProcessTree(input: {
+  readonly rootPid: number;
+  readonly rootExited: () => boolean;
+  readonly list: () => Promise<string>;
+  readonly signal: (pid: number, signal: NodeJS.Signals) => void;
+  readonly selfPid: number;
+}): Promise<string | undefined> {
+  // Discovery order, parents first; a frozen process cannot exit, so its pid stays its own.
+  const frozen: Array<number> = [];
+  const killFrozen = (failure: string | undefined) => {
+    for (const pid of [...frozen].reverse()) input.signal(pid, "SIGKILL");
+    return failure;
+  };
+  input.signal(input.rootPid, "SIGSTOP");
   try {
-    // The second listing catches processes started before the first round of stops landed.
-    for (let pass = 0; pass < 2; pass += 1) {
-      for (const pid of descendantPids(await listProcesses(), rootPid)) {
-        if (pid === process.pid || stopped.includes(pid)) continue;
-        signalQuietly(pid, "SIGSTOP");
-        stopped.push(pid);
+    for (let pass = 0; pass < MAX_FREEZE_PASSES; pass += 1) {
+      const listing = await input.list();
+      // Once the CLI exited its pid can be reused, so this listing may show another tree.
+      if (input.rootExited()) {
+        return killFrozen("Copilot exited before all of its processes were found");
+      }
+      const tree = descendantPids(listing, input.rootPid);
+      // Not in the frozen tree: reused between a listing and its SIGSTOP, so not Copilot's.
+      for (const pid of frozen.filter((frozenPid) => !tree.includes(frozenPid))) {
+        input.signal(pid, "SIGCONT");
+        frozen.splice(frozen.indexOf(pid), 1);
+      }
+      const fresh = tree.filter((pid) => pid !== input.selfPid && !frozen.includes(pid));
+      if (fresh.length === 0) return killFrozen(undefined);
+      for (const pid of fresh) {
+        input.signal(pid, "SIGSTOP");
+        frozen.push(pid);
       }
     }
+    return killFrozen(`Copilot kept starting processes after ${MAX_FREEZE_PASSES} passes`);
   } catch (cause) {
-    failure = `listing Copilot's processes failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    return killFrozen(`listing Copilot's processes failed: ${reason}`);
   }
-  for (const pid of [...stopped].reverse()) signalQuietly(pid, "SIGKILL");
-  return failure;
 }
 
 /**
@@ -156,7 +212,16 @@ export function copilotClientProcess(client: object): CopilotProcess | undefined
     hasExited,
     kill: () => void child.kill("SIGKILL"),
     // Once the CLI exited its pid can be recycled, so only a live CLI's tree is ours.
-    killDescendants: () => (hasExited() ? Promise.resolve(undefined) : killPosixDescendants(pid)),
+    killDescendants: () =>
+      hasExited()
+        ? Promise.resolve(undefined)
+        : stopProcessTree({
+            rootPid: pid,
+            rootExited: hasExited,
+            list: listProcesses,
+            signal: signalQuietly,
+            selfPid: process.pid,
+          }),
     exited: stdioClosed
       .then(() => (typeof drain === "function" ? Reflect.apply(drain, connection, []) : undefined))
       .then(
