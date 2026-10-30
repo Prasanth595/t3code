@@ -3941,7 +3941,7 @@ describe("PiAdapterV2", () => {
           event.type === "provider_session.updated" && event.providerSession.status === "stopped"
         );
       });
-      assert.deepEqual(emitted, notices);
+      assert.deepEqual<ReadonlyArray<string>>(emitted, notices);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
