@@ -1284,9 +1284,12 @@ export function useComposerSend(input: ComposerSendInput) {
         submissionIntent === "background" && isLocalDraftThread
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
-      // Read before sending: once the thread exists the draft holding it is finalized away.
+      // Read the live session just before dispatch: a checkout can record its pull request
+      // while this send awaits, and the draft is finalized away once the thread exists.
       const checkoutPullRequestUrl = isLocalDraftThread
-        ? checkoutPullRequestUrlToLink(draftThread)
+        ? checkoutPullRequestUrlToLink(
+            draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId),
+          )
         : null;
       // Recorded together with the read above, so a checkout finishing on either side of it is
       // linked exactly once: by this send, or by the checkout after it.

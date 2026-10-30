@@ -1,8 +1,13 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { newDraftId, newThreadId } from "~/lib/utils";
@@ -18,7 +23,7 @@ import {
   DraftId,
 } from "../../composerDraftStore";
 import { openPullRequestThreadDialog } from "./ChatOverlayHosts";
-import { readThreadShell, waitForThreadShell } from "../../state/entities";
+import { readThreadShell, untilThreadShell } from "../../state/entities";
 import { checkoutLandedOnSentDraft } from "../ChatView.logic";
 import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 interface PullRequestDraftThreadInput {
@@ -71,6 +76,34 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     openPullRequestThreadDialog(activeThreadKey, reference);
   };
   const openPullRequestDialogStable = useStableCallback(openPullRequestDialog);
+
+  // The shell can arrive long after preparation (remote environments), so a checkout that
+  // lands on a sent draft links once the shell exists, without a timeout.
+  const [pendingShellLinks, setPendingShellLinks] = useState<
+    ReadonlyMap<string, { readonly threadRef: ScopedThreadRef; readonly url: string }>
+  >(new Map());
+  const linkPendingShellStable = useStableCallback(
+    (pending: { readonly threadRef: ScopedThreadRef; readonly url: string }) => {
+      linkCheckoutPullRequest(pending.threadRef, pending.url);
+    },
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the thread-shell atom so each pending checkout link fires the moment the shell arrives
+  useEffect(() => {
+    if (pendingShellLinks.size === 0) return;
+    const stops = Array.from(pendingShellLinks.entries()).map(([threadKey, pending]) =>
+      untilThreadShell(pending.threadRef, () => {
+        linkPendingShellStable(pending);
+        setPendingShellLinks((current) => {
+          const next = new Map(current);
+          next.delete(threadKey);
+          return next;
+        });
+      }),
+    );
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, [pendingShellLinks, linkPendingShellStable]);
 
   const openOrReuseProjectDraftThread = async (input: {
     branch: string;
@@ -163,9 +196,11 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     }
     // A send that fails never creates the thread; the draft keeps the pull request and its
     // next send links it.
-    if (await waitForThreadShell(threadRef)) {
-      linkCheckoutPullRequest(threadRef, input.pullRequestUrl);
-    }
+    setPendingShellLinks((current) => {
+      const next = new Map(current);
+      next.set(scopedThreadKey(threadRef), { threadRef, url: input.pullRequestUrl });
+      return next;
+    });
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
   return {
