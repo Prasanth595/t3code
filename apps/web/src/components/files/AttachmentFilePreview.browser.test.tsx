@@ -2345,6 +2345,177 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
+function planningPdf(
+  titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
+  firstHeight = 140,
+  pageHeight = 792,
+) {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Count ${titles.length} /Kids [${titles.map((_, index) => `${3 + index * 2} 0 R`).join(" ")}] >>`,
+  ];
+  const font = 3 + titles.length * 2;
+  for (const [index, title] of titles.entries()) {
+    const text = `/GS1 gs BT /F1 24 Tf 30 ${index === 0 ? 70 : 700} Td ${index === 0 ? "(Quarter) Tj /F2 24 Tf (ly outlook) Tj" : `(${title}) Tj`} ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${index === 0 ? firstHeight : pageHeight}] /Rotate ${index === 2 ? 90 : 0} /Resources << /Font << /F1 ${font} 0 R /F2 ${font + 1} 0 R >> /ExtGState << /GS1 << /TR << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 2 >> >> >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    );
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = source.length;
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([source], { type: "application/pdf" });
+}
+
+it("keeps workspace PDF scroll and zoom after reloads and clamps them when the document shrinks", async () => {
+  assetUrlState.mockReset();
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
+  using urls = (() => {
+    const original = URL.createObjectURL(planningPdf());
+    const updated = URL.createObjectURL(
+      planningPdf(["Quarterly outlook", "Delivery milestones", "Updated budget"], 500),
+    );
+    const shorter = URL.createObjectURL(planningPdf(["Quarterly outlook", "Updated milestones"]));
+    const shrunk = URL.createObjectURL(
+      planningPdf(["Quarterly outlook", "Small page", "Budget and risks"], 500, 200),
+    );
+    const single = URL.createObjectURL(planningPdf(["Quarterly outlook"]));
+    return {
+      original,
+      updated,
+      shorter,
+      shrunk,
+      single,
+      [Symbol.dispose]: () =>
+        [original, updated, shorter, shrunk, single].forEach(URL.revokeObjectURL),
+    };
+  })();
+  const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${src}#preview`,
+      expiresAt: Date.now() + 3_600_000,
+    });
+    return (
+      <div className="flex h-[600px] w-[320px]">
+        <WorkspaceBrowserPreview
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          draft={false}
+          absolutePath={path}
+          workspaceRoot="/repo"
+          title="Planning PDF"
+          workspaceMutationId={mutation}
+        />
+      </div>
+    );
+  };
+  await using screen = await render(preview(urls.original, "one"));
+  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
+  for (let index = 0; index < 4; index++) {
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+  }
+  const region = () => screen.container.querySelector<HTMLElement>('[role="region"]')!;
+  const canvas = (page: number) =>
+    region().querySelector<HTMLCanvasElement>(`canvas[aria-label="Page ${page}"]`)!;
+  const offset = (page: number) =>
+    region().getBoundingClientRect().top - canvas(page).getBoundingClientRect().top;
+  const scrollTo = (options: ScrollToOptions) =>
+    act(async () => {
+      const node = region();
+      const scrolled = new Promise<void>((resolve) =>
+        node.addEventListener("scroll", () => resolve(), { once: true }),
+      );
+      node.scrollTo(options);
+      await scrolled;
+    });
+  const zoom = screen.container.textContent!.match(/\d+%/)![0];
+  const top = region().scrollTop;
+  await scrollTo({ top: top + 100, left: 80 });
+  await vi.waitFor(() => {
+    expect(region().scrollTop).toBeCloseTo(top + 100, 0);
+    expect(region().scrollLeft).toBe(80);
+  });
+  const savedOffset = offset(3);
+  await screen.rerender(preview(urls.updated, "two"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("3 / 3 pages");
+    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
+      "Updated budget",
+    );
+    expect(screen.container.textContent).toContain(zoom);
+    expect(region().scrollLeft).toBe(80);
+    expect(offset(3)).toBeCloseTo(savedOffset, 0);
+  });
+  await screen.getByRole("button", { name: "Previous page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  const secondPageTop = region().scrollTop;
+  await scrollTo({ top: secondPageTop + 600 });
+  await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(secondPageTop + 600, 0));
+  await screen.rerender(preview(urls.shrunk, "smaller-page"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("2 / 3 pages");
+    expect(screen.container.textContent).toContain(zoom);
+    expect(region().scrollLeft).toBe(80);
+    expect(offset(2)).toBeGreaterThan(0);
+    expect(offset(2)).toBeLessThan(canvas(2).getBoundingClientRect().height);
+  });
+  await screen.rerender(preview(urls.shorter, "three"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("2 / 2 pages");
+    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
+      "Updated milestones",
+    );
+  });
+  await screen.rerender(preview(urls.single, "four"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 1 pages"));
+  await screen.rerender(preview(urls.original, "five"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+  await screen.getByRole("button", { name: "Fit width", exact: true }).click();
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  await scrollTo({ top: region().scrollTop + 30 });
+  const fitOffset = offset(2);
+  await screen.rerender(preview(urls.original, "six"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("Fit width");
+    expect(region().scrollLeft).toBe(0);
+    expect(screen.container.textContent).toContain("2 / 3 pages");
+    expect(offset(2)).toBeCloseTo(fitOffset, 0);
+  });
+  await screen.getByRole("button", { name: "Previous page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
+  await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const firstPageZoom = screen.container.textContent!.match(/\d+%/)![0];
+  await screen.rerender(preview(urls.original, "seven"));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain(firstPageZoom));
+  await screen.getByRole("button", { name: "Next page", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
+  await screen.rerender(preview(urls.original, "one", "/repo/another.pdf"));
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toContain("1 / 3 pages");
+    expect(screen.container.textContent).toContain("Fit width");
+    expect(region().scrollTop).toBe(0);
+    expect(region().scrollLeft).toBe(0);
+  });
+});
+
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });
   await using screen = await render(
