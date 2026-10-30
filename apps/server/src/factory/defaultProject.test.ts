@@ -106,6 +106,13 @@ describe("inferCommands", () => {
     expect(inferCommands(files({}))).toEqual({ provision: [], gate: [] });
   });
 
+  it("a lockfile with no package.json infers nothing", () => {
+    expect(inferCommands(files({ lockfiles: ["package-lock.json"] }))).toEqual({
+      provision: [],
+      gate: [],
+    });
+  });
+
   it("a package.json with no lockfile, or one that is not JSON, infers nothing", () => {
     expect(inferCommands(files({ packageJson: pkg("test") }))).toEqual({ provision: [], gate: [] });
     expect(

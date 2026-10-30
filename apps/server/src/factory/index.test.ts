@@ -1498,6 +1498,36 @@ describe("liveWorld", () => {
       }),
     );
 
+    it.effect("a .dw/config.yml on GitHub that does not parse is the repo's own error", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ text: "factory: [unclosed\n" });
+        const { result, readings } = yield* readProject(
+          process,
+          "/p",
+          false,
+          REPO,
+          withDefault,
+          npmTest,
+        );
+        assert.isTrue(Result.isFailure(result));
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.strictEqual(reading.onDefault, false);
+          assert.include(reading.errors[0]?.message, "YAML");
+        }
+      }),
+    );
+
+    it.effect("a GitHub read that fails says nothing of which config the repo runs on", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" });
+        const { readings } = yield* readProject(process, "/p", false, REPO, withDefault, npmTest);
+        assert.strictEqual(readings[0]?.kind, "errors");
+        assert.notProperty(readings[0], "onDefault");
+      }),
+    );
+
     it.effect("a repo on the default with no gate to infer is a config error the page shows", () =>
       failsWith(
         withDefault,
