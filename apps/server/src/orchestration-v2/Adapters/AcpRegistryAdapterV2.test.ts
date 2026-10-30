@@ -1127,6 +1127,12 @@ describe("AcpRegistryAdapterV2", () => {
           assert.deepEqual(new Set(messages.map((message) => message.text)), expected);
           assert.equal(new Set(messages.map((message) => message.id)).size, 3);
           assert.equal(new Set(items.map((item) => item.id)).size, 3);
+          for (const id of ["different-blocks", "second-id", "unmatched"]) {
+            assert.isTrue(
+              items.some((item) => item.nativeItemRef?.nativeId.endsWith(`:user:message:${id}`)),
+              `${id} remains visible`,
+            );
+          }
         }
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
