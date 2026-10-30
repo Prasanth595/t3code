@@ -1,5 +1,5 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
-  pullRequestHostOf,
   PULL_REQUEST_LIST_PROJECT_LIMIT,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -131,7 +131,7 @@ export function assignProjectsToEnvironments(
     const availability = hostAvailability?.get(project.environmentId);
     const host =
       availability?.projectHosts.get(project.id)?.host ??
-      pullRequestHostOf(
+      sourceControlClients.changeRequestHost(
         project.repositoryIdentity,
         (project.repositoryIdentity?.provider ?? "unknown") as SourceControlProviderKind,
       );
