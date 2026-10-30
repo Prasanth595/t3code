@@ -80,8 +80,11 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           cause: forkableSourceRunStatusError(input.sourceRun),
         });
       }
+      // A remote task's requests are answered on the thread that owns the task.
+      const { remoteTaskRequests: _remoteTaskRequests, ...sourceThread } =
+        input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
-        ...input.sourceProjection.thread,
+        ...sourceThread,
         // PR context follows the conversation; watching remains the source thread's responsibility.
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,

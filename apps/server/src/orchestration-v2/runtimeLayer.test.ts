@@ -7306,6 +7306,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "replacement",
     "manual-snooze",
     "invalid-snooze",
+    "remote-request",
     "cancel-resume-keep-snooze",
     "independent-patches",
     "expired-snooze",
@@ -7444,11 +7445,35 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
-      if (scenario === "invalid-snooze") {
+      if (scenario === "remote-request") {
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:remote-request"),
+              type: "thread.metadata-updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...current.thread,
+                remoteTaskRequests: [
+                  {
+                    requestId: RuntimeRequestId.make("recovery:remote-request:approval"),
+                    kind: "command",
+                    createdAt: now,
+                    taskId: NodeId.make("recovery:remote-request:task"),
+                  },
+                ],
+              },
+            },
+          ],
+        });
+      }
+      if (scenario === "invalid-snooze" || scenario === "remote-request") {
         const result = yield* orchestrator
           .dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make("recovery:invalid-snooze"),
+            commandId: CommandId.make(`recovery:refused:${scenario}`),
             threadId,
             limitRecovery: { runId: run.id, resetAt, snooze: true },
           })

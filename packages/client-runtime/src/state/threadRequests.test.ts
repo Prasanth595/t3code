@@ -3,6 +3,7 @@ import {
   NodeId,
   ProviderSessionId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
+  redirectableApprovals,
   declinePendingApprovals,
   sendApprovalFeedback,
   makeThreadRequestsResolvedAnnouncer,
@@ -315,6 +317,73 @@ describe("pending v2 questions", () => {
       ),
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
+  });
+  it("lists what a task in a linked environment waits on until the user answers it here", () => {
+    const remote = {
+      runtimeRequests: [],
+      turnItems: [],
+      subagents: [
+        {
+          id: NodeId.make("remote-task"),
+          remoteChild: {
+            environmentId: EnvironmentId.make("environment-box"),
+            threadId: ThreadId.make("thread-on-the-box"),
+            label: "Box",
+          },
+        },
+      ],
+      thread: {
+        remoteTaskRequests: [
+          {
+            requestId: RuntimeRequestId.make("remote-approval"),
+            taskId: NodeId.make("remote-task"),
+            kind: "command" as const,
+            createdAt: v2Now,
+            detail: "pnpm test",
+          },
+          {
+            requestId: RuntimeRequestId.make("remote-question"),
+            taskId: NodeId.make("remote-task"),
+            kind: "user_input" as const,
+            createdAt: v2Now,
+            questions: [{ id: "size", header: "Size", question: "Which size?", options: [] }],
+          },
+          {
+            requestId: RuntimeRequestId.make("remote-answered"),
+            taskId: NodeId.make("remote-task"),
+            kind: "command" as const,
+            createdAt: v2Now,
+            response: { decision: "accept" as const },
+          },
+        ],
+      },
+    };
+    const pending = derivePendingThreadRequests(remote);
+    expect(pending.approvals).toEqual([
+      {
+        requestId: "remote-approval",
+        requestKind: "command",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        detail: "pnpm test",
+        responseCapability: "live",
+        remoteTaskId: "remote-task",
+        remoteEnvironmentLabel: "Box",
+      },
+    ]);
+    expect(redirectableApprovals(pending.approvals)).toEqual([]);
+    expect(pending.userInputs).toEqual([
+      {
+        requestId: "remote-question",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        questions: [
+          { id: "size", header: "Size", question: "Which size?", options: [], multiSelect: false },
+        ],
+        responseCapability: "live",
+        dismissible: false,
+        remoteTaskId: "remote-task",
+        remoteEnvironmentLabel: "Box",
+      },
+    ]);
   });
 });
 

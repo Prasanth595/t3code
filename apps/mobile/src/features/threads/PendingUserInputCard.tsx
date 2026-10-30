@@ -213,6 +213,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
+        {props.pendingUserInput.remoteEnvironmentLabel ? (
+          <Text className="font-sans text-xs leading-normal text-foreground-muted">
+            Delegated task on {props.pendingUserInput.remoteEnvironmentLabel}
+          </Text>
+        ) : null}
         {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
           return (
@@ -271,6 +276,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   question={question}
                   questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
+                  attachable={props.pendingUserInput.remoteTaskId === undefined}
                   value={draft?.customAnswer ?? ""}
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)

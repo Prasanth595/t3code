@@ -22,6 +22,7 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { respondToLinkedRequest, watchLinkedRequests } from "./linkRequests.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -257,6 +258,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           .pipe(Effect.mapError(dispatchFailure));
         return { sequence: result.sequence };
       }),
+    ),
+  ),
+  t3_link_requests: McpToolAccess.either(
+    (input) => input.action === "watch",
+    McpToolAccess.reads((input) => watchLinkedRequests(input)),
+    McpToolAccess.writesThreads(
+      (input) => [input.threadId],
+      (input) =>
+        Effect.gen(function* () {
+          return yield* respondToLinkedRequest({
+            threadId: input.threadId,
+            requestId: yield* required(input.requestId, "requestId"),
+            decision: input.decision,
+            answers: input.answers,
+            clientRequestId: yield* required(input.clientRequestId, "clientRequestId"),
+          });
+        }),
     ),
   ),
   t3_queue: McpToolAccess.either(

@@ -1,14 +1,18 @@
-import type {
-  EnvironmentId,
-  ThreadId,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2UserInputQuestion,
-  ProviderApprovalFullAccessOverride,
-  ProviderApprovalOption,
-  ProviderApprovalDecision,
-  ProviderRequestKind,
-  RuntimeRequestId,
+import {
+  unansweredRemoteTaskRequests,
+  type EnvironmentId,
+  type NodeId,
+  type ThreadId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalFullAccessOverride,
+  type ProviderApprovalOption,
+  type ProviderApprovalDecision,
+  type ProviderRequestKind,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
@@ -30,6 +34,14 @@ export async function sendApprovalFeedback(
     return false;
   return (await respond(approval.requestId, "decline", feedback.trim()))?._tag === "Success";
 }
+
+/** A message sent here redirects this thread's agent, never a task waiting in another environment. */
+export const redirectableApprovals = <Approval extends ThreadPendingApproval>(
+  approvals: ReadonlyArray<Approval>,
+): ReadonlyArray<Approval> =>
+  approvals.some((approval) => approval.remoteTaskId !== undefined)
+    ? approvals.filter((approval) => approval.remoteTaskId === undefined)
+    : approvals;
 
 /** Declines every approval a redirect replaces; any one still pending would block the agent. */
 export async function declinePendingApprovals(
@@ -55,6 +67,8 @@ export interface ThreadPendingApproval {
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
+  readonly remoteTaskId?: NodeId;
+  readonly remoteEnvironmentLabel?: string;
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
@@ -81,6 +95,8 @@ export interface ThreadPendingUserInput {
   readonly responseCapability: OrchestrationV2RuntimeRequest["responseCapability"]["type"];
   readonly responseMode?: "message";
   readonly dismissible: boolean;
+  readonly remoteTaskId?: NodeId;
+  readonly remoteEnvironmentLabel?: string;
 }
 
 export interface PendingThreadRequests {
@@ -213,16 +229,27 @@ export function makeThreadRequestsResolvedAnnouncer(
   };
 }
 
+type WithRemoteTaskRequests = {
+  readonly thread?: Pick<OrchestrationV2AppThread, "remoteTaskRequests">;
+  readonly subagents?: ReadonlyArray<Pick<OrchestrationV2Subagent, "id" | "remoteChild">>;
+};
+
 export function pendingRuntimeRequestIds(
-  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests"> & WithRemoteTaskRequests,
 ): RuntimeRequestId[] {
-  return projection.runtimeRequests.flatMap((request) =>
-    request.status === "pending" ? [request.id] : [],
-  );
+  return [
+    ...projection.runtimeRequests.flatMap((request) =>
+      request.status === "pending" ? [request.id] : [],
+    ),
+    ...remoteTaskRequestsOf(projection).map((request) => request.requestId),
+  ];
 }
 
+const remoteTaskRequestsOf = (projection: WithRemoteTaskRequests) =>
+  projection.thread === undefined ? [] : unansweredRemoteTaskRequests(projection.thread);
+
 export function derivePendingThreadRequests(
-  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems">,
+  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems"> & WithRemoteTaskRequests,
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
@@ -273,6 +300,40 @@ export function derivePendingThreadRequests(
       ...(request.responseCapability.type === "live" && request.responseCapability.supportsFeedback
         ? { supportsFeedback: true }
         : {}),
+    });
+  }
+
+  for (const request of remoteTaskRequestsOf(projection)) {
+    const createdAt = DateTime.formatIso(request.createdAt);
+    const environmentLabel = projection.subagents?.find((task) => task.id === request.taskId)
+      ?.remoteChild?.label;
+    const remoteTask = {
+      remoteTaskId: request.taskId,
+      ...(environmentLabel === undefined ? {} : { remoteEnvironmentLabel: environmentLabel }),
+    };
+    if (request.kind === "user_input") {
+      userInputs.push({
+        requestId: request.requestId,
+        createdAt,
+        questions: (request.questions ?? []).map((question) => ({
+          ...question,
+          multiSelect: question.multiSelect ?? false,
+        })),
+        responseCapability: "live",
+        dismissible: false,
+        ...remoteTask,
+      });
+      continue;
+    }
+    approvals.push({
+      requestId: request.requestId,
+      requestKind: request.kind,
+      createdAt,
+      ...(request.detail ? { detail: request.detail } : {}),
+      ...(request.reason ? { reason: request.reason } : {}),
+      ...(request.options === undefined ? {} : { options: request.options }),
+      responseCapability: "live",
+      ...remoteTask,
     });
   }
 

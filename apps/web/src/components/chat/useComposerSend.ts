@@ -211,7 +211,7 @@ interface ComposerSendInput {
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
-  readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
+  readonly pendingApprovals: PendingThreadRequests["composerApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
   readonly activePendingProgress: PendingThreadRequests["activePendingProgress"];
   readonly onAdvanceActivePendingUserInput: PendingThreadRequests["onAdvanceActivePendingUserInput"];

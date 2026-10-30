@@ -1,10 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -12,6 +13,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -103,18 +105,42 @@ const codexAdditionalContext = () =>
     .map((entry) => entry.value)
     .join("");
 
+/** An agent's own session: tools hidden from it by `EnabledWhen` cost it nothing. */
+const agentScope: McpInvocationContext.McpInvocationScope = {
+  environmentId: EnvironmentId.make("environment:context-budget"),
+  requestNamespace: "provider-session:context-budget",
+  thread: {
+    threadId: ThreadId.make("thread:context-budget"),
+    providerSessionId: "provider-session:context-budget",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+};
+
+const toolsListedToAgents = McpServer.McpServer.pipe(
+  Effect.map((mcp) =>
+    mcp.tools.filter(({ annotations }) => {
+      const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+      return enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} });
+    }),
+  ),
+  Effect.provideService(McpInvocationContext.McpInvocationContext, agentScope),
+);
+
 // CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
-    const mcp = yield* McpServer.McpServer;
+    const tools = yield* toolsListedToAgents;
     const measured = {
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
+          tools.map(({ tool }) => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,

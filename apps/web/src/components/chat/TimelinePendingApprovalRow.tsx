@@ -65,6 +65,11 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       }
     >
       <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-xs">
+        {approval.remoteEnvironmentLabel ? (
+          <span className="text-muted-foreground wrap-anywhere">
+            Delegated task on {approval.remoteEnvironmentLabel}
+          </span>
+        ) : null}
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}

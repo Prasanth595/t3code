@@ -20,6 +20,7 @@ import {
   buildMessageContext,
   composerContextImportLookupIds,
   isSameComposerContextPayload,
+  pastedContextRecordFits,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
   pullRequestContextKindLabel,
@@ -67,6 +68,38 @@ const annotation: PreviewAnnotationPayload = {
 };
 
 describe("composerContextRecords", () => {
+  it.each([
+    ["image", "a message", { answersQuestion: false, takesAttachments: false }, true],
+    ["environment", "a message", { answersQuestion: false, takesAttachments: false }, true],
+    [
+      "file",
+      "a question that takes files",
+      { answersQuestion: true, takesAttachments: true },
+      true,
+    ],
+    [
+      "image",
+      "a question that takes none",
+      { answersQuestion: true, takesAttachments: false },
+      false,
+    ],
+    [
+      "file",
+      "a question that takes none",
+      { answersQuestion: true, takesAttachments: false },
+      false,
+    ],
+    [
+      "thread",
+      "a question that takes none",
+      { answersQuestion: true, takesAttachments: false },
+      true,
+    ],
+    ["environment", "any question", { answersQuestion: true, takesAttachments: true }, false],
+  ] as const)("a pasted %s record fits %s: %s", (kind, _, target, fits) => {
+    expect(pastedContextRecordFits(kind, target)).toBe(fits);
+  });
+
   it("copies only ready or persisted server-side attachment IDs", () => {
     const environmentId = EnvironmentId.make("env");
     const image = {

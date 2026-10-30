@@ -1308,6 +1308,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const {
     pendingApprovals,
+    composerApprovals,
     pendingUserInputs,
     activePendingApproval,
     activePendingUserInput,
@@ -2846,7 +2847,7 @@ export default function ChatView(props: ChatViewProps) {
     needsLoadBalancing,
     loadBalancing,
     readPendingEnvironmentChange,
-    pendingApprovals,
+    pendingApprovals: composerApprovals,
     respondingRequestIds,
     activePendingProgress,
     onAdvanceActivePendingUserInput,
@@ -3477,7 +3478,10 @@ export default function ChatView(props: ChatViewProps) {
                               environmentId={environmentId}
                               attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
                               supportsAttachmentUploads={supportsAttachmentUploads}
-                              supportsQuestionAttachments={supportsQuestionAttachments}
+                              supportsQuestionAttachments={
+                                supportsQuestionAttachments &&
+                                activePendingUserInput?.remoteTaskId === undefined
+                              }
                               maxFileAttachmentBytes={maxFileAttachmentBytes}
                               routeKind={routeKind}
                               routeThreadRef={routeThreadRef}
@@ -3532,8 +3536,8 @@ export default function ChatView(props: ChatViewProps) {
                                   : undefined
                               }
                               environmentUnavailable={activeEnvironmentUnavailableState}
-                              activePendingApproval={activePendingApproval}
-                              pendingApprovals={pendingApprovals}
+                              activePendingApproval={composerApprovals[0] ?? null}
+                              pendingApprovals={composerApprovals}
                               onHeldRequestIdsChange={onHeldRequestIdsChange}
                               pendingUserInputs={pendingUserInputs}
                               activePendingProgress={activePendingProgress}

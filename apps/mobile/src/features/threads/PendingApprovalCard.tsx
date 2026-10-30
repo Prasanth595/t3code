@@ -45,6 +45,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       <Text className="font-t3-bold text-lg text-foreground">
         {props.approval.appName ?? props.approval.requestKind}
       </Text>
+      {props.approval.remoteEnvironmentLabel ? (
+        <Text className="font-sans text-xs leading-normal text-foreground-muted">
+          Delegated task on {props.approval.remoteEnvironmentLabel}
+        </Text>
+      ) : null}
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
           {props.approval.detail}

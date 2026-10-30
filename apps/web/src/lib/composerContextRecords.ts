@@ -347,6 +347,16 @@ export function asKnownContextRecord(
   return record;
 }
 
+/** An answer to an agent's question carries no machines, and files only when the question takes them. */
+export function pastedContextRecordFits(
+  kind: KnownComposerContextRecord["kind"],
+  target: { readonly answersQuestion: boolean; readonly takesAttachments: boolean },
+): boolean {
+  if (!target.answersQuestion) return true;
+  if (kind === "environment") return false;
+  return target.takesAttachments || (kind !== "image" && kind !== "file");
+}
+
 export function composerContextImportLookupIds(
   record: KnownComposerContextRecord,
 ): ReadonlyArray<ComposerContextId> {

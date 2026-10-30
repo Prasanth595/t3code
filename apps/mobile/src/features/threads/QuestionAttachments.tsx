@@ -35,6 +35,7 @@ export function QuestionAttachments(props: {
   question: UserInputQuestion;
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
+  attachable: boolean;
   value: string;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
@@ -86,6 +87,10 @@ export function QuestionAttachments(props: {
   const paste = useNativePaste((uris) => {
     const scope = pickerScope.current;
     if (!selectedThread || props.disabled || !configs.get(selectedThread.environmentId)) return;
+    if (!props.attachable) {
+      Dialog.alert("Could not paste image", "This question cannot accept attachments.");
+      return;
+    }
     const key = questionAttachmentDraftKey(
       selectedThread.environmentId,
       selectedThread.id,
@@ -117,7 +122,7 @@ export function QuestionAttachments(props: {
   if (!selectedThread || props.question.allowCustomAnswer === false) return null;
   const { environmentId, id: threadId } = selectedThread;
   const capabilities = configs.get(environmentId)?.environment.capabilities;
-  const canAttach = capabilities !== undefined;
+  const canAttach = props.attachable && capabilities !== undefined;
   const key = questionAttachmentDraftKey(
     environmentId,
     threadId,

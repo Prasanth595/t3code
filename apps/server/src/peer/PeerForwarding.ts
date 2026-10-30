@@ -21,16 +21,11 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { FORWARDED_WAIT_CHUNK_MS, LinkRequestsTool } from "../mcp/toolkits/thread/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
-/**
- * A peer's `/mcp` holds a wait open for its whole timeout without sending
- * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
- * forwarded wait goes out in pieces no longer than this.
- */
-export const FORWARDED_WAIT_CHUNK_MS = 50_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
@@ -73,6 +68,12 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
+    /** `t3_link_requests` there, as the environment that delegated the thread. */
+    readonly linkRequests: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: Tool.Parameters<typeof LinkRequestsTool>,
+    ) => Effect.Effect<Tool.Success<typeof LinkRequestsTool>, OrchestratorMcpFailure>;
     /** The environments this one links to, as an agent sees them. */
     readonly links: (
       scope: Scope,
@@ -179,6 +180,16 @@ const make = Effect.gen(function* () {
       input,
     );
 
+  const linkRequests: PeerForwarding["Service"]["linkRequests"] = (scope, environmentId, input) =>
+    forward<Tool.Success<typeof LinkRequestsTool>>(
+      scope,
+      LinkRequestsTool.name,
+      LinkRequestsTool.parametersSchema,
+      LinkRequestsTool.successSchema,
+      environmentId,
+      input,
+    );
+
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
     "PeerForwarding.waitForThread",
   )(function* (scope, environmentId, input) {
@@ -212,7 +223,8 @@ const make = Effect.gen(function* () {
   });
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
-  // following through readThread, waitForThread and interruptThread, so they still finish.
+  // following through readThread, waitForThread, interruptThread and linkRequests, so they
+  // still finish.
   const requireEnabled = links.enabled.pipe(
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
@@ -268,6 +280,7 @@ const make = Effect.gen(function* () {
     readThread,
     interruptThread,
     waitForThread,
+    linkRequests,
     links: listLinks,
   });
 });

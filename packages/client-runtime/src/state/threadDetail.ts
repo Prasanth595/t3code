@@ -396,8 +396,11 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
-      null;
+    let previous:
+      | (Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems" | "subagents"> & {
+          readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "remoteTaskRequests">;
+        })
+      | null = null;
     let value: PendingThreadRequests | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
@@ -418,12 +421,24 @@ export function createEnvironmentThreadDetailAtoms<E>(
                 (item.type === "approval_request" || item.type === "user_input_request") &&
                 ids.has(item.requestId),
             );
+      const remoteTaskRequests = projection.thread.remoteTaskRequests;
+      const subagents =
+        remoteTaskRequests === undefined
+          ? []
+          : projection.subagents.filter((task) => task.remoteChild !== undefined);
       if (
         previous === null ||
         !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
-        !arrayElementsEqual(previous.turnItems, turnItems)
+        !arrayElementsEqual(previous.turnItems, turnItems) ||
+        !arrayElementsEqual(previous.subagents, subagents) ||
+        previous.thread.remoteTaskRequests !== remoteTaskRequests
       ) {
-        previous = { runtimeRequests, turnItems };
+        previous = {
+          runtimeRequests,
+          turnItems,
+          subagents,
+          thread: remoteTaskRequests === undefined ? {} : { remoteTaskRequests },
+        };
         value = derivePendingThreadRequests(previous);
       }
       return value;

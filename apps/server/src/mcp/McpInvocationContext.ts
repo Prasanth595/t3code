@@ -144,6 +144,16 @@ export const hiddenWhileLinksOff = (): boolean => {
   return scope?.linkedEnvironments !== false;
 };
 
+/** Another T3 Code environment's peer link calling on its own behalf, not an agent here. */
+export const isLinkSession = (scope: McpInvocationScope | undefined): boolean =>
+  scope?.thread === undefined && scope?.client?.linked === true;
+
+/** `McpSchema.EnabledWhen` for tools only a peer link's own environment calls. */
+export const visibleToLinkSessions = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  return isLinkSession(fiber && Context.getOrUndefined(fiber.context, McpInvocationContext));
+};
+
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;

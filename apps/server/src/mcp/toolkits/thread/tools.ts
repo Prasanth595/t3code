@@ -12,6 +12,9 @@ import {
   ProviderInteractionMode,
   RuntimeRequestId,
   ProviderUserInputAnswers,
+  ProviderApprovalDecision,
+  OrchestrationV2LinkedRequestJson,
+  OrchestratorMcpClientRequestId,
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
@@ -22,7 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -144,6 +147,45 @@ const PendingRequestTool = Tool.make("t3_pending_request", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+/**
+ * A peer's `/mcp` holds a wait open for its whole timeout without sending
+ * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
+ * forwarded wait goes out in pieces no longer than this.
+ */
+export const FORWARDED_WAIT_CHUNK_MS = 50_000;
+
+/**
+ * How the environment that delegated a task here mirrors its thread's questions and approvals
+ * and answers them for its user. Only that environment's link calls it, never an agent: an
+ * agent may not approve, and the link's access and fence still hold here.
+ */
+export const LinkRequestsTool = Tool.make("t3_link_requests", {
+  ...commandTool,
+  description:
+    "For linked T3 Code environments only. watch: the thread's live questions and approvals, once their `version` differs from `knownVersion` or `timeoutMs` passes. respond: answer one.",
+  parameters: Schema.Struct({
+    action: Schema.Literals(["watch", "respond"]),
+    threadId: ThreadId,
+    knownVersion: Schema.optional(Schema.String),
+    timeoutMs: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: FORWARDED_WAIT_CHUNK_MS })),
+    ),
+    requestId: Schema.optional(RuntimeRequestId),
+    decision: Schema.optional(ProviderApprovalDecision),
+    answers: Schema.optional(ProviderUserInputAnswers),
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+  success: Schema.Union([
+    Schema.Struct({
+      requests: Schema.Array(OrchestrationV2LinkedRequestJson),
+      version: Schema.String,
+    }),
+    OrchestrationV2DispatchCommandResult,
+  ]),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToLinkSessions);
+
 const threadConfiguration = Schema.Struct({
   threadId: ThreadId,
   modelSelection: ModelSelection,
@@ -244,5 +286,6 @@ export const ThreadToolkit = Toolkit.make(
   ThreadTransferTool,
   ThreadOrganizeTool,
   PendingRequestTool,
+  LinkRequestsTool,
   QueueTool,
 );

@@ -1,4 +1,4 @@
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { pendingGuestMessageCount, unansweredRemoteTaskRequests } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1394,6 +1394,23 @@ function secretRequestAsPendingInput(
   };
 }
 
+/** The newest request a remote task's thread waits on that the user has not answered here. */
+function remoteTaskRequestAsPending(
+  thread: OrchestrationV2AppThread,
+): OrchestrationV2PendingRuntimeRequestSummary | null {
+  const request = unansweredRemoteTaskRequests(thread).toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+  )[0];
+  if (request === undefined) return null;
+  return {
+    id: request.requestId,
+    kind: request.kind,
+    createdAt: request.createdAt,
+    blocking: true,
+  };
+}
+
 /**
  * A secret card is answered while its agent waits in the run. A link card's
  * agent asked without waiting, so the card waits on the user after its run.
@@ -1447,6 +1464,9 @@ export function threadShellFromProjection(
               DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
           )[0] ?? null,
       ) ?? pendingRuntimeRequest;
+  }
+  if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
+    pendingRuntimeRequest = remoteTaskRequestAsPending(projection.thread) ?? pendingRuntimeRequest;
   }
   const userMessages = projection.messages
     .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
@@ -6373,6 +6393,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
               )[0] ?? null,
             ) ?? pendingRuntimeRequest;
+        }
+        if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
+          pendingRuntimeRequest = remoteTaskRequestAsPending(thread) ?? pendingRuntimeRequest;
         }
         let terminalFailureItem =
           row.terminal_failure_payload_json === null

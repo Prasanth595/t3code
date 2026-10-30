@@ -433,6 +433,71 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+export const OrchestrationV2UserInputQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  header: TrimmedNonEmptyString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      description: TrimmedNonEmptyString,
+      value: Schema.optional(Schema.String),
+      preview: Schema.optional(Schema.String),
+    }),
+  ),
+  multiSelect: Schema.optional(Schema.Boolean),
+  allowCustomAnswer: Schema.optional(Schema.Boolean),
+  initialAnswer: Schema.optional(Schema.String),
+  required: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
+
+/**
+ * A question or approval a thread waits on, as the environment that delegated
+ * it a task reads it through their link. `runId` is the run there it blocks.
+ */
+export const OrchestrationV2LinkedRequest = Schema.Struct({
+  requestId: RuntimeRequestId,
+  kind: Schema.Union([ProviderRequestKind, Schema.Literal("user_input")]),
+  createdAt: Schema.DateTimeUtc,
+  runId: Schema.optional(RunId),
+  questions: Schema.optional(Schema.Array(OrchestrationV2UserInputQuestion)),
+  detail: Schema.optional(Schema.String),
+  reason: Schema.optional(Schema.String),
+  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+});
+export type OrchestrationV2LinkedRequest = typeof OrchestrationV2LinkedRequest.Type;
+
+export const OrchestrationV2LinkedRequestJson = OrchestrationV2LinkedRequest.mapFields(
+  (fields) => ({ ...fields, createdAt: Schema.DateTimeUtcFromString }),
+);
+
+/**
+ * A request the thread of a task delegated to a linked environment waits on,
+ * mirrored on the parent here so the user answers it here. `response` is the
+ * answer given here, owed to the thread there until it resolves the request.
+ */
+export const OrchestrationV2RemoteTaskRequest = Schema.Struct({
+  ...OrchestrationV2LinkedRequest.fields,
+  taskId: NodeId,
+  response: Schema.optional(
+    Schema.Struct({
+      decision: Schema.optional(ProviderApprovalDecision),
+      answers: Schema.optional(ProviderUserInputAnswers),
+    }),
+  ),
+});
+export type OrchestrationV2RemoteTaskRequest = typeof OrchestrationV2RemoteTaskRequest.Type;
+
+const OrchestrationV2RemoteTaskRequestJson = OrchestrationV2RemoteTaskRequest.mapFields(
+  (fields) => ({ ...fields, createdAt: Schema.DateTimeUtcFromString }),
+);
+
+export const unansweredRemoteTaskRequests = (
+  thread: Pick<OrchestrationV2AppThread, "remoteTaskRequests">,
+): ReadonlyArray<OrchestrationV2RemoteTaskRequest> =>
+  thread.remoteTaskRequests?.filter((request) => request.response === undefined) ?? [];
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -451,6 +516,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  /** Questions and approvals of this thread's tasks in linked environments. */
+  remoteTaskRequests: Schema.optional(Schema.Array(OrchestrationV2RemoteTaskRequest)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -1297,25 +1364,6 @@ export const OrchestrationV2PlanStep = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2PlanStep = typeof OrchestrationV2PlanStep.Type;
-
-export const OrchestrationV2UserInputQuestion = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  header: TrimmedNonEmptyString,
-  question: TrimmedNonEmptyString,
-  options: Schema.Array(
-    Schema.Struct({
-      label: TrimmedNonEmptyString,
-      description: TrimmedNonEmptyString,
-      value: Schema.optional(Schema.String),
-      preview: Schema.optional(Schema.String),
-    }),
-  ),
-  multiSelect: Schema.optional(Schema.Boolean),
-  allowCustomAnswer: Schema.optional(Schema.Boolean),
-  initialAnswer: Schema.optional(Schema.String),
-  required: Schema.optional(Schema.Boolean),
-});
-export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
 const OrchestrationV2PlanArtifactBaseFields = {
   id: PlanId,
@@ -2231,6 +2279,7 @@ export type OrchestrationV2StoredEvent = typeof OrchestrationV2StoredEvent.Type;
 
 export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((fields) => ({
   ...fields,
+  remoteTaskRequests: Schema.optional(Schema.Array(OrchestrationV2RemoteTaskRequestJson)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -3424,6 +3473,30 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     parentThreadId: ThreadId,
     taskId: NodeId,
+  }),
+  /**
+   * Mirrors what a remote task's thread there waits on now, as its follower read it there,
+   * so the user answers it on the parent here. An answer given here stays until the request
+   * leaves the thread there; a task that has its result mirrors nothing.
+   */
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.remote.requests"),
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    requests: Schema.Array(OrchestrationV2LinkedRequest),
+  }),
+  /**
+   * The answer given here to a remote task's request could not reach its thread there. The
+   * request is unanswered here again, and the parent shows why.
+   */
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.remote.respond.fail"),
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    requestId: RuntimeRequestId,
+    message: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback.fail"),
