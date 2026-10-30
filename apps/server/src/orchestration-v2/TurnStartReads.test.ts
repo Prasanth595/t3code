@@ -406,7 +406,7 @@ it.effect.each(["sqlite"] as const)(
           },
         },
       });
-      assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).sort(), [
+      assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).toSorted(), [
         "answer-document",
         "answer-image",
         "attachment:old",
