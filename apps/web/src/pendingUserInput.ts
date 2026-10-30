@@ -1,17 +1,44 @@
-import type { UserInputQuestion } from "@t3tools/contracts";
+import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import {
+  buildPendingUserInputAnswers,
+  normalizeSelectedOptionValues,
+  resolvePendingUserInputAnswer,
+  type PendingUserInputAnswer,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
 
-export interface PendingUserInputDraftAnswer {
-  selectedOptionLabel?: string;
-  customAnswer?: string;
+import { collectInlineContextIds } from "./lib/composerContextReferences";
+
+export function projectPendingUserInputAnswer(
+  answer: unknown,
+  threadContexts: ReadonlyArray<ThreadContextRecord>,
+) {
+  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
+  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
+  return replaceComposerContextReferences(answer, (reference) => {
+    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
+    return record ? formatThreadLink(record, reference.label) : reference.source;
+  });
+}
+
+// Question drafts retain deleted chip records for undo; only transfer referenced records.
+export function threadContextsReferencedByAnswer(
+  answer: string,
+  threadContexts: ReadonlyArray<ThreadContextRecord>,
+) {
+  const referencedIds = new Set(collectInlineContextIds(answer));
+  return threadContexts.filter((record) => referencedIds.has(record.contextId));
 }
 
 export interface PendingUserInputProgress {
   questionIndex: number;
   activeQuestion: UserInputQuestion | null;
   activeDraft: PendingUserInputDraftAnswer | undefined;
-  selectedOptionLabel: string | undefined;
+  selectedOptionValues: ReadonlyArray<string>;
   customAnswer: string;
-  resolvedAnswer: string | null;
+  resolvedAnswer: PendingUserInputAnswer | null;
   usingCustomAnswer: boolean;
   answeredQuestionCount: number;
   isLastQuestion: boolean;
@@ -19,74 +46,31 @@ export interface PendingUserInputProgress {
   canAdvance: boolean;
 }
 
-function normalizeDraftAnswer(value: string | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
+const DISPLACED_ANSWER_SEPARATOR = "\n\n";
+
+export function carryDisplacedCustomAnswerIntoPrompt(
+  prompt: string,
+  customAnswer: string | undefined,
+): string {
+  const displaced = customAnswer?.trim() ?? "";
+  if (displaced.length === 0) {
+    return prompt;
   }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-export function resolvePendingUserInputAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-): string | null {
-  const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer) {
-    return customAnswer;
+  if (prompt.trim().length === 0) {
+    return displaced;
   }
-
-  return normalizeDraftAnswer(draft?.selectedOptionLabel);
+  return `${prompt.trimEnd()}${DISPLACED_ANSWER_SEPARATOR}${displaced}`;
 }
 
-export function setPendingUserInputCustomAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-  customAnswer: string,
-): PendingUserInputDraftAnswer {
-  const selectedOptionLabel =
-    customAnswer.trim().length > 0 ? undefined : draft?.selectedOptionLabel;
-
-  return {
-    customAnswer,
-    ...(selectedOptionLabel ? { selectedOptionLabel } : {}),
-  };
-}
-
-export function buildPendingUserInputAnswers(
-  questions: ReadonlyArray<UserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string> | null {
-  const answers: Record<string, string> = {};
-
-  for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
-    if (!answer) {
-      return null;
-    }
-    answers[question.id] = answer;
-  }
-
-  return answers;
-}
-
-export function countAnsweredPendingUserInputQuestions(
+function countAnsweredPendingUserInputQuestions(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
 ): number {
   return questions.reduce((count, question) => {
-    return resolvePendingUserInputAnswer(draftAnswers[question.id]) ? count + 1 : count;
+    return resolvePendingUserInputAnswer(question, draftAnswers[question.id]) !== null
+      ? count + 1
+      : count;
   }, 0);
-}
-
-export function findFirstUnansweredPendingUserInputQuestionIndex(
-  questions: ReadonlyArray<UserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): number {
-  const unansweredIndex = questions.findIndex(
-    (question) => !resolvePendingUserInputAnswer(draftAnswers[question.id]),
-  );
-
-  return unansweredIndex === -1 ? Math.max(questions.length - 1, 0) : unansweredIndex;
 }
 
 export function derivePendingUserInputProgress(
@@ -98,8 +82,11 @@ export function derivePendingUserInputProgress(
     questions.length === 0 ? 0 : Math.max(0, Math.min(questionIndex, questions.length - 1));
   const activeQuestion = questions[normalizedQuestionIndex] ?? null;
   const activeDraft = activeQuestion ? draftAnswers[activeQuestion.id] : undefined;
-  const resolvedAnswer = resolvePendingUserInputAnswer(activeDraft);
-  const customAnswer = activeDraft?.customAnswer ?? "";
+  const resolvedAnswer = activeQuestion
+    ? resolvePendingUserInputAnswer(activeQuestion, activeDraft)
+    : null;
+  const customAnswer =
+    activeQuestion?.allowCustomAnswer === false ? "" : (activeDraft?.customAnswer ?? "");
   const answeredQuestionCount = countAnsweredPendingUserInputQuestions(questions, draftAnswers);
   const isLastQuestion =
     questions.length === 0 ? true : normalizedQuestionIndex >= questions.length - 1;
@@ -108,13 +95,16 @@ export function derivePendingUserInputProgress(
     questionIndex: normalizedQuestionIndex,
     activeQuestion,
     activeDraft,
-    selectedOptionLabel: activeDraft?.selectedOptionLabel,
+    selectedOptionValues: activeQuestion
+      ? normalizeSelectedOptionValues(activeQuestion, activeDraft?.selectedOptionValues)
+      : [],
     customAnswer,
     resolvedAnswer,
-    usingCustomAnswer: customAnswer.trim().length > 0,
+    usingCustomAnswer:
+      (activeQuestion?.initialAnswer !== undefined ? customAnswer : customAnswer.trim()).length > 0,
     answeredQuestionCount,
     isLastQuestion,
     isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
-    canAdvance: Boolean(resolvedAnswer),
+    canAdvance: resolvedAnswer !== null,
   };
 }

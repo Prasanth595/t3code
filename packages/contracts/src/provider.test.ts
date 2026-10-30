@@ -1,64 +1,56 @@
-import { describe, expect, it } from "vitest";
-import { Schema } from "effect";
+import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
-import { ProviderSendTurnInput, ProviderSessionStartInput } from "./provider";
+import { ThreadId } from "./baseSchemas.ts";
+import { ProviderSendTurnInput, ProviderUploadFeedbackError } from "./provider.ts";
 
-const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
 const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 
-describe("ProviderSessionStartInput", () => {
-  it("accepts codex-compatible payloads", () => {
-    const parsed = decodeProviderSessionStartInput({
-      threadId: "thread-1",
-      provider: "codex",
-      cwd: "/tmp/workspace",
-      model: "gpt-5.3-codex",
-      modelOptions: {
-        codex: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
-      },
-      runtimeMode: "full-access",
-      providerOptions: {
-        codex: {
-          binaryPath: "/usr/local/bin/codex",
-          homePath: "/tmp/.codex",
-        },
-      },
-    });
-    expect(parsed.runtimeMode).toBe("full-access");
-    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("high");
-    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
-    expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
-    expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
-  });
-
-  it("rejects payloads without runtime mode", () => {
-    expect(() =>
-      decodeProviderSessionStartInput({
-        threadId: "thread-1",
-        provider: "codex",
-      }),
-    ).toThrow();
-  });
+describe("ProviderSendTurnInput", () => {
+  it.each(["image", "file"])(
+    "caps total image bytes for %s attachments without charging videos",
+    (type) => {
+      const image = {
+        type,
+        id: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 10 * 1024 * 1024,
+      };
+      const video = {
+        type: "file",
+        id: "video",
+        name: "video.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 50 * 1024 * 1024,
+      };
+      expect(
+        decodeProviderSendTurnInput({
+          threadId: "thread-1",
+          attachments: [...Array.from({ length: 8 }, () => image), video],
+        }).attachments,
+      ).toHaveLength(9);
+      expect(() =>
+        decodeProviderSendTurnInput({
+          threadId: "thread-1",
+          attachments: [...Array.from({ length: 8 }, () => image), { ...image, sizeBytes: 1 }],
+        }),
+      ).toThrow(/80 MiB/);
+    },
+  );
 });
 
-describe("ProviderSendTurnInput", () => {
-  it("accepts provider-scoped model options", () => {
-    const parsed = decodeProviderSendTurnInput({
-      threadId: "thread-1",
-      model: "gpt-5.3-codex",
-      modelOptions: {
-        codex: {
-          reasoningEffort: "xhigh",
-          fastMode: true,
-        },
-      },
+describe("provider feedback", () => {
+  it("keeps the failed thread and original cause without exposing upstream text", () => {
+    const cause = new Error("provider request secret");
+    const error = new ProviderUploadFeedbackError({
+      threadId: ThreadId.make("thread-1"),
+      cause,
     });
 
-    expect(parsed.model).toBe("gpt-5.3-codex");
-    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
-    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+    expect(error.threadId).toBe("thread-1");
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe("Failed to upload feedback for thread thread-1.");
+    expect(error.message).not.toContain("provider request secret");
   });
 });

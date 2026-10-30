@@ -1,125 +1,72 @@
-import { describe, expect, it } from "vitest";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { formatInlineContextReference } from "./lib/composerContextReferences";
+import { threadContextReference } from "./lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
-  buildPendingUserInputAnswers,
-  countAnsweredPendingUserInputQuestions,
+  carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
-  findFirstUnansweredPendingUserInputQuestionIndex,
-  resolvePendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
+  projectPendingUserInputAnswer,
+  threadContextsReferencedByAnswer,
 } from "./pendingUserInput";
 
-describe("resolvePendingUserInputAnswer", () => {
-  it("prefers a custom answer over a selected option", () => {
-    expect(
-      resolvePendingUserInputAnswer({
-        selectedOptionLabel: "Keep current envelope",
-        customAnswer: "Keep the existing envelope for one release",
-      }),
-    ).toBe("Keep the existing envelope for one release");
+describe("projectPendingUserInputAnswer", () => {
+  const record = threadContextRecord(
+    {
+      environmentId: EnvironmentId.make("env-answer"),
+      threadId: ThreadId.make("reference-thread"),
+    },
+    "Reference work",
+  );
+
+  it("sends thread chips as readable links with the actual thread ID", () => {
+    const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
+    expect(projectPendingUserInputAnswer(answer, [record])).toBe(
+      "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
+    );
   });
 
-  it("falls back to the selected option", () => {
-    expect(
-      resolvePendingUserInputAnswer({
-        selectedOptionLabel: "Scaffold only",
-      }),
-    ).toBe("Scaffold only");
-  });
-
-  it("clears the preset selection when a custom answer is entered", () => {
-    expect(
-      setPendingUserInputCustomAnswer(
-        {
-          selectedOptionLabel: "Preserve existing tags",
-        },
-        "doesn't matter",
-      ),
-    ).toEqual({
-      selectedOptionLabel: undefined,
-      customAnswer: "doesn't matter",
-    });
+  // regression: #18789 answers to pending questions lost exact text and option values
+  it("preserves option values and exact answer text", () => {
+    const options = [" first\t", "second"];
+    expect(projectPendingUserInputAnswer(options, [record])).toBe(options);
+    expect(projectPendingUserInputAnswer("  Edited answer\n", [record])).toBe("  Edited answer\n");
   });
 });
 
-describe("buildPendingUserInputAnswers", () => {
-  it("returns a canonical answer map for complete prompts", () => {
-    expect(
-      buildPendingUserInputAnswers(
-        [
-          {
-            id: "scope",
-            header: "Scope",
-            question: "What should the plan target first?",
-            options: [
-              {
-                label: "Orchestration-first",
-                description: "Focus on orchestration first",
-              },
-            ],
-          },
-          {
-            id: "compat",
-            header: "Compat",
-            question: "How strict should compatibility be?",
-            options: [
-              {
-                label: "Keep current envelope",
-                description: "Preserve current wire format",
-              },
-            ],
-          },
-        ],
-        {
-          scope: {
-            selectedOptionLabel: "Orchestration-first",
-          },
-          compat: {
-            customAnswer: "Keep the current envelope for one release window",
-          },
-        },
-      ),
-    ).toEqual({
-      scope: "Orchestration-first",
-      compat: "Keep the current envelope for one release window",
-    });
-  });
+describe("threadContextsReferencedByAnswer", () => {
+  const kept = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("kept-thread") },
+    "Kept work",
+  );
+  const deleted = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("deleted-thread") },
+    "Deleted work",
+  );
 
-  it("returns null when any question is unanswered", () => {
-    expect(
-      buildPendingUserInputAnswers(
-        [
-          {
-            id: "scope",
-            header: "Scope",
-            question: "What should the plan target first?",
-            options: [
-              {
-                label: "Orchestration-first",
-                description: "Focus on orchestration first",
-              },
-            ],
-          },
-        ],
-        {},
-      ),
-    ).toBeNull();
+  it("preserves remaining chips without restoring deleted thread records", () => {
+    const answer = `Compare ${formatInlineContextReference(threadContextReference(kept))}`;
+    expect(threadContextsReferencedByAnswer(answer, [deleted, kept])).toEqual([kept]);
   });
 });
+
+const singleSelectQuestion = {
+  id: "scope",
+  header: "Scope",
+  question: "What should the plan target first?",
+  options: [
+    {
+      label: "Orchestration-first",
+      description: "Focus on orchestration first",
+    },
+  ],
+  multiSelect: false,
+} as const;
 
 describe("pending user input question progress", () => {
   const questions = [
-    {
-      id: "scope",
-      header: "Scope",
-      question: "What should the plan target first?",
-      options: [
-        {
-          label: "Orchestration-first",
-          description: "Focus on orchestration first",
-        },
-      ],
-    },
+    singleSelectQuestion,
     {
       id: "compat",
       header: "Compat",
@@ -130,40 +77,19 @@ describe("pending user input question progress", () => {
           description: "Preserve current wire format",
         },
       ],
+      multiSelect: false,
     },
   ] as const;
 
-  it("counts only answered questions", () => {
-    expect(
-      countAnsweredPendingUserInputQuestions(questions, {
-        scope: {
-          selectedOptionLabel: "Orchestration-first",
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("finds the first unanswered question", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionLabel: "Orchestration-first",
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("returns the last question index when all answers are complete", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionLabel: "Orchestration-first",
-        },
-        compat: {
-          customAnswer: "Keep it for one release window",
-        },
-      }),
-    ).toBe(1);
+  it("counts a deliberately cleared answer as answered", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    const drafts = { scope: { customAnswer: "" } };
+    expect(derivePendingUserInputProgress([question], drafts, 0)).toMatchObject({
+      customAnswer: "",
+      resolvedAnswer: "",
+      canAdvance: true,
+      isComplete: true,
+    });
   });
 
   it("derives the active question and advancement state", () => {
@@ -172,7 +98,7 @@ describe("pending user input question progress", () => {
         questions,
         {
           scope: {
-            selectedOptionLabel: "Orchestration-first",
+            selectedOptionValues: ["Orchestration-first"],
           },
         },
         0,
@@ -180,7 +106,7 @@ describe("pending user input question progress", () => {
     ).toMatchObject({
       questionIndex: 0,
       activeQuestion: questions[0],
-      selectedOptionLabel: "Orchestration-first",
+      selectedOptionValues: ["Orchestration-first"],
       customAnswer: "",
       resolvedAnswer: "Orchestration-first",
       answeredQuestionCount: 1,
@@ -188,5 +114,26 @@ describe("pending user input question progress", () => {
       isComplete: false,
       canAdvance: true,
     });
+  });
+});
+
+describe("carryDisplacedCustomAnswerIntoPrompt", () => {
+  // regression: #12577 clicking a question option discarded typed text
+  it("keeps the thread draft when nothing was typed into the answer", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", undefined)).toBe("draft");
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", "   ")).toBe("draft");
+  });
+
+  // regression: #12577 clicking a question option discarded typed text
+  it("moves the typed answer into an empty thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("", "also rename the flag ")).toBe(
+      "also rename the flag",
+    );
+  });
+
+  it("appends the typed answer after an existing thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
+      "first half\n\nsecond half",
+    );
   });
 });

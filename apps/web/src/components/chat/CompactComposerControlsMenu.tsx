@@ -1,135 +1,95 @@
-import {
-  type CodexReasoningEffort,
-  type ProviderKind,
-  RuntimeMode,
-  ProviderInteractionMode,
-} from "@t3tools/contracts";
-import { getDefaultReasoningEffort } from "@t3tools/shared/model";
-import { memo } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
-import { Button } from "../ui/button";
+import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import { memo, type ReactNode, useRef } from "react";
+import { EllipsisIcon } from "lucide-react";
 import {
   Menu,
-  MenuGroup,
-  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
+import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
+import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
-  activePlan: boolean;
   interactionMode: ProviderInteractionMode;
-  planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
-  selectedEffort: CodexReasoningEffort | null;
-  selectedProvider: ProviderKind;
-  selectedCodexFastModeEnabled: boolean;
-  reasoningOptions: ReadonlyArray<CodexReasoningEffort>;
-  onEffortSelect: (effort: CodexReasoningEffort) => void;
-  onCodexFastModeChange: (enabled: boolean) => void;
+  runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
+  showInteractionModeToggle: boolean;
+  traitsMenuContent?: ReactNode;
+  showPermissions?: boolean;
+  size?: "sm" | "xs";
+  /** Close the portaled popup when its trigger hides. */
+  hidden?: boolean;
   onToggleInteractionMode: () => void;
-  onTogglePlanSidebar: () => void;
-  onToggleRuntimeMode: () => void;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
-  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
-  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "Extra High",
-  };
+  const composerFloatingLayerProps = useComposerMenuProps();
+  const size = props.size ?? "sm";
+  const [open, setOpen] = useComposerMenuState(props.hidden);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <Menu>
+    <Menu
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(isOpen) => focusRequestedPermission(isOpen, triggerRef.current)}
+    >
       <MenuTrigger
         render={
-          <Button
-            size="sm"
-            variant="ghost"
-            className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
+          <ComposerControl
+            ref={triggerRef}
+            size={size}
+            className="shrink-0"
             aria-label="More composer controls"
+            data-composer-shortcut={
+              [
+                props.showPermissions !== false ? "composer.mode" : null,
+                props.traitsMenuContent ? "composer.effort" : null,
+              ]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
           />
         }
       >
-        <EllipsisIcon aria-hidden="true" className="size-4" />
+        <ComposerControlIcon icon={EllipsisIcon} size={size} />
       </MenuTrigger>
-      <MenuPopup align="start">
-        {props.selectedProvider === "codex" && props.selectedEffort != null ? (
+      <MenuPopup align="start" {...composerFloatingLayerProps}>
+        {props.traitsMenuContent ? (
           <>
-            <MenuGroup>
-              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Reasoning</div>
-              <MenuRadioGroup
-                value={props.selectedEffort}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  const nextEffort = props.reasoningOptions.find((option) => option === value);
-                  if (!nextEffort) return;
-                  props.onEffortSelect(nextEffort);
-                }}
-              >
-                {props.reasoningOptions.map((effort) => (
-                  <MenuRadioItem key={effort} value={effort}>
-                    {reasoningLabelByOption[effort]}
-                    {effort === defaultReasoningEffort ? " (default)" : ""}
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
-            </MenuGroup>
-            <MenuDivider />
-            <MenuGroup>
-              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
-              <MenuRadioGroup
-                value={props.selectedCodexFastModeEnabled ? "on" : "off"}
-                onValueChange={(value) => {
-                  props.onCodexFastModeChange(value === "on");
-                }}
-              >
-                <MenuRadioItem value="off">off</MenuRadioItem>
-                <MenuRadioItem value="on">on</MenuRadioItem>
-              </MenuRadioGroup>
-            </MenuGroup>
-            <MenuDivider />
+            {props.traitsMenuContent}
+            {props.showInteractionModeToggle || props.showPermissions !== false ? (
+              <MenuDivider />
+            ) : null}
           </>
         ) : null}
-        <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
-          <MenuRadioGroup
-            value={props.interactionMode}
-            onValueChange={(value) => {
-              if (!value || value === props.interactionMode) return;
-              props.onToggleInteractionMode();
-            }}
-          >
-            <MenuRadioItem value="default">Chat</MenuRadioItem>
-            <MenuRadioItem value="plan">Plan</MenuRadioItem>
-          </MenuRadioGroup>
-        </MenuGroup>
-        <MenuDivider />
-        <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
-          <MenuRadioGroup
-            value={props.runtimeMode}
-            onValueChange={(value) => {
-              if (!value || value === props.runtimeMode) return;
-              props.onToggleRuntimeMode();
-            }}
-          >
-            <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-            <MenuRadioItem value="full-access">Full access</MenuRadioItem>
-          </MenuRadioGroup>
-        </MenuGroup>
-        {props.activePlan ? (
+        {props.showInteractionModeToggle ? (
           <>
-            <MenuDivider />
-            <MenuItem onClick={props.onTogglePlanSidebar}>
-              <ListTodoIcon className="size-4 shrink-0" />
-              {props.planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
-            </MenuItem>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
+            <MenuRadioGroup
+              value={props.interactionMode}
+              onValueChange={(value) => {
+                if (!value || value === props.interactionMode) return;
+                props.onToggleInteractionMode();
+              }}
+            >
+              <MenuRadioItem value="default">Chat</MenuRadioItem>
+              <MenuRadioItem value="plan">Plan</MenuRadioItem>
+            </MenuRadioGroup>
+            {props.showPermissions !== false ? <MenuDivider /> : null}
           </>
         ) : null}
+        {props.showPermissions === false ? null : (
+          <ComposerPermissionsSection
+            runtimeMode={props.runtimeMode}
+            runtimeModeOptions={props.runtimeModeOptions}
+            onRuntimeModeChange={props.onRuntimeModeChange}
+          />
+        )}
       </MenuPopup>
     </Menu>
   );
