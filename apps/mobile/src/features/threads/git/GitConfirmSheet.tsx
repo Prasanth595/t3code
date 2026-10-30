@@ -129,13 +129,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         />
       ) : null}
       {Platform.OS === "android" ? (
-        <AppBar
-          sheet
-          sidebar={false}
-          title="Confirm action"
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
+        <AppBar sheet title="Confirm action" onBack={() => navigation.goBack()} hideBottomBorder />
       ) : (
         <View className="min-h-4 pt-2" />
       )}

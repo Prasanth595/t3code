@@ -62,7 +62,7 @@ export function WorkspaceRootScreen() {
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AppBar embedded sidebar={false} title="Pull requests" />
+              <AppBar embedded title="Pull requests" />
               <View className="flex-1 items-center justify-center px-10">
                 <EmptyState
                   title="Select a pull request"
