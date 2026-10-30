@@ -790,11 +790,14 @@ describe("AcpRegistryAdapterV2", () => {
       "updated-config",
       "removed-config",
       "configuration-update",
+      "unavailable-before-configuration",
     ] as const)(
       "rejects an unavailable explicit model in a %s catalog before inference",
       (catalog) => {
         const duringTurn = catalog === "updated-config" || catalog === "removed-config";
         const duringConfiguration = catalog === "configuration-update";
+        const changesOptions =
+          duringConfiguration || catalog === "unavailable-before-configuration";
         const model = duringTurn || duringConfiguration ? "hermes" : "missing";
         const restrictedOption = {
           ...modelOption("model", "other"),
@@ -818,12 +821,12 @@ describe("AcpRegistryAdapterV2", () => {
                       ...modelOption("model", "hermes"),
                       options: [{ value: "hermes", name: "Hermes" }],
                     },
-                    ...(duringConfiguration ? [permissionModeOption("ask")] : []),
+                    ...(changesOptions ? [permissionModeOption("ask")] : []),
                   ],
           },
           storedModel: model,
           ...(duringTurn ? { turnModels: [model, model] } : {}),
-          ...(duringConfiguration ? { storedModePick: "auto" } : {}),
+          ...(changesOptions ? { storedModePick: "auto" } : {}),
           rejectedModel: model,
           pickFrames: duringTurn
             ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
