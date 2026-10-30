@@ -127,7 +127,7 @@ function formatTraceSummary(
   const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
-    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1)} min).`,
+    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
     ...(summary.skippedLineCount > 0
       ? [`Skipped ${summary.skippedLineCount} lines that are not spans.`]
       : []),
