@@ -1107,6 +1107,7 @@ describe("Working shelf (beta)", () => {
 
     expect(shelve([])).toBe(true);
     expect(shelve([localEnvironmentId])).toBe(false);
+    expect(shelve([])).toBe(true);
     expect(shelve([EnvironmentId.make("environment-other")])).toBe(true);
     expect(shelve([], false)).toBe(false);
   });

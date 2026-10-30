@@ -178,15 +178,11 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-/**
- * Past a first connection attempt the environment is not answering, so its threads' last run
- * states are stale. Matches mobile's `threadRouteIsHydrating`.
- */
+// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
 export function isSidebarEnvironmentDisconnected(phase: EnvironmentConnectionPhase): boolean {
   return phase !== "connected" && phase !== "connecting";
 }
 
-/** A collapsed shelf must not hide a thread whose environment stopped answering. */
 export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
   thread: T,
   input: {
