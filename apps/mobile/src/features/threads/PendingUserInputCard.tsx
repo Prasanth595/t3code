@@ -36,13 +36,14 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import { markdownAccessibility } from "../../lib/markdownDocument";
 import { markdownFileEmbedLabel } from "../../lib/markdownMedia";
 import {
   isPendingUserInputOptionSelected,
-  type PendingUserInput,
   type PendingUserInputDraftAnswer,
-} from "../../lib/threadActivity";
+} from "@t3tools/client-runtime/state/pending-user-input";
+import type { PendingUserInput } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
@@ -76,6 +77,14 @@ export interface PendingUserInputCardProps {
 
 /** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
+
+function QuestionText(
+  props: SelectableMarkdownTextProps & { readonly environmentId: EnvironmentId },
+) {
+  const { environmentId, ...markdownProps } = props;
+  const markdown = useLiveThreadLinkLabels(props.markdown, environmentId);
+  return <SelectableMarkdownText {...markdownProps} markdown={markdown} />;
+}
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const fileEmbedLabel = useCallback(
@@ -179,29 +188,23 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const barHeightRef = useRef(0);
   const cardHeightRef = useRef(0);
   const cardHeight = useSharedValue(0);
-  const notifyCoverage = useCallback(() => {
+  const notifyCoverage = () => {
     if (!cardCoverage) {
       return;
     }
     // The card resizes with the keyboard every frame, so easing each sample would leave the
     // feed inset and floating controls trailing it.
     cardCoverage.set(Math.max(0, cardHeightRef.current - barHeightRef.current));
-  }, [cardCoverage]);
-  const handleBarLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      barHeightRef.current = event.nativeEvent.layout.height;
-      notifyCoverage();
-    },
-    [notifyCoverage],
-  );
-  const handleCardLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      cardHeightRef.current = event.nativeEvent.layout.height;
-      cardHeight.set(event.nativeEvent.layout.height);
-      notifyCoverage();
-    },
-    [cardHeight, notifyCoverage],
-  );
+  };
+  const handleBarLayout = (event: LayoutChangeEvent) => {
+    barHeightRef.current = event.nativeEvent.layout.height;
+    notifyCoverage();
+  };
+  const handleCardLayout = (event: LayoutChangeEvent) => {
+    cardHeightRef.current = event.nativeEvent.layout.height;
+    cardHeight.set(event.nativeEvent.layout.height);
+    notifyCoverage();
+  };
   const cardProgress = props.cardProgress;
   const maxHeight = props.maxHeight;
   const cardAnimatedStyle = useAnimatedStyle(() => {
@@ -326,7 +329,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               >
                 {question.header}
               </Text>
-              <SelectableMarkdownText
+              <QuestionText
+                environmentId={props.environmentId}
                 {...markdownProps}
                 markdown={question.question}
                 textStyle={textStyles.question}
