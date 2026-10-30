@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthAccessReadScope,
+  AuthClientSession,
   AuthEnvironmentMaintainScope,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
@@ -16,6 +18,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpServerResponse } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -44,12 +47,23 @@ import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
 import * as ServerExitService from "./exit.ts";
-import { CONFIG_PATH, DISMISS_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
+import {
+  CLIENTS_PATH,
+  CONFIG_PATH,
+  DISMISS_PATH,
+  FactoryRoutes,
+  RESTART_PATH,
+  STATUS_PATH,
+} from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 import { SessionsError } from "./sessions.ts";
 import { WatchedReposError } from "./watchedRepos.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
+
+const decodeClientSessions = Schema.decodeUnknownSync(
+  Schema.toCodecJson(Schema.Array(AuthClientSession)),
+);
 
 /** A route that needs a scope a standard client lacks, to prove the scope check. */
 const testOnlyRoute = route(
@@ -154,6 +168,7 @@ interface Tokens {
   readonly operate: string;
   readonly maintain: string;
   readonly settingsWrite: string;
+  readonly accessRead: string;
 }
 
 /** Counts the calls to the exit the restart route makes; `done` settles on the first. */
@@ -313,6 +328,7 @@ const serving = <A>(
       operate: yield* issue(AuthOrchestrationOperateScope),
       maintain: yield* issue(AuthEnvironmentMaintainScope),
       settingsWrite: yield* issue(AuthSettingsWriteScope),
+      accessRead: yield* issue(AuthAccessReadScope),
     };
     return yield* Effect.acquireUseRelease(
       Effect.sync(() =>
@@ -367,12 +383,14 @@ const FACTORY_ROUTES = [
   ["GET", "/api/factory/config"],
   ["POST", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
+  ["GET", "/api/factory/auth/clients"],
 ] as const;
 
 describe("every factory route", () => {
   it("is served at the path the Factory page calls", () => {
     assert.strictEqual(STATUS_PATH, "/api/factory/status");
     assert.strictEqual(CONFIG_PATH, "/api/factory/config");
+    assert.strictEqual(CLIENTS_PATH, "/api/factory/auth/clients");
   });
 
   it.effect.each(FACTORY_ROUTES)("%s %s answers 401 without credentials", ([method, path]) =>
@@ -559,6 +577,28 @@ describe("the scope a route requires", () => {
         assert.strictEqual((await json(response)).code, "insufficient_scope");
       }
       assert.strictEqual(exits.count, 0);
+    }),
+  );
+});
+
+describe("GET /api/factory/auth/clients", () => {
+  it.effect("lists every client session in the auth client schema, marking the caller", () =>
+    serving({}, async (call, { tokens }) => {
+      const response = await call("GET", CLIENTS_PATH, tokens.accessRead);
+      assert.strictEqual(response.status, 200);
+      const sessions = decodeClientSessions(await response.json());
+      assert.strictEqual(sessions.length, Object.keys(tokens).length);
+      const current = sessions.filter((session) => session.current);
+      assert.strictEqual(current.length, 1);
+      assert.include(current[0]!.permissions ?? current[0]!.scopes, AuthAccessReadScope);
+    }),
+  );
+
+  it.effect("needs access:read, and refuses a session with only orchestration:read", () =>
+    serving({}, async (call, { tokens }) => {
+      const response = await call("GET", CLIENTS_PATH, tokens.read);
+      assert.strictEqual(response.status, 403);
+      assert.strictEqual((await json(response)).code, "insufficient_scope");
     }),
   );
 });

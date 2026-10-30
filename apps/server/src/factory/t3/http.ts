@@ -1,11 +1,13 @@
 /**
- * The factory's HTTP routes, each behind T3's own authentication (`route`). Reads need
- * `orchestration:read`, config writes `settings:write`, control `orchestration:operate`, and `POST
- * /api/factory/restart` needs `environment:maintain`, so an operate-only MCP client cannot end the
+ * The factory's HTTP routes, each behind T3's own authentication (`route`), with the scope named at
+ * each route. Restart needs `environment:maintain`, so an operate-only MCP client cannot end the
  * server. A run id is parsed before anything is read, so none reaches the file system as a path.
  */
 import {
+  AuthAccessReadScope,
+  AuthClientSession,
   AuthEnvironmentMaintainScope,
+  EnvironmentAuthenticatedPrincipal,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -16,9 +18,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as AuthHttp from "../../auth/http.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention } from "../attention.ts";
 import { pauseClaimsNow, resumeClaimsNow, showRun, stopRun } from "../control.ts";
@@ -41,6 +46,7 @@ const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
 export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
+export const CLIENTS_PATH = "/api/factory/auth/clients";
 
 /** What the restart's 202 tells the caller to expect. */
 const RESTART_MESSAGE =
@@ -317,6 +323,30 @@ const restartRoute = factoryRoute(
   }),
 );
 
+const encodeClientSessions = Schema.encodeEffect(
+  Schema.toCodecJson(Schema.Array(AuthClientSession)),
+);
+
+/**
+ * The server's client sessions, for the mobile Factory screen to find and revoke the browser
+ * sessions it signed in. Upstream serves this list only over the WebSocket now.
+ */
+const clientsRoute = route(
+  "GET",
+  CLIENTS_PATH,
+  AuthAccessReadScope,
+  Effect.gen(function* () {
+    const principal = yield* EnvironmentAuthenticatedPrincipal;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* serverAuth.listClientSessions(principal.sessionId);
+    return respond(yield* encodeClientSessions(sessions));
+  }).pipe(
+    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+      AuthHttp.failEnvironmentInternal("client_sessions_load_failed", error),
+    ),
+  ),
+);
+
 /** The factory's HTTP routes. server.ts merges this into `layerMakeRoutes`. */
 export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
@@ -329,4 +359,5 @@ export const FactoryRoutes = Layer.mergeAll(
   configRoute,
   saveConfigRoute,
   restartRoute,
+  clientsRoute,
 );

@@ -395,12 +395,13 @@ describe("revokeFactorySessions", () => {
   function serverWith(
     sessions: unknown[],
     answer: (sessionId: string) => Response = () => json(200, { revoked: true }),
+    list: () => Response = () => json(200, sessions),
   ) {
     const revoked: string[] = [];
     const authorizations: string[] = [];
     const fetchFn: FactoryFetch = async (url, init) => {
       authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
-      if (url === `${BASE}/api/auth/clients`) return json(200, sessions);
+      if (url === `${BASE}/api/factory/auth/clients`) return list();
       if (url === `${BASE}/api/auth/clients/revoke`) {
         const body = JSON.parse(String(init?.body)) as { sessionId: string };
         revoked.push(body.sessionId);
@@ -453,6 +454,27 @@ describe("revokeFactorySessions", () => {
       revoked: 1,
       left: 1,
     });
+  });
+
+  it("revokes nothing and reports a distinct reason when the list is refused or fails", async () => {
+    const reasons = new Set<string>();
+    for (const status of [401, 403, 500]) {
+      const { fetchFn, revoked } = serverWith(clients, undefined, () => json(status, "no"));
+      const result = await revokeFactorySessions(server, fetchFn);
+      expect(result.ok, String(status)).toBe(false);
+      if (!result.ok) reasons.add(result.reason);
+      expect(revoked).toEqual([]);
+    }
+    expect(reasons.size).toBe(3);
+  });
+
+  it("does not read a session list it cannot decode as empty", async () => {
+    const { fetchFn, revoked } = serverWith(clients, undefined, () =>
+      json(200, [{ sessionId: 1 }]),
+    );
+    const result = await revokeFactorySessions(server, fetchFn);
+    expect(result.ok).toBe(false);
+    expect(revoked).toEqual([]);
   });
 
   it("reports an unreachable server without touching the bearer", async () => {
