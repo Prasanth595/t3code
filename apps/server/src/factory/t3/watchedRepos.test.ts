@@ -973,8 +973,9 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
         }),
     });
 
-  for (const slow of ["ls-tree", "origin/HEAD:package.json"]) {
-    it.effect(`reports a defaulted checkout as unresolved when git times out at ${slow}`, () =>
+  it.effect.each(["ls-tree", "origin/HEAD:package.json"])(
+    "reports a defaulted checkout as unresolved when git times out at %s",
+    (slow) =>
       Effect.gen(function* () {
         const root = checkout(`timed-out-${slow.length}`, null);
         NodeFS.mkdirSync(NodePath.join(root, ".git"));
@@ -986,8 +987,7 @@ describe("FactoryWatchedRepos with the machine's default_project", () => {
         });
         assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
       }),
-    );
-  }
+  );
 
   it.effect("drops a defaulted checkout of a repo another project opts in: no ambiguity", () =>
     Effect.gen(function* () {

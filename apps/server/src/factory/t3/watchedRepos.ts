@@ -25,11 +25,10 @@ import { FactoryPaths } from "./paths.ts";
 export const MEMORY_FILE = "watched-projects.json";
 
 /**
- * The repos the factory watches: active T3 projects whose checkout (or origin's default-branch
- * copy) opts in with a `factory` block in `.dw/config.yml`, and whose `origin` is on GitHub; T3
- * prefers `upstream`, so a fork is left out. With the machine's `default_project`, a checkout
- * with no `factory` block is watched too, on that default (`WatchedRepo.defaulted`). A repo has `departed` only when every project in
- * `<factory dir>/watched-projects.json` is deleted, never because its checkout reads differently.
+ * Active T3 projects whose checkout (or origin's default branch) has a `factory` block in
+ * `.dw/config.yml`, or any checkout once `default_project` is set (`defaulted`), with `origin` on
+ * GitHub; T3 prefers `upstream`, so a fork is left out. A repo has `departed` only when every
+ * project for it in `watched-projects.json` is deleted, never because its checkout reads differently.
  */
 
 export class WatchedReposError extends Schema.TaggedError<WatchedReposError>()(

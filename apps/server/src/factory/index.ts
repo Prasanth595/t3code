@@ -224,12 +224,10 @@ const fromCheckout = Effect.fn("Factory.fromCheckout")(function* (
 });
 
 /**
- * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub,
- * or, only when GitHub says the file is not there, the copy in the watched checkout's working
- * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
- * Either way the config must name the default branch as its `base`. A repo the reader listed on
- * the machine's default (`defaulted`) runs on it unless GitHub's copy has a `factory` block, which
- * wins over a checkout that showed none; `onDefault` says which it ran on.
+ * `.dw/config.yml` from GitHub's default branch, or the checkout's copy only when GitHub has none
+ * (some gates hold machine-specific commands); its `base` must be the default branch. A `defaulted`
+ * repo runs on the machine's default unless GitHub's copy has a `factory` block; `onDefault` says
+ * which.
  */
 const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
   github: ReturnType<typeof makeGitHub>,

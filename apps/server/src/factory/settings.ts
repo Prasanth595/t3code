@@ -97,11 +97,9 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys an edit keeps: the form's, the hand edits (`notify`, `keep_versions`, `min_free_gib`,
- * `max_load_per_core`, `deploy_wait_minutes`, `model_fallbacks`, `prune_branches_*`,
- * `default_project`) and the retired
- * keys (the model keys and `repos`), which stay so a rollback to a version that still requires them
- * loads the file. A key that is not here is dropped by an edit.
+ * The keys an edit keeps: the form's, the hand edits, and the retired keys (the model keys and
+ * `repos`), which stay so a rollback to a version that still requires them loads the file.
+ * A key that is not here is dropped by an edit.
  */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
