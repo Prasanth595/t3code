@@ -1,0 +1,4 @@
+interface:
+  display_name: "T3 Cross-Environment Management"
+  short_description: "Manage T3 sessions across devices and environments"
+  default_prompt: "Use $t3-cross-environment to manage the requested T3 sessions on another device or environment."
