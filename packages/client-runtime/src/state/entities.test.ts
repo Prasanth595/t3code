@@ -409,10 +409,11 @@ describe("V2 client presentation", () => {
     };
     expect(
       deriveThreadRuntime({ ...v2Projection, runs: [run], turnItems: [commandItem] }),
-    ).toMatchObject({ status: "idle", activeRunId: null });
+    ).toMatchObject({ status: "waiting", activeRunId: null });
 
+    // A command known only from its turn item has no left-running mark, so it does not hold.
     for (const [turnItems, status] of [
-      [[commandItem], "idle"],
+      [[commandItem], "completed"],
       [[backgroundItem], "idle"],
       [[commandItem, backgroundItem], "idle"],
     ] as const) {

@@ -92,8 +92,9 @@ export function backgroundWorkHoldsCompletion(
   return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind, task.awaited));
 }
 
-// Agents usually wait on the commands and monitors they start, so those hold unless the agent
-// marks one it leaves running (dev server, watcher) with `awaited: false`. Subagents and other
+// Agents usually wait on the commands and monitors they start, so those hold unless marked
+// `awaited: false`: by the agent for one it leaves running (dev server, watcher), or for turn-item
+// work from adapters with no way to mark it. Subagents and other
 // background tasks always hold.
 function backgroundWorkKindHoldsCompletion(
   kind: PendingBackgroundWorkTask["kind"],
@@ -194,7 +195,10 @@ function pendingTaskFromTurnItem(
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
-      return { ...named, kind: item.monitor === true ? "monitor" : "command" };
+      // Only provider rosters (Claude) let the agent mark a command it leaves running, so a
+      // command known only from its turn item, such as a Codex background terminal, may be a dev
+      // server and does not hold.
+      return { ...named, kind: item.monitor === true ? "monitor" : "command", awaited: false };
     default:
       return { ...named, kind: "background_task" };
   }
