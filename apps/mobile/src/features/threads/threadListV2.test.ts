@@ -34,6 +34,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  resolveThreadListV2SnoozeAccessibilityActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
@@ -76,6 +77,29 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
         new Date(selectedAt.getTime() + 6 * 60 * 60 * 1_000).toISOString(),
       );
     }
+  });
+});
+
+describe("resolveThreadListV2SnoozeAccessibilityActions", () => {
+  it("offers the two soonest presets as menu events, then the custom picker", () => {
+    const preset = (id: string, label: string) => ({
+      id,
+      label,
+      whenLabel: "",
+      snoozedUntil: NOW,
+    });
+
+    expect(
+      resolveThreadListV2SnoozeAccessibilityActions([
+        preset("after:60", "In 1 hour"),
+        preset("at:friday:09:00", "Friday"),
+        preset("at:monday:09:00", "Next week"),
+      ]),
+    ).toEqual([
+      { label: "Snooze in 1 hour", event: "snooze:after:60" },
+      { label: "Snooze Friday", event: "snooze:at:friday:09:00" },
+      { label: "Snooze…", event: "snooze:custom" },
+    ]);
   });
 });
 

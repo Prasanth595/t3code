@@ -91,6 +91,21 @@ function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) 
   return presets ? { presets } : {};
 }
 
+/** A custom action cannot open the snooze menu, so screen readers get the soonest presets and the picker. */
+export function resolveThreadListV2SnoozeAccessibilityActions(
+  presets: ReadonlyArray<SnoozePreset>,
+): ReadonlyArray<{ readonly label: string; readonly event: string }> {
+  return [
+    ...presets.slice(0, 2).map((preset) => ({
+      label: `Snooze ${WEEKDAY_LABEL.test(preset.label) ? preset.label : preset.label[0]!.toLowerCase() + preset.label.slice(1)}`,
+      event: `snooze:${preset.id}`,
+    })),
+    { label: "Snooze…", event: "snooze:custom" },
+  ];
+}
+
+const WEEKDAY_LABEL = /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/;
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
