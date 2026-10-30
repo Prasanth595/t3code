@@ -1,4 +1,9 @@
 import {
+  getModelTraitDescriptors,
+  preserveExplicitDaybreakOption,
+  REASONING_SELECT_DESCRIPTOR_IDS,
+} from "@t3tools/client-runtime/model-traits";
+import {
   type ModelCapabilities,
   type ModelSelection,
   type ProviderDriverKind,
@@ -11,7 +16,6 @@ import type { EffortDisplay } from "@t3tools/contracts/settings";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
@@ -137,10 +141,10 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     modelOptions,
     planModeEnabled,
   );
-  const descriptors = getProviderOptionDescriptors({ caps, selections });
+  const descriptors = getModelTraitDescriptors({ caps, selections });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
@@ -151,8 +155,8 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
+    modelOptionsForDispatch: preserveExplicitDaybreakOption(
+      buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, selections),
       selections,
     ),
     ...(ultrathinkActive
