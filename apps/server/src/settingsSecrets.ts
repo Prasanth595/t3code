@@ -3,6 +3,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   EasDeviceHostConfig,
+  ProviderProxySettings,
   type ServerSettings,
   SimlockDeviceHostConfig,
   UsageLimitSourceConfig,
@@ -33,6 +34,7 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const providerProxySecretFields = secretSettingsFields(ProviderProxySettings);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -146,6 +148,13 @@ export function mapSettingsSecrets(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
+  const providerProxy = mapFields(
+    settings.providerProxy,
+    providerProxySecretFields,
+    (field, serverHost) =>
+      `provider-proxy-${encode(field)}` + (serverHost === null ? "" : `-${encode(serverHost)}`),
+  ) as ServerSettings["providerProxy"];
+
   const easDeviceHosts = settings.easDeviceHosts.map(
     (host) =>
       mapFields(
@@ -174,6 +183,7 @@ export function mapSettingsSecrets(
     providerInstances,
     sourceControlHosts,
     usageLimitSources,
+    providerProxy,
     easDeviceHosts,
     simlockDeviceHosts,
   };

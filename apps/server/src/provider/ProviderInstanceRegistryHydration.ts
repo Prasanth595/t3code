@@ -5,9 +5,12 @@ import {
   providerInstanceConfigEnabledFlag,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
-  type ProviderInstanceConfigMap,
   ServerSettings,
 } from "@t3tools/contracts";
+import {
+  normalizeProviderProxyUrl,
+  type ProviderProxyRoute,
+} from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -42,9 +45,14 @@ type ProviderInstanceRegistryHydrationEnv =
   // The Claude runner counts its CLIs as running agents for port discovery.
   | PortScanner.PortDiscovery;
 
+const resolveProviderProxyRoute = (settings: ServerSettings): ProviderProxyRoute | undefined => {
+  const url = normalizeProviderProxyUrl(settings.providerProxy.url);
+  return url === "" ? undefined : { url, apiKey: settings.providerProxy.apiKey };
+};
+
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
-): ProviderInstanceConfigMap => {
+): ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
 
   for (const driver of BUILT_IN_DRIVERS) {
@@ -73,7 +81,14 @@ export const deriveProviderInstanceConfigMap = (
     }
   }
 
-  return merged as ProviderInstanceConfigMap;
+  const proxy = resolveProviderProxyRoute(settings);
+  if (proxy === undefined) return merged;
+  return Object.fromEntries(
+    Object.entries(merged).map(([id, entry]) => [
+      id,
+      entry.useProxy === true ? { ...entry, proxy } : entry,
+    ]),
+  );
 };
 
 export const DEV_REPLAY_INSTANCE_ID = ProviderInstanceId.make("devReplay");
@@ -157,7 +172,7 @@ export const layer: Layer.Layer<
     );
     const initialConfigMap =
       initialSettings === undefined
-        ? ({} as ProviderInstanceConfigMap)
+        ? ({} as ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
     const layerMutable = ProviderInstanceRegistry.layer({
