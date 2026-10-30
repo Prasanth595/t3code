@@ -6598,6 +6598,419 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each([
+    {
+      phase: "compacting",
+      frame: (index: number) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: `00000000-0000-4000-8000-0000000248${index}0`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+    },
+    {
+      phase: "requesting",
+      frame: (index: number) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: `00000000-0000-4000-8000-0000000248${index}2`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+    },
+    {
+      phase: "api_retry",
+      frame: (index: number) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "api_retry",
+          attempt: index + 1,
+          max_retries: 10,
+          retry_delay_ms: 1_500,
+          error_status: 529,
+          error: "overloaded",
+          uuid: `00000000-0000-4000-8000-0000000248${index}1`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+    },
+  ] as const)(
+    "fails a turn stuck in $phase for ten minutes as a stalled native session",
+    ({ frame }) =>
+      Effect.gen(function* () {
+        const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-stalled-",
+        });
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-stalled-phase"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(frame(0));
+        yield* TestClock.adjust("9 minutes");
+        // A repeat of the same phase is not progress and must not extend the deadline.
+        yield* harness.offerAndWait(frame(1));
+        assert.isEmpty(harness.terminalEvents());
+        yield* TestClock.adjust("61 seconds");
+
+        assert.deepEqual(
+          harness
+            .terminalEvents()
+            .map((event) => [
+              event.status,
+              event.failure?.code,
+              event.failure?.retryable,
+              event.threadDisposition,
+            ]),
+          [["failed", "native_session_stalled", true, "broken"]],
+        );
+        yield* TestClock.adjust("10 minutes");
+        assert.lengthOf(harness.terminalEvents(), 1);
+        const stalled = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        )?.providerThread;
+        assert.isDefined(stalled);
+        // A failed resume makes turn start open a fresh session with a summary handoff.
+        const resumed = yield* Effect.exit(
+          harness.runtime.resumeThread({ providerThread: stalled }),
+        );
+        assert.isTrue(Exit.isFailure(resumed));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    { case: "hung", hangs: true, stopAfter: "0 seconds", disposition: "broken", resumes: false },
+    {
+      case: "ordinary",
+      hangs: false,
+      stopAfter: "0 seconds",
+      disposition: "reusable",
+      resumes: true,
+    },
+    // The stall deadline passes while Stop waits on the hung SDK interrupt.
+    {
+      case: "hung near the stall deadline",
+      hangs: true,
+      stopAfter: "595 seconds",
+      disposition: "broken",
+      resumes: false,
+    },
+  ] as const)(
+    "a $case Stop interrupts the turn and leaves its native session $disposition",
+    ({ hangs, stopAfter, disposition, resumes }) =>
+      Effect.gen(function* () {
+        const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-stop-",
+        });
+        const sdkGate = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          ...(hangs ? { interrupt: Deferred.await(sdkGate) } : {}),
+          close: (sdkMessages) =>
+            (hangs ? Deferred.await(sdkGate) : Effect.void).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+        });
+        // Added after the harness so it runs first and session disposal is not left hanging.
+        yield* Effect.addFinalizer(() => Deferred.succeed(sdkGate, undefined));
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-claude-hung-interrupt");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000024890",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* TestClock.adjust(stopAfter);
+        const interrupting = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("30 seconds");
+
+        assert.isDefined(interrupting.pollUnsafe(), "Stop must not wait on a hung SDK interrupt");
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => [event.status, event.threadDisposition]),
+          [["interrupted", disposition]],
+        );
+        const stopped = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        )?.providerThread;
+        assert.isDefined(stopped);
+        // A failed resume makes turn start open a fresh session with a summary handoff.
+        const resumed = yield* Effect.exit(
+          harness.runtime.resumeThread({ providerThread: stopped }),
+        );
+        assert.equal(Exit.isSuccess(resumed), resumes);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("a slow first model response within the stall deadline completes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-slow-request"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: "00000000-0000-4000-8000-000000024899",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // Healthy requests have been observed to take five minutes before the first token.
+      yield* TestClock.adjust("5 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "stream_event",
+          event: { type: "message_start", message: { id: "msg-slow-request" } },
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-0000000248a0",
+        }),
+      );
+      yield* harness.offerAndWait(turnOneResult);
+      yield* TestClock.adjust("10 minutes");
+
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("ambient SDK frames do not extend a stalled turn's deadline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-stalled-ambient"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* TestClock.adjust("9 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+          uuid: "00000000-0000-4000-8000-000000024893",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("61 seconds");
+
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.failure?.code),
+        ["native_session_stalled"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("subagent output does not clear the root turn's stall deadline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-stalled-subagent"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: "00000000-0000-4000-8000-000000024897",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("9 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "stream_event",
+          event: { type: "message_start", message: { id: "msg-stall-subagent" } },
+          parent_tool_use_id: "toolu-stall-subagent",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000024898",
+        }),
+      );
+      yield* TestClock.adjust("61 seconds");
+
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.failure?.code),
+        ["native_session_stalled"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("model progress clears the stall deadline and a later turn gets its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const requesting = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-stall-progress:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000024894"));
+      yield* TestClock.adjust("9 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "stream_event",
+          event: { type: "message_start", message: { id: "msg-stall-progress" } },
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000024895",
+        }),
+      );
+      yield* TestClock.adjust("9 minutes");
+      assert.isEmpty(harness.terminalEvents());
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+
+      yield* harness.runtime.startTurn(turn(2));
+      yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000024896"));
+      yield* TestClock.adjust("599 seconds");
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => [event.status, event.failure?.code]),
+        [
+          ["completed", undefined],
+          ["failed", "native_session_stalled"],
+        ],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("fails a stalled turn once even when the SDK close never resolves", () =>
+    Effect.gen(function* () {
+      const sdkGate = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) =>
+          Deferred.await(sdkGate).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+      });
+      yield* Effect.addFinalizer(() => Deferred.succeed(sdkGate, undefined));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-stalled-hung-close"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* TestClock.adjust("10 minutes");
+      yield* TestClock.adjust("10 minutes");
+
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => [event.status, event.failure?.code]),
+        [["failed", "native_session_stalled"]],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["claude-haiku-4-5-20251001", "claude-sonnet-4-6"])(
     "renegotiates auto only when switching API models after fallback to default: %s",
     (nextModel) =>

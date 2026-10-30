@@ -312,6 +312,39 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+// Repeated status and api_retry frames are not progress; a turn stuck on them is failed.
+const CLAUDE_STALLED_TURN_TIMEOUT = "10 minutes";
+
+function isClaudeStallPhase(message: SDKMessage): boolean {
+  return (
+    message.type === "system" &&
+    ((message.subtype === "status" && message.status !== null) || message.subtype === "api_retry")
+  );
+}
+
+// Ambient system frames and replayed prompts arrive while a wedged CLI makes no progress.
+function endsClaudeStallPhase(message: SDKMessage): boolean {
+  // A subagent's frames are not progress of the root turn that is stalled.
+  if ("parent_tool_use_id" in message && message.parent_tool_use_id !== null) {
+    return false;
+  }
+  switch (message.type) {
+    case "assistant":
+    case "stream_event":
+    case "result":
+    case "tool_progress":
+      return true;
+    case "user":
+      return !("isReplay" in message && message.isReplay === true);
+    case "system":
+      return (
+        message.subtype === "compact_boundary" ||
+        (message.subtype === "status" && message.status === null)
+      );
+    default:
+      return false;
+  }
+}
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -3929,6 +3962,7 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  stallWatchdog: Fiber.Fiber<void> | null;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -7200,6 +7234,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           subagentToolCalls.clear();
         });
 
+        const cancelStallWatchdog = Effect.fnUntraced(function* (turn: ActiveClaudeTurnContext) {
+          const watchdog = turn.stallWatchdog;
+          turn.stallWatchdog = null;
+          if (watchdog !== null) yield* Fiber.interrupt(watchdog);
+        });
+
         const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -7211,6 +7251,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          yield* cancelStallWatchdog(input.context);
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -7475,7 +7516,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     roster,
                     awaitedTaskIds,
                   ),
-                  status: input.status === "completed" ? "active" : "idle",
+                  // Matches the "error" status RunExecutionService persists for a broken thread.
+                  status:
+                    threadDisposition === "broken"
+                      ? "error"
+                      : input.status === "completed"
+                        ? "active"
+                        : "idle",
                   updatedAt: input.completedAt,
                 };
                 yield* rememberProviderThread(providerThread);
@@ -7550,13 +7597,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+          broken?: { readonly stalledFailure?: OrchestrationV2ProviderFailure },
         ) {
+          const stalledFailure = broken?.stalledFailure;
           const current = yield* Ref.get(activeTurn);
           // A replacement query can reuse the native thread id; only this query's turn is ours.
           const context = closedQuery.lastTurn;
           if (context === null) return;
           const interrupted =
-            closedQuery.stopping || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            stalledFailure === undefined &&
+            (closedQuery.stopping ||
+              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId));
           // Finalization can yield to a replacement process; capture ownership and outcomes first.
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
@@ -7565,14 +7616,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               status: interrupted ? "interrupted" : "failed",
               completedAt: yield* DateTime.now,
-              ...(interrupted
-                ? {}
-                : {
-                    failure: makeProviderFailure({
-                      cause: cause === undefined ? undefined : Cause.squash(cause),
-                      class: "transport_error",
+              ...(broken === undefined ? {} : { threadDisposition: "broken" }),
+              ...(stalledFailure !== undefined
+                ? { failure: stalledFailure }
+                : interrupted
+                  ? {}
+                  : {
+                      failure: makeProviderFailure({
+                        cause: cause === undefined ? undefined : Cause.squash(cause),
+                        class: "transport_error",
+                      }),
                     }),
-                  }),
             });
           } else {
             yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId);
@@ -9795,6 +9849,58 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const failStalledTurn = Effect.fn("ClaudeAdapterV2.failStalledTurn")(function* (
+          live: ClaudeLiveQueryContext,
+          turn: ActiveClaudeTurnContext,
+        ) {
+          const owned =
+            (yield* Ref.get(activeTurn)) === turn &&
+            (yield* Ref.modify(queryContext, (current) =>
+              current === live && live.lastTurn === turn ? [true, null] : [false, current],
+            ));
+          if (!owned) return;
+          // This runs on the watchdog fiber; finalization must not interrupt it.
+          turn.stallWatchdog = null;
+          live.stopping = true;
+          yield* Effect.logWarning("orchestration-v2.claude-query-stalled", {
+            providerSessionId: input.providerSessionId,
+            providerTurnId: turn.providerTurnId,
+          });
+          yield* finalizeActiveTurnAfterQueryExit(live, undefined, {
+            stalledFailure: makeProviderFailure({
+              class: "transport_error",
+              code: "native_session_stalled",
+              message: "Claude made no progress for ten minutes. Send again to retry.",
+              retryable: true,
+            }),
+          });
+          yield* endSubagentCallsOfClosedQuery(live.nativeThreadId, "failed");
+          // Ownership is released above, so a wedged close cannot block the next turn.
+          yield* live.query.close.pipe(
+            Effect.ignore,
+            Effect.timeoutOption("10 seconds"),
+            Effect.forkIn(sessionScope),
+          );
+        });
+
+        // Untraced: it runs for every SDK frame of an active turn.
+        const watchTurnForStall = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          turn: ActiveClaudeTurnContext,
+          message: SDKMessage | null,
+        ) {
+          if (message !== null && endsClaudeStallPhase(message)) {
+            yield* cancelStallWatchdog(turn);
+            return;
+          }
+          if (turn.stallWatchdog !== null || (message !== null && !isClaudeStallPhase(message))) {
+            return;
+          }
+          turn.stallWatchdog = yield* sdkMessageLock
+            .withPermits(1)(failStalledTurn(live, turn))
+            .pipe(Effect.delay(CLAUDE_STALLED_TURN_TIMEOUT), Effect.forkIn(sessionScope));
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -10022,7 +10128,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  return Effect.gen(function* () {
+                    const turn = context.lastTurn;
+                    if (turn !== null && (yield* Ref.get(activeTurn)) === turn) {
+                      yield* watchTurnForStall(context, turn, message);
+                    }
+                    yield* handleSdkMessage({ query: querySession, message });
+                  });
                 }),
               ),
             ),
@@ -10175,6 +10287,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              stallWatchdog: null,
             };
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
@@ -10236,6 +10349,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             if (userMessage !== null) {
               yield* attachTurn;
+              // The first model request can hang before Claude reports any status.
+              yield* watchTurnForStall(querySession, context, null);
               yield* startUserTurnForWakeReports(nativeThreadId);
               yield* Effect.uninterruptibleMask((restore) =>
                 restore(
@@ -10430,14 +10545,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
-            yield* existing.query.close.pipe(Effect.ignore);
-            const closed = yield* Deferred.await(existing.closed).pipe(
+            // Stop owns settlement now; the stall deadline must not fail the turn underneath it.
+            yield* cancelStallWatchdog(currentTurn);
+            // A wedged CLI can leave the SDK interrupt and close pending forever.
+            const closed = yield* existing.query.interrupt.pipe(
+              Effect.andThen(existing.query.close.pipe(Effect.ignore)),
+              Effect.andThen(Deferred.await(existing.closed)),
               Effect.timeoutOption("10 seconds"),
             );
             if (Option.isSome(closed)) {
               return;
             }
+            yield* existing.query.close.pipe(
+              Effect.ignore,
+              Effect.timeoutOption("10 seconds"),
+              Effect.forkIn(sessionScope),
+            );
 
             const completedAt = yield* DateTime.now;
             yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
@@ -10450,9 +10573,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             if (ownedLiveQuery) {
               existing.stopping = true;
-              yield* finalizeActiveTurnAfterQueryExit(existing);
+              // The unresponsive process may have left the native session wedged.
+              yield* finalizeActiveTurnAfterQueryExit(existing, undefined, {});
               yield* endSubagentCallsOfClosedQuery(existing.nativeThreadId, "interrupted");
-            } else {
+            } else if ((yield* Ref.get(activeTurn)) === currentTurn) {
               yield* finalizeActiveTurn({
                 context: currentTurn,
                 status: "interrupted",
@@ -10632,7 +10756,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            // A wedged CLI can leave the SDK close pending forever.
+            yield* existing.query.close.pipe(Effect.ignore, Effect.timeoutOption("10 seconds"));
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
@@ -10652,8 +10777,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           existing.stopping = true;
-          yield* existing.query.close.pipe(Effect.ignore);
-          const closed = yield* Deferred.await(existing.closed).pipe(
+          const closed = yield* existing.query.close.pipe(
+            Effect.ignore,
+            Effect.andThen(Deferred.await(existing.closed)),
             Effect.timeoutOption("10 seconds"),
           );
           if (Option.isSome(closed)) {
@@ -10798,6 +10924,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
               const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              if (threadInput.providerThread.status === "error") {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude session ${nativeThreadId} stopped responding and needs a fresh session.`,
+                });
+              }
               if (
                 nativeThreadId !== undefined &&
                 nativeThreadId !== null &&
