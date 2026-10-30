@@ -154,6 +154,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const stopObservingResize = observeResize(parent, () => {
     if (positions !== null) positions = measure();
   });
+  const gapLimit = (rows: Map<HTMLElement, RowPosition>) =>
+    (scroller?.clientHeight ?? 0) -
+    ([...rows.values()].findLast((position) => position.height > 0)?.height ?? 0);
+  const stopObservingViewport = scroller
+    ? observeResize(scroller, () => {
+        if (gap > 0) setGap(Math.max(0, Math.min(gap, gapLimit(measure()))));
+      })
+    : () => {};
 
   return {
     update(animate: boolean) {
@@ -177,13 +185,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           const activeBottom = [...parent.querySelectorAll('[aria-current="page"]')]
             .find((row) => !row.closest("[inert]"))
             ?.getBoundingClientRect().bottom;
-          setGap(
-            Math.min(
-              gap + deficit,
-              scroller.clientHeight -
-                ([...next.values()].findLast((position) => position.height > 0)?.height ?? 0),
-            ),
-          );
+          setGap(Math.min(gap + deficit, gapLimit(next)));
           scroller.scrollTop = scrollTop;
           if (
             activeBottom !== undefined &&
@@ -297,6 +299,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       scroller?.removeEventListener("scroll", trackScroll);
       setGap(0);
       stopObservingResize();
+      stopObservingViewport();
       disposed = true;
     },
   };
