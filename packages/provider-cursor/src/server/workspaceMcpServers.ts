@@ -26,6 +26,7 @@ const CursorMcpFile = Schema.Struct({
         args: Schema.optional(Schema.Array(Schema.String)),
         env: Schema.optional(StringRecord),
         cwd: Schema.optional(Schema.String),
+        startupTimeoutSec: Schema.optional(Schema.Number),
       }),
       Schema.Struct({
         type: Schema.optional(Schema.Literals(["http", "sse"])),
@@ -136,7 +137,9 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     const config = decodeCursorMcpFile(expand(contents, resolve));
     if (Option.isNone(config)) continue;
     const rawServers = (
-      contents as { readonly mcpServers: Record<string, { command?: unknown; args?: unknown }> }
+      contents as {
+        readonly mcpServers: Record<string, { command?: unknown; args?: ReadonlyArray<unknown> }>;
+      }
     ).mcpServers;
     for (const [name, server] of Object.entries(config.value.mcpServers)) {
       if (seen.has(name)) continue;
@@ -148,9 +151,10 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       if (
         "command" in server &&
         !name.startsWith("plugin-") &&
-        // File clients start before SDK deduplication; leave env/cwd-only servers alone.
-        someString([rawServers[name]?.command, rawServers[name]?.args], (text) =>
-          WORKSPACE_VARIABLE_PATTERN.test(text),
+        // File clients start before deduplication; only replace executable/script paths.
+        someString(
+          [rawServers[name]?.command, rawServers[name]?.args?.[0]],
+          (text) => !text.startsWith("-") && WORKSPACE_VARIABLE_PATTERN.test(text),
         )
       ) {
         servers[name] = server as McpServerConfig;

@@ -1713,8 +1713,9 @@ describe("CursorAdapterV2", () => {
           `{
           // Cursor's editor accepts comments here.
           "mcpServers": {
-            "repro": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"] },
+            "repro": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "startupTimeoutSec": 120 },
             "plain": { "command": "node", "args": ["server.mjs"] },
+            "argument-only": { "command": "node", "args": ["server.mjs", "--workspace", "\${workspaceFolder}"] },
             "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
             "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
             "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
@@ -1792,9 +1793,10 @@ describe("CursorAdapterV2", () => {
             Effect.provideService(HostProcess.Environment, {}),
           );
 
-        assert.deepEqual(openedWith?.mcpServers, {
-          repro: { command: "node", args: [`${workspace}/server.mjs`] },
-        });
+        const expectedServers = {
+          repro: { command: "node", args: [`${workspace}/server.mjs`], startupTimeoutSec: 120 },
+        };
+        assert.deepEqual(openedWith?.mcpServers, expectedServers);
         for (const disabledState of ["[", '{"off": true}', '["off",]']) {
           yield* fileSystem.writeFileString(
             path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
